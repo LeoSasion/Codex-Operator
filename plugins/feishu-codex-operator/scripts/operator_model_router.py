@@ -24,6 +24,64 @@ def service_identity(state):
     return hashlib.sha256((str(Path(__file__).resolve()) + "\n" + str(state.resolve())).encode()).hexdigest()
 
 
+def web_profile_identity(profile):
+    return None if profile is None else hashlib.sha256(str(profile).encode('utf-8')).hexdigest()
+
+
+def selected_web_profile(profile):
+    if profile is None:
+        return None
+    from operator_web_service import checked_path
+    return checked_path(profile, directory=True)
+
+
+def bind_web(state, port, profile):
+    """Explicit checked memory attachment; no service start or global activation."""
+    from operator_web_service import route_preview
+    profile = selected_web_profile(profile)
+    if profile is None:
+        raise RouterError('web_route_profile_required')
+    before = control(state, port)
+    if (before.get('status') != 'ready' or before.get('diagnostics', {}).get('web_profile_identity')
+            != web_profile_identity(profile)):
+        raise RouterError('web_route_selected_profile_mismatch')
+    expected = route_preview(profile)
+    request = Request(settings.url(state, port) + '/lifecycle/web',
+        data=json.dumps(expected).encode(), headers={'Content-Type': 'application/json'}, method='POST')
+    with build_opener(ProxyHandler({}), settings._NoRedirect()).open(request, timeout=15) as response:
+        raw = response.read(4097)
+    if len(raw) > 4096:
+        raise RouterError('web_route_response_invalid_no_retry')
+    value = settings.loads(raw)
+    if (not isinstance(value, dict) or value.get('service') != before['service']
+            or value.get('pid') != before['pid']
+            or any(value.get(k) != v for k, v in expected.items())):
+        raise RouterError('web_route_identity_changed_no_retry')
+    return value
+
+
+async def web_binding_response(router, state, request):
+    from aiohttp import web
+    if request.headers.get('Origin') or request.headers.get('Sec-Fetch-Site'):
+        return web.json_response({'error': 'browser_requests_not_supported'}, status=403)
+    if request.method != 'POST':
+        return web.json_response({'error': 'method_not_allowed'}, status=405)
+    if (request.content_length is None or not 0 < request.content_length <= 1024
+            or request.headers.get('Content-Encoding', 'identity') != 'identity'
+            or request.content_type != 'application/json'):
+        return web.json_response({'error': 'web_route_invalid_request'}, status=400)
+    try:
+        value = settings.loads(await asyncio.wait_for(request.read(), 5))
+        result = await router.bind_web_service(value)
+    except Exception as exc:
+        allowed = {'web_route_profile_not_selected', 'web_route_digest_required',
+            'web_route_binding_busy_no_retry', 'web_route_binding_throttled_no_retry',
+            'web_route_service_unavailable_no_retry', 'web_route_catalog_collision'}
+        code = str(exc) if isinstance(exc, RouterError) and str(exc) in allowed else 'web_route_invalid_request'
+        return web.json_response({'error': code}, status=409)
+    return web.json_response({'service': service_identity(state), 'pid': os.getpid(), **result})
+
+
 @contextmanager
 def reserve_inactive_port(port):
     """Prove/reserve the configured listener's absence while editing registration.
@@ -93,10 +151,10 @@ async def registry_reload_response(router, state, request):
     except (ValueError, TypeError) as exc:
         allowed = {"registry_reload_expected_digest_required", "registry_reload_digest_mismatch",
                    "registry_reload_invalid_registry", "registry_reload_busy_no_retry",
-                   "registry_reload_throttled_no_retry"}
+                   "registry_reload_throttled_no_retry", "web_route_catalog_collision"}
         reason = str(exc) if isinstance(exc, RouterError) and str(exc) in allowed else "registry_reload_invalid_request"
         status = 409 if reason in {"registry_reload_digest_mismatch", "registry_reload_busy_no_retry",
-                                  "registry_reload_throttled_no_retry"} else 400
+                                  "registry_reload_throttled_no_retry", "web_route_catalog_collision"} else 400
         return web.json_response({"error": reason}, status=status)
     return web.json_response({"service": service_identity(state), "pid": os.getpid(), **result})
 
@@ -139,22 +197,26 @@ def readiness(state, port, config=None):
     return result
 
 
-def start(state, port):
+def start(state, port, *, web_profile=None):
     # Fail before spawning if state or optional dependencies are unavailable.
     import aiohttp  # noqa: F401
     settings.url(state, port)
     from operator_core.model_registry import ModelRegistry
     ModelRegistry.load(state / "registry.json")
+    web_profile = selected_web_profile(web_profile)
     try:
         existing = control(state, port)
         if existing.get("status") != "ready":
             raise RouterError("router_not_ready")
+        if existing.get('diagnostics', {}).get('web_profile_identity') != web_profile_identity(web_profile):
+            raise RouterError('web_route_selected_profile_mismatch')
         return existing
     except OSError:
         pass
     flags = (subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0
     child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "serve",
-        "--state-dir", str(state.resolve()), "--port", str(port)], stdin=subprocess.DEVNULL,
+        "--state-dir", str(state.resolve()), "--port", str(port),
+        *(['--web-profile', str(web_profile)] if web_profile is not None else [])], stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags,
         start_new_session=os.name != "nt", cwd=str(Path(__file__).resolve().parent))
     deadline = time.monotonic() + 15
@@ -172,10 +234,11 @@ def start(state, port):
     raise RouterError("router_start_failed")
 
 
-def restart(state, port):
+def restart(state, port, *, web_profile=None):
     """Explicit restart only while deactivated. Never replay accepted inference."""
     if (state / "codex-entry.json").exists():
         raise RouterError("deactivate_before_router_restart")
+    web_profile = selected_web_profile(web_profile)
     try:
         control(state, port, stop=True)
     except URLError as exc:
@@ -200,22 +263,31 @@ def restart(state, port):
             time.sleep(0.05)
         else:
             raise RouterError("router_stop_not_confirmed")
-    return start(state, port)
+    return start(state, port, **({'web_profile': web_profile} if web_profile is not None else {}))
 
 
-async def serve(state, port):
+async def serve(state, port, *, web_profile=None):
     from aiohttp import web
     from operator_core.model_registry import ModelRegistry
     from operator_core.model_router import ModelRouter
     token = (state / "token").read_text(encoding="ascii").strip()
     registry, digest = ModelRegistry.load_snapshot(state / "registry.json")
-    router = ModelRouter(registry, token, registry_sha256=digest)
+    web_profile = selected_web_profile(web_profile)
+    router = ModelRouter(registry, token, registry_sha256=digest, web_profile=web_profile)
     shutdown = asyncio.Event()
     active = 0
 
     @web.middleware
     async def lifecycle(request, handler):
         nonlocal active
+        if request.path == router.prefix + '/lifecycle/web':
+            if shutdown.is_set():
+                return web.json_response({'error': 'router_stopping_no_retry'}, status=503)
+            active += 1
+            try:
+                return await web_binding_response(router, state, request)
+            finally:
+                active -= 1
         if request.path == router.prefix + "/lifecycle/registry":
             if shutdown.is_set():
                 return web.json_response({"error": "router_stopping_no_retry"}, status=503)
@@ -235,6 +307,8 @@ async def serve(state, port):
                                 "last_failure": router.last_failure,
                                 "timing": router.metrics.snapshot(),
                                 "registry_sha256": router.registry_sha256,
+                                "web_profile_identity": web_profile_identity(web_profile),
+                                "web_route_bound": any(r.web_binding is not None for r in router.registry.routes.values()),
                                 "adapted_models": sum(route.responses is not None
                                                       for route in router.registry.routes.values())}})
         if shutdown.is_set():
@@ -260,7 +334,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["init", "serve", "start", "restart", "stop", "status", "activate", "deactivate",
                                           "lmstudio-models", "lmstudio-register", "register-model", "preflight",
-                                          "profile-build", "readiness", "lmstudio-sync", "reload-registry",
+                                          "profile-build", "readiness", "lmstudio-sync", "reload-registry", "bind-web",
                                           "verification-init", "verification-status", "verification-label"])
     parser.add_argument("--state-dir", type=Path)
     parser.add_argument("--codex-config", type=Path)
@@ -274,6 +348,7 @@ def main():
     parser.add_argument("--responses-capabilities", type=Path)
     parser.add_argument("--registration", type=Path)
     parser.add_argument("--profile", type=Path)
+    parser.add_argument("--web-profile", type=Path)
     parser.add_argument("--request", type=Path)
     parser.add_argument("--cli-version")
     parser.add_argument("--desktop-version")
@@ -287,6 +362,8 @@ def main():
     parser.add_argument("--discovery-policy", type=Path)
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
+    if args.web_profile is not None and args.action not in {'serve', 'start', 'restart', 'bind-web'}:
+        parser.error('--web-profile is only for serve/start/restart/bind-web')
     if args.format != "json" and args.action != "verification-status":
         parser.error("text format is only supported by verification-status")
     if args.action not in {"preflight", "profile-build", "lmstudio-models",
@@ -414,6 +491,8 @@ def main():
         print("Model registered. Start router separately; configured capabilities remain unverified.")
         return
     if args.action == "init":
+        if args.codex_config is not None:
+            settings.ensure_recovery_shortcut(args.codex_config)
         settings.initialize(args.state_dir)
         print("Router state initialized; existing model registrations retained.")
         return
@@ -425,11 +504,14 @@ def main():
             parser.error("reload-registry requires expected-registry-sha256")
         print(json.dumps(reload_registry(args.state_dir, args.port, args.expected_registry_sha256)))
         return
+    if args.action == 'bind-web':
+        print(json.dumps(bind_web(args.state_dir, args.port, args.web_profile)))
+        return
     if args.action == "start":
-        print(json.dumps(start(args.state_dir, args.port)))
+        print(json.dumps(start(args.state_dir, args.port, web_profile=args.web_profile)))
         return
     if args.action == "restart":
-        print(json.dumps(restart(args.state_dir, args.port)))
+        print(json.dumps(restart(args.state_dir, args.port, web_profile=args.web_profile)))
         return
     if args.action == "stop":
         print(json.dumps(control(args.state_dir, args.port, stop=True)))
@@ -443,7 +525,7 @@ def main():
             settings.deactivate(args.state_dir, args.codex_config)
         print("Codex entry updated. Restart Codex to load the change.")
         return
-    asyncio.run(serve(args.state_dir, args.port))
+    asyncio.run(serve(args.state_dir, args.port, web_profile=args.web_profile))
 
 
 if __name__ == "__main__":

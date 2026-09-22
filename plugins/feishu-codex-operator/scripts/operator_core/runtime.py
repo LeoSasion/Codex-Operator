@@ -60,6 +60,8 @@ from .rate_limits import (
 )
 from .responder_observer import ResponderLifecycleObserver
 from .telemetry import EventTiming
+from .user_tasks import UserTaskError, UserTaskManager
+from .channel_models import ChannelModels, ModelSelectionError
 from .state import (
     AccessPolicy,
     DurableState,
@@ -74,7 +76,7 @@ INIT_WIZARD_VERSION = 1
 INIT_WIZARD_TTL_SECONDS = 10 * 60
 INIT_WIZARD_PAGE_SIZE = 8
 INIT_WIZARD_CATALOG_LIMIT = DESKTOP_TASK_CATALOG_LIMIT
-UNSUPPORTED_COMMAND_REPLY = "飞书 Operator 仅支持 `/init`。请发送 `/init` 进入设置。"
+UNSUPPORTED_COMMAND_REPLY = "支持 /init 连接任务，以及 /model 查看或选择当前任务的模型。"
 HEALTH_REPLACE_RETRY_DELAYS = (0.01, 0.02, 0.04, 0.08, 0.16)
 MAX_OPEN_SCOPES = 16
 DESKTOP_PRODUCER_HOLD_ERROR = "producer_unavailable_no_retry"
@@ -288,6 +290,9 @@ def parse_command(text: str) -> tuple[str, str]:
     cleaned = MENTION_PREFIX.sub("", text.strip(), count=1)
     if cleaned.casefold() == "/init":
         return "init", ""
+    parts = cleaned.split(maxsplit=1)
+    if parts and parts[0].casefold() == "/model":
+        return "model", parts[1].strip() if len(parts) == 2 else ""
     if cleaned.startswith("/"):
         return "unsupported", ""
     return "", ""
@@ -316,6 +321,8 @@ class OperatorRuntime:
             lifecycle_observer=self.responder_observer,
         )
         self.catalog = AppServerCatalog(config)
+        self.channel_models = ChannelModels(config, self.sessions)
+        self.user_tasks = UserTaskManager(config, self.sessions, self.relay)
         self.rate_limits = AdaptiveRateLimitGuard(config)
         self.consumer = LarkEventConsumer(lark_cli, config)
         self.attachments = AttachmentInbox(config)
@@ -1331,6 +1338,12 @@ class OperatorRuntime:
         role: str,
         sender_open_id: str,
     ) -> str:
+        if command == "model":
+            try:
+                return self.channel_models.command(scope, session, argument)
+            except Exception as exc:
+                logger.warning("model command stopped error_type=%s", type(exc).__name__)
+                return "当前任务的模型设置未能确认，未自动重试。可用 /model 重新查看；已有任务和消息保持。"
         if command == "init" and not argument:
             return self._begin_init_wizard(
                 scope,
@@ -1594,14 +1607,8 @@ class OperatorRuntime:
             self._deliver_control_once(event_id, event, answer, admitted=True)
             return
 
-        if not session.get("thread_id"):
-            self._deliver(
-                event_id,
-                event,
-                self._unbound_answer(session),
-            )
-            return
-
+        # First-time task setup queues Beeper too. Reject a fresh exhausted
+        # quota before reserving its single-use creation job, not after setup.
         timing = self._event_timings[event_id]
         timing.mark("admission")
         rate_limit = self.rate_limits.before_dispatch()
@@ -1613,10 +1620,23 @@ class OperatorRuntime:
                 rate_limit.limit_id,
                 rate_limit.remaining_percent,
             )
+            self._deliver(event_id, event, blocked_before_dispatch_reply(rate_limit))
+            return
+
+        if not session.get("thread_id"):
+            try:
+                setup = self.user_tasks.begin(scope, session, self.bot_open_id)
+                if setup is not None:
+                    session = yield setup
+            except UserTaskError:
+                self._deliver(event_id, event,
+                    "本次任务登记未完成，已保留记录且不会重复新建。请让项目所有者检查接线员配置；已有任务和绑定不会被删除。")
+                return
+        if not session.get("thread_id"):
             self._deliver(
                 event_id,
                 event,
-                blocked_before_dispatch_reply(rate_limit),
+                self._unbound_answer(session),
             )
             return
 
@@ -1660,6 +1680,8 @@ class OperatorRuntime:
                 raise RuntimeError("Operator is stopping before dispatch")
             active_handle = handle
             self.state.mark_responder_dispatched(event_id, handle.responder_thread_id)
+            if model_selection is not None:
+                self.sessions.update_model_selection(scope, session, None, consume=True)
             self.sessions.bind_thread(scope, handle.responder_thread_id)
             with self._scheduler_lock:
                 self._active_turns[scope] = handle
@@ -1684,12 +1706,14 @@ class OperatorRuntime:
                 additional_context=transport_context or None,
                 on_dispatching=on_dispatching,
                 beeper_model=rate_limit.beeper_model,
+                **({"responder_model_selection": model_selection} if model_selection is not None else {}),
                 allow_rate_limit_fallback=allow_rate_limit_fallback,
                 observation=observation,
                 timing=timing,
             )
 
         try:
+            model_selection = self.channel_models.prepare(session) if "model_selection" in session else None
             answer = yield dispatch(session)
             timing.mark("delivery_scheduler_wait")
             self.sessions.bind_thread(
@@ -1716,6 +1740,9 @@ class OperatorRuntime:
                 answer.beeper_wake_lease_active,
                 answer.beeper_wake_signal_attempted,
             )
+        except ModelSelectionError:
+            self._deliver(event_id, event,
+                "待应用模型无法确认，未发送这条消息，也不会自动重试。请用 /model list 查看，或 /model cancel 取消待应用选择。")
         except RelayOutcomeUnknown:
             timing.mark("callback_wait")
             rate_limit = self.rate_limits.refresh_after_failure(background=True)
@@ -1771,6 +1798,7 @@ class OperatorRuntime:
     def _health_payload(self, status: str) -> dict[str, Any]:
         with self._scheduler_lock:
             active = len(self._active_turns)
+        setup_pending = self.user_tasks.pending_count()
         return {
             "operator_version": OPERATOR_VERSION,
             "status": status,
@@ -1784,6 +1812,7 @@ class OperatorRuntime:
             # Health is answer-free: it records transport availability and
             # bounded counts, never request ids, task ids, paths, or reply text.
             "callback_queue": {"pending": self.relay.pending_count()},
+            "user_task_setup": {"pending": setup_pending},
             "unknown_status_timeout_seconds": (
                 self.config.unknown_status_timeout_seconds
             ),
@@ -1797,7 +1826,8 @@ class OperatorRuntime:
             "catalog_transport": self.catalog.connection_status(),
             "account_rate_limits": self.rate_limits.health_summary(),
             "responder_writer": "beeper-task-send",
-            "active_turns": active,
+            # Include task registration in the existing maintenance fence.
+            "active_turns": active + setup_pending,
             "queue": self.state.status_counts(),
             "actionable_retryable_failed": (
                 self.state.actionable_retryable_failed_count(
@@ -1913,6 +1943,7 @@ class OperatorRuntime:
                 return
             self._shutdown_complete = True
         self.stop_event.set()
+        self.user_tasks.close()
         self.write_health("stopping")
         self.consumer.close()
         with self._scheduler_lock:

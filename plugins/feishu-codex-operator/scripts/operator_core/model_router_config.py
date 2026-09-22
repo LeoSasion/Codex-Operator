@@ -219,8 +219,9 @@ def health(state: Path, port: int) -> dict:
     return value
 
 
-def activate(state: Path, port: int, config: Path):
-    health(state, port)
+def activation_preflight(state: Path, port: int, config: Path):
+    """Read-only config compatibility check; preserve inactive comments verbatim."""
+    assert_global_route_allowed(config)
     original = config.read_bytes() if config.exists() else b""
     if original.startswith(b"\xef\xbb\xbf"):
         raise RouterError("bom_config_requires_explicit_normalization")
@@ -233,17 +234,69 @@ def activate(state: Path, port: int, config: Path):
         if owned != {"config": str(config.resolve()), "block": block.decode()}:
             raise RouterError("existing_router_journal_conflict")
         if original.startswith(block):
-            return
+            return original, block, True
         # A journal written before a failed config write can safely converge below.
-    if BEGIN.strip() in text or END.strip() in text:
+    # A retained, wholly commented legacy prefix is documentation, not a route.
+    # Admit only this exact known shape. Incomplete, active or additional marker
+    # blocks remain conflicts; do not strip comments from the bytes we write.
+    inactive = re.match(
+        r'\A# BEGIN FEISHU OPERATOR MODEL ROUTER\r?\n'
+        r'# [ \t]*openai_base_url[ \t]*=[ \t]*'
+        r'"(http://127\.0\.0\.1:([0-9]{1,5})/[a-f0-9]{64}/v1)"[ \t]*\r?\n'
+        r'# END FEISHU OPERATOR MODEL ROUTER\r?\n', text)
+    inspected = (text[inactive.end():] if inactive and 1024 <= int(inactive[2]) <= 65535 else text)
+    if BEGIN.strip() in inspected or END.strip() in inspected:
         raise RouterError("managed_config_changed")
     if parsed.get("model_provider", "openai") != "openai":
         raise RouterError("existing_provider_requires_explicit_migration")
     if "openai_base_url" in parsed or "model_catalog_json" in parsed or parsed.get("profile"):
         raise RouterError("existing_route_catalog_or_profile_requires_explicit_migration")
+    return original, block, False
+
+
+def activate(state: Path, port: int, config: Path):
+    # Check before side effects, and recheck after recovery/health I/O so another
+    # writer's configuration cannot be replaced with our older snapshot.
+    before = activation_preflight(state, port, config)
+    ensure_recovery_shortcut(config)
+    health(state, port)
+    if activation_preflight(state, port, config) != before:
+        raise RouterError("activation_config_changed")
+    original, block, active = before
+    if active:
+        return
+    journal = state / "codex-entry.json"
     # Journal first. Deactivation removes only this exact prefix, retaining later user edits.
+    assert_global_route_allowed(config)
     atomic_write(journal, json.dumps({"config": str(config.resolve()), "block": block.decode()}).encode())
     write_entry(config, block + original)
+
+
+def assert_global_route_allowed(config: Path):
+    marker = config.absolute().parent / "operator-native-route-only"
+    if marker.exists() or marker.is_symlink():
+        raise RouterError("official_route_recovery_lock_active")
+
+
+def ensure_recovery_shortcut(config: Path):
+    """Prepare recovery before changing the real user's global route, not fixtures.
+
+    Explicit custom homes are prepared by the setup workflow. Private CLI/test
+    configs must never create a shortcut on the real user's desktop.
+    """
+    if os.name != "nt" or config.resolve() != (Path.home() / ".codex" / "config.toml").resolve():
+        return
+    import subprocess
+    helper = Path(__file__).resolve().parents[1] / "install-native-recovery-shortcut.ps1"
+    powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    try:
+        result = subprocess.run([str(powershell), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(helper)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+        if result.returncode or json.loads(result.stdout.decode("utf-8-sig")).get("status") != "ready":
+            raise RouterError("recovery_shortcut_required_before_activation")
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        raise RouterError("recovery_shortcut_required_before_activation") from exc
 
 
 def deactivate(state: Path, config: Path):

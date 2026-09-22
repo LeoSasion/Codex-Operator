@@ -123,6 +123,7 @@ class AppServerCatalog:
                     "sortKey": "updated_at",
                     "sortDirection": "desc",
                     "sourceKinds": ["cli", "vscode", "appServer"],
+                    "modelProviders": [],
                     "useStateDbOnly": True,
                 },
             )

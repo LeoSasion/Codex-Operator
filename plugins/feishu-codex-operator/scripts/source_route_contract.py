@@ -19,7 +19,8 @@ import sys
 from typing import Any, NoReturn, Sequence
 
 
-PLUGIN_NAME = "feishu-codex-operator"
+PLUGIN_NAME = "codex-operator"
+PLUGIN_DIRECTORY = "feishu-codex-operator"
 RELEASE_NAME = "feishu-codex-operator-plugin"
 MAX_METADATA_BYTES = 2 * 1024 * 1024
 FILE_ATTRIBUTE_REPARSE_POINT = 0x400
@@ -215,7 +216,7 @@ def _marketplace_route(marketplace_path: Path) -> tuple[str, Path]:
     source = matches[0].get("source")
     if not isinstance(source, dict) or source.get("source") != "local":
         raise SourceRouteError("invalid_marketplace_source")
-    if source.get("path") != f"./plugins/{PLUGIN_NAME}":
+    if source.get("path") != f"./plugins/{PLUGIN_DIRECTORY}":
         raise SourceRouteError("invalid_marketplace_source")
     relative_parts = _relative_marketplace_source(source.get("path"))
     repository_root = physical_marketplace.parents[2]

@@ -21,6 +21,8 @@ param(
 
     [string]$BeeperThreadId,
 
+    [string]$GrantFile,
+
     [string]$AuthScope,
 
     [string]$AuthDomain,
@@ -37,16 +39,26 @@ param(
 
     [switch]$RunTests,
     [switch]$Apply,
-    [string]$StartupBundle
+    [string]$StartupBundle,
+    [string]$WebSettings,
+    [string]$PythonExecutable,
+    [switch]$ReplaceClosedBrowser,
+    [int]$DrainSeconds = 0,
+    [string]$RecoveryDigest
 )
 
 $ErrorActionPreference = 'Stop'
+# Native helpers emit UTF-8. A detached, redirected PowerShell child can otherwise
+# decode their JSON through the machine's legacy code page.
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 
 function Show-Usage {
     @'
 Feishu Codex Operator
 
 Usage:
+  feishu-codex-operator.ps1 product status [-Json]
   feishu-codex-operator.ps1 feishu install|configure|doctor
   feishu-codex-operator.ps1 feishu desktop-status
   feishu-codex-operator.ps1 feishu desktop-install
@@ -59,13 +71,20 @@ Usage:
   feishu-codex-operator.ps1 operator upgrade [-BeeperThreadId <task_uuid>]
   feishu-codex-operator.ps1 operator desktop-entry [-StartupBundle <reviewed_bundle>]
   feishu-codex-operator.ps1 operator uninstall [-Apply]
+  feishu-codex-operator.ps1 operator recover-native [-Apply] [-Json]
   feishu-codex-operator.ps1 operator beeper-configure -BeeperThreadId <task_uuid>
+  feishu-codex-operator.ps1 operator user-tasks-configure -GrantFile <owner_grant.json>
+  feishu-codex-operator.ps1 operator user-tasks-status|user-tasks-revoke
   feishu-codex-operator.ps1 operator final-callback-status
   feishu-codex-operator.ps1 operator final-callback-register
   feishu-codex-operator.ps1 operator final-callback-unregister
   feishu-codex-operator.ps1 operator status|doctor|readiness|validate [-Json]
   feishu-codex-operator.ps1 operator preflight|logs|test
   feishu-codex-operator.ps1 operator test -RunTests
+  feishu-codex-operator.ps1 web configure -WebSettings <existing_settings> -PythonExecutable <absolute_python>
+  feishu-codex-operator.ps1 web start|status|assist|inspect|stop|verify [-Json]
+  feishu-codex-operator.ps1 web recover [-RecoveryDigest <checked_preview_sha256>] [-Json]
+  feishu-codex-operator.ps1 web desktop-prepare|desktop-connect|desktop-status|desktop-check|desktop-disconnect [-Json]
   feishu-codex-operator.ps1 operator access -AccessMode locked -OwnerOpenId <open_id>
   feishu-codex-operator.ps1 doctor
 
@@ -80,7 +99,11 @@ function Show-WelcomeAndAutomaticWorkflow {
 
 飞书 CLI 安装完成后，可以把私聊和群聊 @ 消息挂载到当前 Codex 项目。每个私聊、群聊或群话题都能映射到一个可在 Codex Desktop 查看和继续的持久会话。
 
-首次消息会提示发送 /init，随后通过对话菜单查看并选择一个现有、未归档的 Codex Desktop 任务。当前版本不创建、恢复、归档或压缩任务。Operator 把普通消息 queue 到固定的最小 Beeper；Beeper 只向精确绑定的 Responder 中继一次。业务执行与最终答案始终由该 Responder 所有。默认只回传 Final Callback 的最终答案，不发送思考或工具过程。
+首次接入请先通过助手选择本地 Beeper 伪模型或 Luna/low，不再提供 Spark。Luna 使用账号模型额度；本地 Beeper 不需要模型推理，但当前原生接入仍需验证，安装文件不等于已可使用。已有明确选择与登录直接复用。
+
+助手会询问创建 Feishu Operator 项目、固定 Beeper 和以飞书用户姓名显示的默认业务任务，以及持续自动创建/续用获准用户任务的两项授权。获准后由助手核实本机默认位置并完成创建，用户仅处理本人登录、文件夹信任等必要交互。项目和首批任务由原生入口创建；后续用户自动登记需单独启用，不是运行本命令就已完成。
+
+已有绑定直接发消息；获准自动登记的无绑定私聊先建立或续用用户任务。需要主动选择或改绑时使用 /init，其目录功能不创建、恢复、归档或压缩任务。Operator 把普通消息 queue 到固定 Beeper；Beeper 只向精确绑定的 Responder 中继一次。业务执行与最终答案始终由 Responder 所有，只回传 Final Callback 的最终答案。
 
 Operator 挂载会在当前项目写入桥接运行文件和 Codex hooks，也不会替用户授予飞书权限。/init 的独立 App Server 只按需执行 thread/list 和 includeTurns=false 的 thread/read，不创建 Desktop 查询对话。Responder 自己的模型、推理、沙箱、插件和知识库设置保持不变；Operator 不安装、注册或检索 Obsidian。
 
@@ -827,6 +850,18 @@ function Get-OperatorParity {
             (Join-Path $skillRoot 'scripts\operator_model_router.py'),
             (Join-Path (Get-OperatorPaths).Runtime 'operator_model_router.py')
         )
+        'install-native-recovery-shortcut.ps1' = @(
+            (Join-Path $skillRoot 'scripts\install-native-recovery-shortcut.ps1'),
+            (Join-Path (Get-OperatorPaths).Runtime 'install-native-recovery-shortcut.ps1')
+        )
+        'restore-codex-official-route.ps1' = @(
+            (Join-Path $skillRoot 'scripts\restore-codex-official-route.ps1'),
+            (Join-Path (Get-OperatorPaths).Runtime 'restore-codex-official-route.ps1')
+        )
+        '恢复官方默认路由.cmd' = @(
+            (Join-Path $skillRoot 'scripts\恢复官方默认路由.cmd'),
+            (Join-Path (Get-OperatorPaths).Runtime '恢复官方默认路由.cmd')
+        )
         'operator_core\model_router_config.py' = @(
             (Join-Path $skillRoot 'scripts\operator_core\model_router_config.py'),
             (Join-Path (Get-OperatorPaths).Runtime 'operator_core\model_router_config.py')
@@ -887,6 +922,14 @@ function Get-OperatorParity {
             (Join-Path $skillRoot 'scripts\operator_core\beeper_relay.py'),
             (Join-Path (Get-OperatorPaths).Runtime 'operator_core\beeper_relay.py')
         )
+        'operator_core\user_tasks.py' = @(
+            (Join-Path $skillRoot 'scripts\operator_core\user_tasks.py'),
+            (Join-Path (Get-OperatorPaths).Runtime 'operator_core\user_tasks.py')
+        )
+        'operator_core\channel_models.py' = @(
+            (Join-Path $skillRoot 'scripts\operator_core\channel_models.py'),
+            (Join-Path (Get-OperatorPaths).Runtime 'operator_core\channel_models.py')
+        )
         'operator_core\runtime.py' = @(
             (Join-Path $skillRoot 'scripts\operator_core\runtime.py'),
             (Join-Path (Get-OperatorPaths).Runtime 'operator_core\runtime.py')
@@ -938,6 +981,8 @@ function Get-InstalledOperatorManifestIssues {
         'operator_core/dispatch.py',
         'operator_core/telemetry.py',
         'operator_core/final_callback.py',
+        'operator_core/user_tasks.py',
+        'operator_core/channel_models.py',
         'operator_core/lark.py',
         'operator_core/rate_limits.py',
         'operator_core/responder_observer.py',
@@ -947,6 +992,26 @@ function Get-InstalledOperatorManifestIssues {
         'operator_core/responses_capabilities.py',
         'operator_core/responses_tool_adapter.py',
         'operator_core/responses_events.py',
+        'operator_core/web_model_protocol.py',
+        'operator_core/web_mcp_transport.py',
+        'operator_core/web_responses_provider.py',
+        'operator_core/web_browser_driver.py',
+        'operator_core/web_browser_session.py',
+        'operator_core/web_connection.py',
+        'operator_core/web_openai_tunnel.py',
+        'operator_web_model.py',
+        'operator_web_service.py',
+        'operator_web_acceptance.py',
+        'operator_web_desktop.py',
+        'operator_web_entry.ps1',
+        'operator_product.py',
+        'operator_python.psm1',
+        'codex-operator.ps1',
+        'web_browser_host.cjs',
+        'web_browser_page.cjs',
+        'web_browser_surface.cjs',
+        'licenses/codex-chatgpt-web-MIT.txt',
+        'licenses/webcodex-Apache-2.0.txt',
         'operator_core/responses_metrics.py',
         'operator_core/responses_profiles.py',
         'operator_core/responses_verification.py',
@@ -955,6 +1020,9 @@ function Get-InstalledOperatorManifestIssues {
         'operator_core/model_router_config.py',
         'operator_core/lmstudio_discovery.py',
         'operator_model_router.py',
+        'restore-codex-official-route.ps1',
+        'install-native-recovery-shortcut.ps1',
+        '恢复官方默认路由.cmd',
         'operator_responses_probe.py',
         'operator_responses_eval.py',
         'operator_terminal_fixture.py',
@@ -968,7 +1036,7 @@ function Get-InstalledOperatorManifestIssues {
         return $issues
     }
     try {
-        $manifest = Get-Content -LiteralPath $manifestPath -Raw |
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding utf8 |
             ConvertFrom-Json -ErrorAction Stop
     } catch {
         $issues.Add("runtime-manifest.json is invalid JSON: $($_.Exception.Message)")
@@ -1704,7 +1772,7 @@ function Invoke-OperatorValidate {
         if (-not $python.Available) {
             throw 'Python 3.10+ is required for Operator tests.'
         }
-        & $python.Source @pythonPrefix -m unittest discover -s (Join-Path $pluginRoot 'tests') -v
+        & $python.Source @pythonPrefix -B (Join-Path $pluginRoot 'development\run_tests.py') -v
         if ($LASTEXITCODE -ne 0) {
             throw "Operator unit tests failed with exit code $LASTEXITCODE."
         }
@@ -1859,27 +1927,21 @@ function Invoke-OperatorPreflight {
     $executableSources = @()
     Update-ProcessPathFromEnvironment
 
-    if ($PSVersionTable.PSVersion -ge [version]'5.1') {
+    if ($PSVersionTable.PSVersion -ge [version]'7.0') {
         Write-Output ("[PASS] PowerShell {0}" -f $PSVersionTable.PSVersion)
     } else {
-        Write-Output ("[FAIL] PowerShell 5.1+ is required; found {0}" -f $PSVersionTable.PSVersion)
+        Write-Output ("[FAIL] PowerShell 7+ is required; found {0}" -f $PSVersionTable.PSVersion)
         $failed = $true
         $missingPrerequisites = $true
     }
 
-    $python = Get-ExecutablePreflightResult 'python.exe'
-    if (-not $python.Available) {
-        $python = Get-ExecutablePreflightResult 'py.exe' @('-3', '--version')
-    }
-    $pythonVersion = $null
-    if ($python.Available -and $python.Detail -match '(?i)Python\s+(\d+)\.(\d+)') {
-        $pythonVersion = [version]("{0}.{1}" -f $Matches[1], $Matches[2])
-    }
-    if ($python.Available -and $pythonVersion -and $pythonVersion -ge [version]'3.10') {
-        Write-Output ("[PASS] Python {0}" -f $python.Detail)
+    Import-Module (Join-Path $PSScriptRoot 'operator_python.psm1') -Force
+    $python = Get-OperatorPython -McpCommand
+    if ($python.Available) {
+        Write-Output ("[PASS] {0}" -f $python.Detail)
         $executableSources += $python.Source
     } else {
-        Write-Output ("[FAIL] Python 3.10+ is unavailable: {0}" -f $python.Detail)
+        Write-Output ("[FAIL] {0}" -f $python.Detail)
         $failed = $true
         $missingPrerequisites = $true
     }
@@ -2125,11 +2187,27 @@ function Invoke-FinalCallbackRegistryHelper {
 $scopeName = $Scope.ToLowerInvariant()
 $actionName = $Action.ToLowerInvariant()
 
-if ($Json -and -not ($scopeName -eq 'operator' -and $actionName -in @('status', 'doctor', 'readiness', 'validate'))) {
-    throw '-Json is supported only for operator status, operator doctor, operator readiness, and operator validate.'
+if ($Json -and $scopeName -notin @('web','product') -and -not ($scopeName -eq 'operator' -and $actionName -in @('status', 'doctor', 'readiness', 'validate', 'recover-native'))) {
+    throw '-Json is supported only for web commands and operator status, doctor, readiness, validate, and recover-native.'
 }
 
 switch ($scopeName) {
+    'product' {
+        if ($actionName -cne 'status') { throw 'Use product status to inspect setup progress.' }
+        Import-Module (Join-Path $PSScriptRoot 'operator_python.psm1') -Force
+        $productPython = Get-OperatorPython -Required
+        $productArguments = @('-X','utf8','-E','-s','-B',(Join-Path $PSScriptRoot 'operator_product.py'),
+            '--project-root',(Resolve-Project))
+        if ($Json) { $productArguments += '--json' }
+        & $productPython.Source @($productPython.Prefix) @productArguments
+        exit $LASTEXITCODE
+    }
+    'web' {
+        & (Join-Path $PSScriptRoot 'operator_web_entry.ps1') -Action $actionName -ProjectRoot (Resolve-Project) `
+            -Settings $WebSettings -PythonExecutable $PythonExecutable -ReplaceClosedBrowser:$ReplaceClosedBrowser `
+            -DrainSeconds $DrainSeconds -RecoveryDigest $RecoveryDigest -Json:$Json
+        exit $LASTEXITCODE
+    }
     'help' { Show-Usage; exit 0 }
     '-help' { Show-Usage; exit 0 }
     '--help' { Show-Usage; exit 0 }
@@ -2164,6 +2242,10 @@ switch ($scopeName) {
             'uninstall' {
                 & (Join-Path $PSScriptRoot 'uninstall-feishu-codex-operator.ps1') -ProjectRoot (Resolve-Project) -Apply:$Apply
             }
+            'recover-native' {
+                & (Join-Path $PSScriptRoot 'restore-codex-official-route.ps1') -ProjectRoot (Resolve-Project) -Apply:$Apply -Json:$Json
+                exit $LASTEXITCODE
+            }
             'install' { Invoke-Installer }
             'upgrade' { Invoke-Installer -Upgrade; Write-Output 'Upgrade installed. Continue with the separately observable operator restart transaction to activate it.' }
             'hooks' { Invoke-OperatorHooksRefresh }
@@ -2177,6 +2259,23 @@ switch ($scopeName) {
                 Invoke-FinalCallbackRegistryHelper -Command 'final-callback-unregister'
             }
             'beeper-configure' { Invoke-MinimalBeeperConfigure }
+            'user-tasks-configure' {
+                Assert-OperatorStopped
+                if ([string]::IsNullOrWhiteSpace($GrantFile)) { throw 'An explicit saved owner grant is required.' }
+                $paths = Get-OperatorPaths
+                & python -B (Join-Path $PSScriptRoot 'routing_cli.py') --runtime-dir $paths.Runtime user-tasks-configure --grant-file $GrantFile
+                if ($LASTEXITCODE -ne 0) { throw 'User task configuration was not completed; retained records require review.' }
+            }
+            'user-tasks-status' {
+                $paths = Get-OperatorPaths
+                & python -B (Join-Path $PSScriptRoot 'routing_cli.py') --runtime-dir $paths.Runtime user-tasks-status
+                if ($LASTEXITCODE -ne 0) { throw 'User task status is unavailable.' }
+            }
+            'user-tasks-revoke' {
+                $paths = Get-OperatorPaths
+                & python -B (Join-Path $PSScriptRoot 'routing_cli.py') --runtime-dir $paths.Runtime user-tasks-revoke
+                if ($LASTEXITCODE -ne 0) { throw 'User task revocation was not completed.' }
+            }
             'start' { Invoke-OperatorStart }
             'stop' { Invoke-OperatorStop }
             'restart' { Invoke-OperatorRestart }

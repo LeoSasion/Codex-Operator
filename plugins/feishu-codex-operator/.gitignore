@@ -9,3 +9,4 @@ _retired/
 /skills-lock.json
 __pycache__/
 *.py[cod]
+**/_quarantine/

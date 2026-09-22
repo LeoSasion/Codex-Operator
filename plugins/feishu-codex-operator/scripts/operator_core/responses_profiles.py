@@ -18,6 +18,14 @@ CHECKS = frozenset({"json", "sse", "required", "named", "structured", "unicode",
 CORE_CHECKS = frozenset({"cli_nested", "cli_multiround", "cli_tool_error", "cli_error_stop", "cli_exit_stop",
                          "cli_patchplan", "cli_cancel"})
 FINAL_TEXT_POLICIES = frozenset({"exact", "marker_line_v1"})
+CLI_VERSION_PATTERN = (r"[0-9]+\.[0-9]+\.[0-9]+"
+                       r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+                       r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?")
+
+
+def valid_cli_version(value):
+    # Keep prerelease/build identity intact for exact evidence matching.
+    return isinstance(value, str) and len(value) <= 80 and re.fullmatch(CLI_VERSION_PATTERN, value) is not None
 
 
 def validate_row(row):
@@ -116,7 +124,7 @@ def inspect_profile(value, *, cli_version=None):
                 or not isinstance(record["checked_at"], str)
                 or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", record["checked_at"])
                 or not isinstance(record["cli_version"], str)
-                or not re.fullmatch(r"(?:\d+\.\d+\.\d+|none)", record["cli_version"])):
+                or not (record["cli_version"] == "none" or valid_cli_version(record["cli_version"]))):
             raise RouterError("invalid_profile_check_record")
         if record["case"] in TERMINAL_CASES:
             terminal = record.get("terminal")
@@ -193,6 +201,8 @@ def preflight(row, *, request=None):
     if request is not None:
         prepare_request(request, route.responses, route.reasoning_efforts)
     return {"configuration_valid": True, "upstream_requests": 0,
-            "required_client_settings": {"web_search": "disabled", "request_max_retries": 0,
+            "required_client_settings": {"features.standalone_web_search": True, "request_max_retries": 0,
                                          "stream_max_retries": 0},
+            "search_provider_requirement": "native_openai_or_explicit_standalone_search_provider",
+            "search_mode_preserved": True, "search_verified": False,
             "requires_explicit_history": True, "desktop_verified": False}

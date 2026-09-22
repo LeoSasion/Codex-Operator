@@ -1,4 +1,4 @@
 interface:
-  display_name: "Feishu Codex Operator"
-  short_description: "Configure and develop the Feishu-to-Codex Operator"
-  default_prompt: "Use $feishu-codex-operator to inspect this project and complete the requested Operator setup, diagnosis, or development."
+  display_name: "Codex-Operator"
+  short_description: "Channels and Models (API / Local / Web)"
+  default_prompt: "使用 $codex-operator 完成配置、诊断或开发，复用已有设置；首次接入 Channels 时让我选择本地 Beeper 或 Luna/low，获准后帮我创建通道项目和默认任务。"

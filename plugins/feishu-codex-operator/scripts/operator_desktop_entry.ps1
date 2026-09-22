@@ -32,6 +32,8 @@ try {
             if ((Split-Path -Parent $workflowBundle) -ine $privateRoot) { throw 'Startup workflow is outside the selected project.' }
         }
     }
+    $routeHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex' }
+    if (Test-Path -LiteralPath (Join-Path $routeHome 'operator-native-route-only')) { $nativeOnly = $true }
     if (-not $CheckOnly) {
         $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($projectRoot.ToLowerInvariant())))
         $entryMutex = [Threading.Mutex]::new($false, ('Local\CodexOperatorDesktopEntry-' + $hash))
@@ -71,12 +73,21 @@ try {
         exit 0
     }
     $plan = Get-Content -LiteralPath (Join-Path $workflowBundle 'startup-sync-plan.json') -Raw -Encoding utf8 | ConvertFrom-Json
-    $startup = Join-Path $workflowBundle 'start-codex-with-lmstudio.ps1'
-    if ((Get-FileHash -LiteralPath $startup -Algorithm SHA256).Hash.ToLowerInvariant() -cne $plan.entry_files.'start-codex-with-lmstudio.ps1') {
+    $startupName = 'start-codex-with-lmstudio.ps1'
+    if ($plan.schema_version -eq 2) {
+        if ($plan.startup_script -cne 'start-codex-with-web.ps1') { throw 'Unknown startup workflow.' }
+        $startupName = $plan.startup_script
+    } elseif ($null -ne $plan.schema_version -and $plan.schema_version -ne 1) { throw 'Unknown startup workflow version.' }
+    $startup = Join-Path $workflowBundle $startupName
+    if ((Get-FileHash -LiteralPath $startup -Algorithm SHA256).Hash.ToLowerInvariant() -cne $plan.entry_files.$startupName) {
         throw 'The reviewed startup workflow changed.'
     }
     & $startup *> $entryLog
     if ($LASTEXITCODE -ne 0) { throw 'The startup workflow stopped. No automatic retry was attempted.' }
+    if ($startupName -ceq 'start-codex-with-web.ps1') {
+        # The Web workflow prepares services only. Desktop still owns every task.
+        Start-Process -FilePath $executable -WorkingDirectory (Split-Path -Parent $executable) -WindowStyle Normal
+    }
     exit 0
 } catch {
     $message = 'STOPPED: ' + $_.Exception.Message

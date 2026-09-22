@@ -1,0 +1,361 @@
+"""Operator-owned Web protocol conversion, independent of any reference app.
+
+This module performs no network, browser, credential, process or tool execution.
+It is not registered by the router yet. A future authenticated transport must
+bind the actual browser document/model/turn before supplying public messages or
+completed structured calls. Page text can never declare or invoke a tool here.
+"""
+
+from copy import deepcopy
+import hashlib
+import json
+import re
+from urllib.parse import urlsplit
+
+from .model_registry import ModelRoute
+from .responses_capabilities import RouterError
+from .responses_events import MAX_EVENT_BYTES, completed_response_events
+from .responses_tool_adapter import (
+    MAX_OUTPUT_ITEMS, bounded_string, identifier, loads, prepare_request, restore_response,
+)
+
+
+PUBLIC_CITATION_ERRORS = frozenset({
+    'web_public_citations_invalid', 'web_public_citation_sources_invalid',
+    'web_public_citation_source_invalid', 'web_public_citation_title_invalid',
+    'web_public_citation_url_invalid', 'web_public_citation_type_unsupported',
+    'web_public_citation_position_invalid', 'web_public_sources_footnote_invalid',
+    'web_public_citation_marker_invalid', 'web_public_citation_overlap',
+    'web_public_sources_footnote_mismatch', 'web_public_citation_text_mismatch',
+    'web_public_citation_unmapped',
+})
+
+
+def render_public_citations(parts, references):
+    """Render the dated Web citation spans, without changing any other text.
+
+    2026-09-16's emoji probe establishes Unicode-scalar offsets. The observed
+    sources_footnote is a virtual trailing space outside the original text; it
+    supplies no invented character or search event. The 2026-09-19 probe also
+    observes zero-width trailing footnotes and labelled url/item references.
+    Footnotes cover grouped citations, not the separately labelled links.
+    Original parts/references
+    remain untouched in the caller's bound public message.
+    """
+    if not isinstance(references, list) or len(references) > 128:
+        raise RouterError('web_public_citations_invalid')
+    total = sum(len(part) for part in parts)
+    grouped, footnotes, cited = [], [], set()
+
+    def links(values):
+        if not isinstance(values, list) or not 1 <= len(values) <= 64:
+            raise RouterError('web_public_citation_sources_invalid')
+        result = []
+        for value in values:
+            if not isinstance(value, dict) or set(value) != {'title', 'url'}:
+                raise RouterError('web_public_citation_source_invalid')
+            title = bounded_string(value['title'], maximum=8192)
+            url = bounded_string(value['url'], maximum=8192)
+            if not title or any(ord(c) < 32 for c in title):
+                raise RouterError('web_public_citation_title_invalid')
+            try:
+                parsed = urlsplit(url)
+                valid = (parsed.scheme in ('http', 'https') and parsed.hostname
+                    and parsed.username is None and parsed.password is None
+                    and not any(c.isspace() or ord(c) < 32 or c in '<>\\"' for c in url))
+                parsed.port
+            except ValueError:
+                valid = False
+            if not valid:
+                raise RouterError('web_public_citation_url_invalid')
+            label = re.sub(r'([\\`*_{}\[\]()<>!#|~])', r'\\\1', title)
+            result.append((title, url, '[' + label + '](<' + url + '>)'))
+        return result
+
+    for reference in references:
+        if not isinstance(reference, dict):
+            raise RouterError('web_public_citations_invalid')
+        kind = reference.get('type')
+        if not isinstance(kind, str):
+            raise RouterError('web_public_citation_type_unsupported')
+        expected_keys = {'type', 'matched_text', 'start_idx', 'end_idx'} | {
+            'grouped_webpages': {'items'}, 'sources_footnote': {'sources'},
+            'url': {'title', 'item'},
+        }.get(kind, set())
+        if kind not in ('grouped_webpages', 'sources_footnote', 'url') or set(reference) != expected_keys:
+            raise RouterError('web_public_citation_type_unsupported')
+        start, end = reference['start_idx'], reference['end_idx']
+        if type(start) is not int or type(end) is not int or not 0 <= start <= end <= total + 1:
+            raise RouterError('web_public_citation_position_invalid')
+        matched = bounded_string(reference['matched_text'], maximum=8192)
+        if kind == 'sources_footnote':
+            if start != total or end not in (total, total + 1) or matched != ' ' or footnotes:
+                raise RouterError('web_public_sources_footnote_invalid')
+            footnotes.append(links(reference['sources']))
+            continue
+        if start == end:
+            raise RouterError('web_public_citation_position_invalid')
+        if kind == 'url':
+            marker = re.fullmatch(r'\ue200url\ue202([^\ue200\ue201\ue202]+)\ue202turn[0-9]+(?:search|view|news)[0-9]+\ue201', matched)
+            if marker is None or marker[1] != reference['title']:
+                raise RouterError('web_public_citation_marker_invalid')
+            # The page's displayed label and source title have distinct roles.
+            # Validate both; render the exact label with the exact item URL.
+            source = links([reference['item']])[0]
+            values = links([{'title': reference['title'], 'url': source[1]}])
+        else:
+            if not re.fullmatch(r'\ue200cite\ue202turn[0-9]+(?:search|view|news)[0-9]+(?:\ue202turn[0-9]+(?:search|view|news)[0-9]+)*\ue201', matched):
+                raise RouterError('web_public_citation_marker_invalid')
+            values = links(reference['items'])
+            cited.update((title, url) for title, url, _ in values)
+        grouped.append((start, end, matched, values))
+    grouped.sort(key=lambda entry: entry[0])
+    if any(left[1] > right[0] for left, right in zip(grouped, grouped[1:])):
+        raise RouterError('web_public_citation_overlap')
+    # The public footer can list only a subset (observed 2026-09-19 AX),
+    # independently of earlier inline groups. Every inline group is rendered;
+    # accepting a bound subset never removes a source from the answer.
+    if footnotes and not {(title, url) for title, url, _ in footnotes[0]} <= cited:
+        raise RouterError('web_public_sources_footnote_mismatch')
+    rendered, position, used = [], 0, 0
+    for part in parts:
+        cursor, chunks = 0, []
+        for start, end, matched, values in grouped:
+            if position <= start < position + len(part):
+                a, b = start - position, end - position
+                if b > len(part) or part[a:b] != matched:
+                    raise RouterError('web_public_citation_text_mismatch')
+                chunks.extend((part[cursor:a], ' '.join(link for _, _, link in values)))
+                cursor, used = b, used + 1
+        chunks.append(part[cursor:])
+        value = ''.join(chunks)
+        if '\ue200cite\ue202' in value or '\ue200url\ue202' in value:
+            raise RouterError('web_public_citation_unmapped')
+        rendered.append(value)
+        position += len(part)
+    if used != len(grouped):
+        raise RouterError('web_public_citation_position_invalid')
+    return rendered
+
+
+def public_web_message(message, *, citation_mode='none'):
+    """Project one dated public page-message shape; preserve every text part.
+
+    The shape is a compatibility contract, not browser identity attestation.
+    No React traversal, HTML conversion, hidden reasoning, text-field fallback,
+    Markdown repair, part concatenation or inferred function call is permitted.
+    """
+    if not isinstance(message, dict):
+        raise RouterError("web_public_message_required")
+    author, content = message.get("author"), message.get("content")
+    if (not isinstance(author, dict) or author.get("role") != "assistant"
+            or message.get("recipient") not in (None, "all")
+            or message.get("status") != "finished_successfully"
+            or message.get("channel") not in ("final", "commentary")):
+        raise RouterError("web_public_message_not_finished_or_public")
+    metadata = message.get("metadata", {})
+    if not isinstance(metadata, dict):
+        raise RouterError("web_hidden_message_rejected")
+    for key in ("is_visually_hidden_from_conversation", "is_visually_hidden"):
+        flag = metadata.get(key)
+        if flag is not None and flag is not False:
+            raise RouterError("web_hidden_message_rejected")
+    final = message["channel"] == "final"
+    if message.get("end_turn") is not final:
+        raise RouterError("web_public_message_end_turn_mismatch")
+    if not isinstance(content, dict) or content.get("content_type") != "text":
+        raise RouterError("web_public_text_required")
+    parts = content.get("parts")
+    if not isinstance(parts, list) or not 1 <= len(parts) <= MAX_OUTPUT_ITEMS:
+        raise RouterError("web_public_text_parts_required")
+    parts = [bounded_string(part, maximum=MAX_EVENT_BYTES) for part in parts]
+    if citation_mode == 'markdown_links_v1':
+        parts = render_public_citations(parts, message.get('public_references'))
+    elif citation_mode != 'none' or message.get('public_references'):
+        raise RouterError('web_public_citation_mode_required')
+    projected = []
+    for part in parts:
+        projected.append({"type": "output_text", "text": bounded_string(
+            part, maximum=MAX_EVENT_BYTES), "annotations": []})
+    # A public Web UUID belongs to the browser document, not the Responses ID
+    # namespace. Derive a stable, bounded Responses message ID at projection
+    # time only. Keep the original page object, historical inputs and tool/call
+    # identities unchanged; this mapping is not authentication or attestation.
+    source_id = identifier(message.get("id"))
+    item_id = "msg_ow_" + hashlib.sha256(
+        b"operator_web_message_v1\0" + source_id.encode("utf-8")).hexdigest()[:48]
+    return {"type": "message", "id": item_id,
+            "role": "assistant", "status": "completed",
+            "phase": "final_answer" if final else "commentary", "content": projected}
+
+
+def workspace_telemetry(value):
+    """Validate observed CLI Git telemetry; never interpret it as permission.
+
+    0.155.0-alpha.2.6 adds remotes and the HEAD hash to the earlier dirty flag.
+    Both absent telemetry and its later arrival were observed. All original
+    bytes remain in request(); this only permits comparison across tool steps.
+    """
+    if not isinstance(value, dict) or len(value) > 32:
+        return False
+    for root, state in value.items():
+        if (not isinstance(root, str) or not 1 <= len(root) <= 4096
+                or not isinstance(state, dict) or 'has_changes' not in state
+                or set(state) - {'has_changes', 'associated_remote_urls', 'latest_git_commit_hash'}
+                or type(state['has_changes']) is not bool):
+            return False
+        if 'latest_git_commit_hash' in state:
+            commit = state['latest_git_commit_hash']
+            if not isinstance(commit, str) or not re.fullmatch(r'[0-9a-f]{40}', commit):
+                return False
+        if 'associated_remote_urls' in state:
+            remotes = state['associated_remote_urls']
+            if (not isinstance(remotes, dict) or len(remotes) > 32
+                    or any(not isinstance(name, str) or not 1 <= len(name) <= 256
+                        or not isinstance(url, str) or not 1 <= len(url) <= 8192
+                        for name, url in remotes.items())):
+                return False
+    return True
+
+
+class WebModelProtocol:
+    """Reuse the existing route, tool map and terminal validator for one request.
+
+    The transport owns lifetime and authentication. Calling these pure conversion
+    methods does not admit a request, register a model or execute any returned call.
+    """
+
+    def __init__(self, route: ModelRoute, payload: dict, *, citation_mode='none'):
+        if (route.responses is None or not route.slug.startswith("api/chatgpt-web/")
+                or not isinstance(payload, dict) or payload.get("model") != route.slug):
+            raise RouterError("web_explicit_route_required")
+        if citation_mode not in ('none', 'markdown_links_v1'):
+            raise RouterError('web_public_citation_mode_required')
+        self.citation_mode = citation_mode
+        prepared, context = prepare_request(payload, route.responses, route.reasoning_efforts)
+        # MCP declarations have JSON-object arguments; registered custom sources
+        # must use the existing explicit wrapper rather than a second exec codec.
+        for tool in prepared.get("tools", []):
+            if tool.get("type") != "function":
+                raise RouterError("web_mcp_function_representation_required")
+            if tool["parameters"].get("type") != "object":
+                raise RouterError("web_mcp_object_schema_required")
+            if "description" in tool and not isinstance(tool["description"], str):
+                raise RouterError("web_mcp_text_description_required")
+        self.route = route
+        self._source_input = deepcopy(payload.get("input"))
+        # A single browser generation has already consumed these controls.
+        # Bind the original declarations too: MCP projection omits e.g. strict
+        # and compilation may narrow parallel permission. JSON preserves the
+        # distinction between boolean/number and absent/null; key order is not
+        # significant. This representation stays in memory, never in receipts.
+        controls = deepcopy({key: value for key, value in payload.items() if key != "input"})
+        metadata = controls.get("client_metadata")
+        if isinstance(metadata, dict) and "x-codex-turn-metadata" in metadata:
+            # Observed CLI 0.154.0-alpha.6.2 serializes this JSON-object transport
+            # field in different key orders between tool steps. Compare its
+            # complete data, without changing the original request or history.
+            raw = metadata["x-codex-turn-metadata"]
+            if not isinstance(raw, str):
+                raise RouterError("web_turn_metadata_json_object_required")
+            decoded = loads(raw)
+            if not isinstance(decoded, dict):
+                raise RouterError("web_turn_metadata_json_object_required")
+            # Only the dated Git telemetry shapes are excluded from comparison.
+            # Unknown fields, tool grants and sandbox overrides remain rejected.
+            if "workspaces" in decoded:
+                if not workspace_telemetry(decoded["workspaces"]):
+                    raise RouterError("web_workspace_telemetry_shape_unsupported")
+                del decoded["workspaces"]
+            metadata["x-codex-turn-metadata"] = decoded
+        self._continuation_contract = json.dumps(controls,
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        self._prepared = prepared
+        self._context = context
+
+    def request(self):
+        """Return the complete mapped request, not a rewritten privileged prompt."""
+        return {**deepcopy(self._prepared), "model": self.route.model}
+
+    def mcp_tools(self):
+        """Describe only the tools actually visible in this Codex request."""
+        return [{"name": tool["name"], "description": tool.get("description", ""),
+                 "inputSchema": deepcopy(tool["parameters"])}
+                for tool in self._prepared.get("tools", [])]
+
+    def source_input(self):
+        """Original validated history, for lossless labelled MCP result return."""
+        return deepcopy(self._source_input)
+
+    def mcp_tool_sources(self):
+        """Exact source identities for the current visible inventory only."""
+        return {tool['name']: {'type': spec.kind, 'name': spec.name,
+            'namespace': spec.namespace}
+            for tool in self._prepared.get('tools', [])
+            for spec in [self._context.upstream[tool['name']]]}
+
+    def continuation_contract(self):
+        """Exact original non-history controls for one browser generation."""
+        return self._continuation_contract
+
+    def continuation_changes(self, previous):
+        """Fixed field labels only; never values, arbitrary keys or permissions.
+
+        This observes a rejected binding. It does not make any changed field
+        acceptable and does not retain the source contract outside memory.
+        """
+        before = json.loads(previous.continuation_contract())
+        after = json.loads(self.continuation_contract())
+
+        def changed(left, right, known):
+            left = left if isinstance(left, dict) else {}
+            right = right if isinstance(right, dict) else {}
+            keys = {key for key in left.keys() | right.keys()
+                if key not in left or key not in right or json.dumps(left[key], sort_keys=True,
+                    ensure_ascii=False, allow_nan=False) != json.dumps(right[key], sort_keys=True,
+                    ensure_ascii=False, allow_nan=False)}
+            return sorted({key if key in known else 'other' for key in keys})
+
+        fields = changed(before, after, {'model', 'tools', 'tool_choice', 'parallel_tool_calls',
+            'instructions', 'reasoning', 'text', 'stream', 'store', 'include', 'metadata',
+            'client_metadata', 'prompt_cache_key', 'service_tier', 'max_output_tokens',
+            'previous_response_id', 'temperature', 'top_p'})
+        result = {'fields': fields}
+        if 'client_metadata' in fields:
+            left, right = before.get('client_metadata'), after.get('client_metadata')
+            result['client_metadata'] = changed(left, right,
+                {'thread_id', 'turn_id', 'x-codex-turn-metadata', 'session_id', 'originator'})
+            if 'x-codex-turn-metadata' in result['client_metadata']:
+                result['turn_metadata'] = changed(
+                    left.get('x-codex-turn-metadata') if isinstance(left, dict) else None,
+                    right.get('x-codex-turn-metadata') if isinstance(right, dict) else None,
+                    {'thread_id', 'turn_id', 'session_id', 'turn_source', 'sandbox',
+                        'sandbox_mode', 'auto_review_enabled', 'approval_policy',
+                        'model', 'reasoning_effort', 'cwd', 'workspaces'})
+        return result
+
+    def complete(self, response):
+        """Validate the complete structured result before returning any tool/event.
+
+        Only the authenticated transport may submit a response. A tool-call
+        boundary and a browser's final answer are separate transport facts.
+        This is buffered event serialization, never first-token timing evidence.
+        """
+        if not isinstance(response, dict) or response.get("model") != self.route.model:
+            raise RouterError("web_response_model_mismatch")
+        restored = restore_response(response, self._context)
+        restored["model"] = self.route.slug
+        # The existing serializer preflights actual event and cumulative UTF-8
+        # limits, including repeated snapshots, before exposing the first event.
+        events = tuple(completed_response_events(restored))
+        return restored, events
+
+    def complete_public_message(self, response_id, message):
+        """Accept a final public message from an already-bound browser turn."""
+        item = public_web_message(message, citation_mode=self.citation_mode)
+        if item["phase"] != "final_answer":
+            raise RouterError("web_commentary_is_not_final_answer")
+        return self.complete({"id": identifier(response_id), "object": "response",
+            "status": "completed", "model": self.route.model, "output": [item],
+            # The browser does not supply API billing counters. Do not invent them.
+            "usage": None})

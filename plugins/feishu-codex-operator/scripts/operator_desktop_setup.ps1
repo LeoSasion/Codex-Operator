@@ -1,15 +1,16 @@
 #requires -Version 7.0
 [CmdletBinding()]
-param([ValidateSet('preview','install','restore')][string]$Action = 'preview',
+param([ValidateSet('preview','install','restore','preview-migration','migrate','restore-migration')][string]$Action = 'preview',
       [Parameter(Mandatory=$true)][string]$ProjectRoot,
-      [string]$StartupBundle, [switch]$Library)
+      [string]$StartupBundle, [string]$LegacyReceipt, [string]$ExpectedPlanSha256, [switch]$Library)
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'operator_installation.psm1') -Force -DisableNameChecking
+. (Join-Path $PSScriptRoot 'operator_entry_migration.ps1')
 
 function Show-OperatorInstallationNotice {
     @'
 初始化说明：将配置当前用户桌面和开始菜单的“Codex拓展入口”，并先保存同名原快捷方式。官方 Codex 入口保持独立。
-Codex 已运行时只打开现有窗口；本地模型同步仅在对应功能已配置且 Codex 完全退出后的启动时执行。
+Codex 已运行时只打开现有窗口；已配置的 Web 后台或本地模型同步在 Codex 完全退出后的启动时准备。
 原生任务栏固定项可能需要手动重新固定。不会修改应用程序本体、默认模型、审批或沙箱设置。
 安全卸载会按安装记录恢复入口、项目规则和 Hooks，遇到后续修改则停止并保留原件。
 请先执行 operator uninstall 预览，再执行 operator uninstall -Apply 完成恢复，最后在 Desktop 移除插件。
@@ -18,7 +19,7 @@ Codex 已运行时只打开现有窗口；本地模型同步仅在对应功能�
 }
 
 function Install-OperatorDesktopEntry {
-    param([string]$ProjectRoot, [string]$StartupBundle)
+    param([string]$ProjectRoot, [string]$StartupBundle, [switch]$EntryMigration)
     $project = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\')
     $bundle = Join-Path $project '.codex/operator-desktop-entry'
     Assert-OperatorPlainPath $bundle
@@ -49,8 +50,13 @@ function Install-OperatorDesktopEntry {
             throw 'The existing launcher changed; setup preserved it for review.'
         }
     }
-    Start-OperatorInstallation -ProjectRoot $project -LinkPaths $targets
-    $state = Get-OperatorOwnership $project
+    if ($EntryMigration) {
+        $state = Get-OperatorEntryMigrationState $project
+        if ($state.phase -cne 'installing') { throw 'Entry migration not prepared.' }
+    } else {
+        Start-OperatorInstallation -ProjectRoot $project -LinkPaths $targets
+        $state = Get-OperatorOwnership $project
+    }
     $nativeMarker = Join-Path $bundle 'native-only'
     $reactivate = Test-Path -LiteralPath $nativeMarker
     if ($reactivate) {
@@ -85,7 +91,12 @@ function Install-OperatorDesktopEntry {
         $workflow = [IO.Path]::GetFullPath($StartupBundle).TrimEnd('\')
         if ((Split-Path -Parent $workflow) -ine (Join-Path $project '.codex')) { throw 'Startup workflow must belong to this project.' }
         $plan = Get-Content -LiteralPath (Join-Path $workflow 'startup-sync-plan.json') -Raw -Encoding utf8 | ConvertFrom-Json
-        if ((Get-OperatorFingerprint (Join-Path $workflow 'start-codex-with-lmstudio.ps1')) -cne $plan.entry_files.'start-codex-with-lmstudio.ps1') {
+        $startupName = 'start-codex-with-lmstudio.ps1'
+        if ($plan.schema_version -eq 2) {
+            if ($plan.startup_script -cne 'start-codex-with-web.ps1') { throw 'Unknown startup workflow.' }
+            $startupName = $plan.startup_script
+        } elseif ($null -ne $plan.schema_version -and $plan.schema_version -ne 1) { throw 'Unknown startup workflow version.' }
+        if ((Get-OperatorFingerprint (Join-Path $workflow $startupName)) -cne $plan.entry_files.$startupName) {
             throw 'Startup workflow digest changed.'
         }
         $configuration.mode = 'reviewed_startup'
@@ -125,7 +136,11 @@ function Install-OperatorDesktopEntry {
                 $link.IconLocation = $icon + ',0'; $link.WindowStyle = 7
                 $link.Description = 'Codex拓展入口：项目提供的独立启动器；已配置的模型同步在完全退出后启动时执行。'
                 $link.Save()
-                Set-OperatorManagedFile -ProjectRoot $project -Path $target -Bytes ([IO.File]::ReadAllBytes($temporary)) -LinkPaths $targets
+                if ($EntryMigration) {
+                    Set-OperatorEntryMigrationFile $project $target ([IO.File]::ReadAllBytes($temporary))
+                } else {
+                    Set-OperatorManagedFile -ProjectRoot $project -Path $target -Bytes ([IO.File]::ReadAllBytes($temporary)) -LinkPaths $targets
+                }
             } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary } }
         }
         if ($reactivate) { Remove-Item -LiteralPath $nativeMarker }
@@ -138,4 +153,10 @@ switch ($Action) {
     'preview' { Get-OperatorRestorePlan $ProjectRoot @(Get-OperatorDesktopPaths -IncludeLegacy) | ConvertTo-Json -Depth 6 }
     'install' { Show-OperatorInstallationNotice; Install-OperatorDesktopEntry $ProjectRoot $StartupBundle | ConvertTo-Json }
     'restore' { throw 'Use operator uninstall so routing is detached before restoring the entry.' }
+    'preview-migration' { Get-OperatorEntryMigrationPlan $ProjectRoot $LegacyReceipt $StartupBundle | ConvertTo-Json -Depth 10 }
+    'migrate' {
+        Write-Output '本次只迁移当前用户的 Codex拓展入口，保留迁移前快捷方式原件及缺失状态。不会重建旧运行时、规则或 Hooks 的初装归属，不更改模型路由；任务栏可能需要手动重新固定。可用 restore-migration 单独恢复入口；完整卸载仍需处理旧安装记录。'
+        Invoke-OperatorEntryMigration $ProjectRoot $LegacyReceipt $StartupBundle $ExpectedPlanSha256 | ConvertTo-Json
+    }
+    'restore-migration' { Restore-OperatorEntryMigration $ProjectRoot | ConvertTo-Json }
 }

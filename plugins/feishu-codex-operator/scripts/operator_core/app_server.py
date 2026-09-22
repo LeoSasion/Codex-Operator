@@ -127,6 +127,7 @@ class AppServerSession:
         )
         if not isinstance(result, dict):
             raise self._error_type("read-only App Server initialization failed")
+        self.server_info = result
         self.notify("initialized")
 
     def close(self) -> None:

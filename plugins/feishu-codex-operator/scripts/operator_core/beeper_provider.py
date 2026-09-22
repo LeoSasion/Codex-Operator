@@ -51,7 +51,7 @@ def beeper_bootstrap(request_id: str) -> str:
         "const started=Date.now();\n"
         'const relay=ALL_TOOLS.find(t=>t.name.endsWith("__take_relay"));\n'
         "const result=await tools[relay.name](" + arguments + ");\n"
-        "await eval(result.structuredContent.code)();\n"
+        'await eval(result.structuredContent.code)();\n'
     )
 
 

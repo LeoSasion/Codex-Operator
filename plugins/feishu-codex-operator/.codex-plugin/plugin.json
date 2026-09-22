@@ -1,25 +1,23 @@
 {
-  "name": "feishu-codex-operator",
-  "version": "1.1.0",
-  "description": "Map Feishu conversations to Codex Desktop tasks with minimal Beeper relay and Final Callback delivery.",
+  "name": "codex-operator",
+  "version": "1.2.0-preview.1",
+  "description": "Codex-Operator: IM Channels and Models with API, Local and Web Providers.",
   "author": {
-    "name": "Feishu Codex Operator Project"
+    "name": "Codex-Operator contributors"
   },
   "skills": "./skills/",
   "interface": {
-    "displayName": "\u98de\u4e66 Codex Operator\uff08\u63a5\u7ebf\u5458\uff09",
-    "shortDescription": "\u81ea\u9002\u5e94 Beeper \u5524\u9192\u4fe1\u53f7\uff0cFinal Callback \u56de\u4f20",
-    "longDescription": "\u98de\u4e66 Codex \u63a5\u7ebf\u5458\uff1a\u6301\u4e45\u4f1a\u8bdd\u6620\u5c04\u3001\u6700\u5c0f Beeper \u4e2d\u7ee7\u3001\u81ea\u9002\u5e94\u5524\u9192\u4e0e\u989d\u5ea6\u68c0\u67e5\u3001\u53ea\u8bfb\u4efb\u52a1\u76ee\u5f55\u548c\u751f\u547d\u5468\u671f\u89c2\u5bdf\u3002Responder \u72ec\u5360\u4e1a\u52a1\u6267\u884c\uff0cFinal Callback \u56de\u4f20\u6700\u7ec8\u7b54\u6848\u3002 \u521d\u59cb\u5316\u4f1a\u914d\u7f6e\u5f53\u524d\u7528\u6237\u684c\u9762\u548c\u5f00\u59cb\u83dc\u5355\u7684 Codex \u5165\u53e3\uff0c\u5e76\u4fdd\u7559\u539f\u5feb\u6377\u65b9\u5f0f\uff1b\u4efb\u52a1\u680f\u53ef\u80fd\u9700\u8981\u624b\u52a8\u91cd\u65b0\u56fa\u5b9a\u3002\u5378\u8f7d\u524d\u987b\u5148\u8fd0\u884c\u9879\u76ee\u5b89\u5168\u5378\u8f7d\u6062\u590d\u5165\u53e3\u548c Hooks\uff0c\u518d\u4ece Desktop \u79fb\u9664\u63d2\u4ef6\uff1b\u76f4\u63a5\u5220\u9664\u63d2\u4ef6\u4e0d\u4ee3\u8868\u5df2\u6062\u590d\u3002",
-    "developerName": "Feishu Codex Operator Project",
+    "displayName": "Codex-Operator",
+    "shortDescription": "Channels · Models（API / Local / Web）",
+    "longDescription": "为 Codex Desktop 提供 Channels 与 Models 两个职能板块：Channels 接入 IM（当前实现飞书）；Models 包含 API、Local 和 Web Providers，ChatGPT Web 归属 Web Providers。原生任务继续拥有上下文、工具和审批，按需配置并复用已有登录。",
+    "developerName": "Codex-Operator",
     "category": "Productivity",
     "capabilities": [
-      "Feishu authentication, attachments and durable delivery",
-      "Exact scope-to-task mapping and read-only /init",
-      "Minimal Beeper relay with adaptive wake lease",
-      "Quota cache and content-free lifecycle observation",
-      "Responder-owned Final Callback"
+      "Channels: Feishu task mapping and durable delivery",
+      "Models: API and Local Responses providers with explicit tool adaptation",
+      "Models / Web: ChatGPT Web saved connection and background service"
     ],
-    "defaultPrompt": "\u4f7f\u7528 $feishu-codex-operator \u5b8c\u6210\u672c\u9879\u76ee\u7684\u914d\u7f6e\u3001\u8bca\u65ad\u6216\u5f00\u53d1\uff1b\u5148\u6838\u5b9e\u6e90\u7801\u4e0e\u8fd0\u884c\u72b6\u6001\uff0c\u518d\u6309\u8bf7\u6c42\u8303\u56f4\u64cd\u4f5c\u3002"
+    "defaultPrompt": "使用 $codex-operator 帮我配置或使用 Codex-Operator，复用已有设置。首次接入 Channels 时让我选择本地 Beeper 或 Luna/low，并在授权后帮我创建通道项目、Beeper 和默认用户任务。"
   },
   "mcpServers": "./.mcp.json"
 }

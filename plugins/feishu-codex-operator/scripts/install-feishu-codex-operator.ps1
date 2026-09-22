@@ -307,6 +307,8 @@ function Write-RuntimeManifest {
         'operator_core/telemetry.py',
         'operator_core/config.py',
         'operator_core/final_callback.py',
+        'operator_core/user_tasks.py',
+        'operator_core/channel_models.py',
         'operator_core/lark.py',
         'operator_core/rate_limits.py',
         'operator_core/responder_observer.py',
@@ -316,6 +318,26 @@ function Write-RuntimeManifest {
         'operator_core/responses_capabilities.py',
         'operator_core/responses_tool_adapter.py',
         'operator_core/responses_events.py',
+        'operator_core/web_model_protocol.py',
+        'operator_core/web_mcp_transport.py',
+        'operator_core/web_responses_provider.py',
+        'operator_core/web_browser_driver.py',
+        'operator_core/web_browser_session.py',
+        'operator_core/web_connection.py',
+        'operator_core/web_openai_tunnel.py',
+        'operator_web_model.py',
+        'operator_web_service.py',
+        'operator_web_acceptance.py',
+        'operator_web_desktop.py',
+        'operator_web_entry.ps1',
+        'operator_product.py',
+        'operator_python.psm1',
+        'codex-operator.ps1',
+        'web_browser_host.cjs',
+        'web_browser_page.cjs',
+        'web_browser_surface.cjs',
+        'licenses/codex-chatgpt-web-MIT.txt',
+        'licenses/webcodex-Apache-2.0.txt',
         'operator_core/responses_metrics.py',
         'operator_core/responses_profiles.py',
         'operator_core/responses_verification.py',
@@ -324,6 +346,9 @@ function Write-RuntimeManifest {
         'operator_core/model_router_config.py',
         'operator_core/lmstudio_discovery.py',
         'operator_model_router.py',
+        'restore-codex-official-route.ps1',
+        'install-native-recovery-shortcut.ps1',
+        '恢复官方默认路由.cmd',
         'operator_responses_probe.py',
         'operator_responses_eval.py',
         'operator_terminal_fixture.py',
@@ -339,7 +364,11 @@ function Write-RuntimeManifest {
     }
     $manifest = [ordered]@{
         schema_version = 1
-        operator_version = '4.2.0-alpha.131'
+        operator_version = '4.2.0-alpha.137'
+        public_entry = [ordered]@{
+            path = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'codex-operator.ps1'))
+            sha256 = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'codex-operator.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
         code_files = $hashes
         start_hook_sha256 = (Get-FileHash -LiteralPath $startHook -Algorithm SHA256).Hash.ToLowerInvariant()
         stop_hook_sha256 = (Get-FileHash -LiteralPath $stopHook -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -383,6 +412,8 @@ if ($HooksOnly) {
     'operator_core\telemetry.py',
     'operator_core\config.py',
     'operator_core\final_callback.py',
+    'operator_core\user_tasks.py',
+    'operator_core\channel_models.py',
     'operator_core\lark.py',
     'operator_core\rate_limits.py',
     'operator_core\responder_observer.py',
@@ -392,6 +423,26 @@ if ($HooksOnly) {
     'operator_core\responses_capabilities.py',
     'operator_core\responses_tool_adapter.py',
     'operator_core\responses_events.py',
+    'operator_core\web_model_protocol.py',
+    'operator_core\web_mcp_transport.py',
+    'operator_core\web_responses_provider.py',
+    'operator_core\web_browser_driver.py',
+    'operator_core\web_browser_session.py',
+    'operator_core\web_connection.py',
+    'operator_core\web_openai_tunnel.py',
+    'operator_web_model.py',
+    'operator_web_service.py',
+    'operator_web_acceptance.py',
+    'operator_web_desktop.py',
+    'operator_web_entry.ps1',
+        'operator_product.py',
+        'operator_python.psm1',
+        'codex-operator.ps1',
+    'web_browser_host.cjs',
+    'web_browser_page.cjs',
+    'web_browser_surface.cjs',
+    'licenses\codex-chatgpt-web-MIT.txt',
+    'licenses\webcodex-Apache-2.0.txt',
     'operator_core\responses_metrics.py',
     'operator_core\responses_profiles.py',
     'operator_core\responses_verification.py',
@@ -400,6 +451,9 @@ if ($HooksOnly) {
     'operator_core\model_router_config.py',
     'operator_core\lmstudio_discovery.py',
     'operator_model_router.py',
+    'restore-codex-official-route.ps1',
+        'install-native-recovery-shortcut.ps1',
+    '恢复官方默认路由.cmd',
     'operator_responses_probe.py',
     'operator_responses_eval.py',
     'operator_terminal_fixture.py',
@@ -409,7 +463,12 @@ if ($HooksOnly) {
     'operator_core\state.py'
 )
 foreach ($relative in $runtimeFiles) {
-    Install-File (Join-Path (Join-Path $source 'scripts') $relative) (Join-Path $runtime $relative)
+    $from = Join-Path (Join-Path $source 'scripts') $relative
+    # Source ownership follows Models/Web; installed license paths stay stable.
+    if ($relative -in @('licenses\codex-chatgpt-web-MIT.txt','licenses\webcodex-Apache-2.0.txt')) {
+        $from = Join-Path (Join-Path $source 'models\web\licenses') ([IO.Path]::GetFileName($relative))
+    }
+    Install-File $from (Join-Path $runtime $relative)
 }
 
 Ensure-Environment
@@ -425,6 +484,6 @@ if (Test-Path -LiteralPath $health -PathType Leaf) {
     Remove-Item -LiteralPath $health -Force
 }
 
-Write-Output "Installed Feishu Codex Operator 4.2.0-alpha.131 into $runtime"
+Write-Output "Installed Feishu Codex Operator 4.2.0-alpha.137 into $runtime"
 Write-Output 'The Operator remains stopped. Configure the minimal Beeper UUID, register Final Callback routing, review Hooks in Desktop settings, then start it.'
 if (-not $SkipDesktopEntry) { Install-OperatorDesktopEntry -ProjectRoot $project | ConvertTo-Json }

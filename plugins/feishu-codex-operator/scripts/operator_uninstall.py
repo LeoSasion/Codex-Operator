@@ -20,19 +20,48 @@ def assert_port_free(port):
         listener.bind(('127.0.0.1', port))
 
 
-def service(state, port, *, stop=False):
+def service(state, port, *, stop=False, expected=None):
+    # The public entry runs the canonical source router; older installations
+    # run its installed copy. Both use the same private state and token, but
+    # their exact script paths deliberately produce different identities.
+    scripts = {state.parent / 'operator_model_router.py',
+               Path(__file__).with_name('operator_model_router.py')}
+    identities = {hashlib.sha256((str(script.resolve()) + '\n' + str(state.resolve())).encode()).hexdigest()
+                  for script in scripts}
+    if stop:
+        if expected is None:
+            raise ValueError('router_stop_identity_required')
+        service(state, port, expected=expected)  # Verify before sending a stop.
     request = Request(settings.url(state, port) + '/lifecycle', method='POST' if stop else 'GET',
                       data=b'' if stop else None)
     with build_opener(ProxyHandler({}), settings._NoRedirect()).open(request, timeout=3) as response:
         raw = response.read(16385)
     if len(raw) > 16384: raise ValueError('invalid_router_status')
     value = settings.loads(raw)
-    expected = hashlib.sha256((str((state.parent/'operator_model_router.py').resolve()) + '\n' + str(state.resolve())).encode()).hexdigest()
-    if value.get('service') != expected: raise ValueError('router_identity_mismatch')
+    if (not isinstance(value, dict) or value.get('service') not in identities
+            or type(value.get('pid')) is not int or value['pid'] <= 0
+            or (expected is not None and (value['service'], value['pid']) != expected)):
+        raise ValueError('router_identity_mismatch')
     return value
 
 
 def inspect(project, config, port):
+    # The separately owned Web entry must be detached before archiving its
+    # interpreter/runtime. Never mistake the legacy 4317 listener for that route.
+    inspect_web_startup(project, config)
+    migration = project/'.codex/operator-entry-migration/journal.json'
+    if migration.exists():
+        from operator_web_service import checked_path, read_json
+        checked_path(migration)
+        record = read_json(migration)
+        if (record.get('scope') != 'desktop_entry_only' or record.get('project') != str(project)
+                or record.get('phase') != 'restored'):
+            raise ValueError('restore_separate_desktop_entry_migration_before_uninstall')
+    trial = project/'.codex/operator-web-service/desktop/current.json'
+    if trial.exists():
+        from operator_web_desktop import status as desktop_status
+        if desktop_status(trial.parent.parent, config.parent)['status'] != 'disconnected':
+            raise ValueError('disconnect_web_desktop_trial_before_uninstall')
     runtime = project/'.codex/feishu-codex-operator-runtime'
     state = runtime/'model-router'
     pending = 0
@@ -56,8 +85,54 @@ def inspect(project, config, port):
     callback = routing_cli._status(runtime)
     return {'pending_callbacks':pending,'active_router_requests':active,
             'router_status':router['status'],'owned_router_entry':owned_entry,
+            'router_identity':None if router['status']=='stopped' else (router['service'], router['pid']),
             'owned_callback_registration':callback['matches_runtime'],
             'other_callback_registration_preserved':callback['configured'] and not callback['matches_runtime']}
+
+
+def inspect_web_startup(project, config):
+    profile = project/'.codex/operator-web-service'
+    bundle = project/'.codex/operator-web-startup'
+    # A Channels-only uninstall must not require optional Web dependencies.
+    # Reject linked paths before absence checks, including dangling links.
+    for path in (profile, bundle, *profile.parents):
+        if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
+            raise ValueError('web_manager_linked_path_rejected')
+    if not profile.exists() and not bundle.exists():
+        return
+    from operator_web_service import checked_path, read_json, status
+    checked_path(profile, exists=False)
+    # A saved service does not require a cold-launch plan. Inspect it first,
+    # including malformed/uncertain records, before any teardown mutations.
+    if profile.exists():
+        checked_path(profile, directory=True)
+        observed = status(profile)
+        if (observed['status'] not in ('stopped', 'configured')
+                or observed.get('start_available') is False):
+            raise ValueError('stop_saved_web_service_before_uninstall')
+    if not bundle.exists():
+        return
+    checked_path(bundle, directory=True)
+    plan = read_json(bundle/'web-startup.json')
+    if (plan.get('version') != 1 or plan.get('project') != str(project)
+            or plan.get('home') != str(config.parent)
+            or plan.get('profile') != str(project/'.codex/operator-web-service')
+            or plan.get('router_state') != str(bundle/'router')
+            or type(plan.get('port')) is not int or not 1024 <= plan['port'] <= 65535):
+        raise ValueError('web_startup_uninstall_ownership_conflict')
+    state = checked_path(bundle/'router', directory=True)
+    if (state/'codex-entry.json').exists():
+        raise ValueError('deactivate_web_startup_before_uninstall')
+    # This is a read-only guard, not service control or a guessed recovery.
+    assert_port_free(plan['port'])
+    launch = bundle/'router-launch.json'
+    if launch.exists() and read_json(launch).get('phase') != 'stopped':
+        raise ValueError('stop_exact_web_startup_router_before_uninstall')
+    activation = bundle/'activation.json'
+    if activation.exists() and read_json(activation).get('phase') != 'cancelled':
+        raise ValueError('cancel_web_startup_activation_before_uninstall')
+    if not profile.exists():
+        raise ValueError('web_startup_uninstall_profile_missing')
 
 
 def detach(project, config, port):
@@ -67,7 +142,7 @@ def detach(project, config, port):
     runtime = project/'.codex/feishu-codex-operator-runtime'; state = runtime/'model-router'
     if observed['owned_router_entry']: settings.deactivate(state,config)
     if observed['router_status'] != 'stopped':
-        service(state,port,stop=True)  # One stop only; never retry this request.
+        service(state,port,stop=True,expected=observed['router_identity'])  # One stop only.
         deadline = time.monotonic()+5
         while True:
             try: assert_port_free(port); break

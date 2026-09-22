@@ -99,17 +99,22 @@ class FinalCallbackStore:
                 connection.execute("ALTER TABLE final_callback_requests ADD COLUMN relay_started INTEGER NOT NULL DEFAULT 0")
 
     def open(self, request_id: str, event_id: str, responder_thread_id: str, *,
-             relay_prompt: str | None = None, responder_host_id: str = "local") -> None:
+             relay_prompt: str | None = None, responder_host_id: str = "local",
+             model_selection: dict | None = None) -> None:
         request_id = self.validate_request_id(request_id)
         event_id = str(event_id or "").strip()
         responder_thread_id = str(responder_thread_id or "").strip()
         if not event_id or not responder_thread_id:
             raise FinalCallbackStoreError("callback route is incomplete")
         now = time.time()
-        payload = None if relay_prompt is None else json.dumps({
+        dispatch = {
             "threadId": responder_thread_id, "hostId": responder_host_id,
             "prompt": relay_prompt,
-        }, ensure_ascii=True, separators=(",", ":"))
+        }
+        if model_selection is not None:
+            from .channel_models import model_arguments
+            dispatch.update(model_arguments(model_selection))
+        payload = None if relay_prompt is None else json.dumps(dispatch, ensure_ascii=True, separators=(",", ":"))
         with self._lock, closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(

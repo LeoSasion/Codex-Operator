@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import dataclass
+from copy import copy, deepcopy
+from dataclasses import dataclass, field
 import json
 import hashlib
 import os
@@ -12,6 +12,14 @@ import re
 from urllib.parse import urlsplit
 
 from .responses_capabilities import ResponsesCapabilities, RouterError
+
+
+@dataclass(frozen=True)
+class WebServiceBinding:
+    """Private in-memory attachment, never an accepted registry-file field."""
+    profile_sha256: str
+    session_sha256: str
+    token: str = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -24,8 +32,11 @@ class ModelRoute:
     context_window: int
     reasoning_efforts: tuple[str, ...]
     responses: ResponsesCapabilities | None = None
+    web_binding: WebServiceBinding | None = field(default=None, repr=False)
 
     def key(self) -> str:
+        if self.web_binding is not None:
+            return self.web_binding.token
         if not self.api_key_env:
             return ""
         value = os.environ.get(self.api_key_env, "")
@@ -44,7 +55,7 @@ class ModelRegistry:
         self.beeper = deepcopy(beeper_catalog["models"][0])
         self.routes: dict[str, ModelRoute] = {}
         self.version = value["version"]
-        fields = set(ModelRoute.__dataclass_fields__) - {"responses"}
+        fields = set(ModelRoute.__dataclass_fields__) - {"responses", "web_binding"}
         if self.version == 2:
             fields.add("responses")
         for row in value["models"]:
@@ -84,6 +95,17 @@ class ModelRegistry:
                     raise RouterError("reasoning_tool_choice_profile_not_registered")
             self.routes[slug] = ModelRoute(**{**row, "reasoning_efforts": tuple(efforts),
                                             "responses": capabilities})
+
+    def with_web_route(self, route):
+        """Copy on publication so admitted HTTP/WS retain the original binding."""
+        if not isinstance(route, ModelRoute) or route.web_binding is None:
+            raise RouterError("web_route_verified_binding_required")
+        existing = self.routes.get(route.slug)
+        if existing is not None and existing.web_binding is None:
+            raise RouterError("web_route_catalog_collision")
+        result = copy(self)
+        result.routes = {**self.routes, route.slug: route}
+        return result
 
     @classmethod
     def load(cls, path: Path) -> "ModelRegistry":

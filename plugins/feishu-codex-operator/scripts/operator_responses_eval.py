@@ -18,7 +18,7 @@ import time
 from operator_core.model_registry import ModelRegistry, RouterError
 from operator_core.model_router_config import atomic_write, read_registration
 from operator_core.responses_profiles import adapter_digest, contract_digest, evaluator_digest, preflight
-from operator_core.responses_profiles import FINAL_TEXT_POLICIES
+from operator_core.responses_profiles import FINAL_TEXT_POLICIES, valid_cli_version
 from operator_core.responses_tool_adapter import dumps
 from operator_responses_probe import reserve_receipt
 from operator_terminal_fixture import (TERMINAL_CASES, TerminalFixture, executable_digest,
@@ -272,6 +272,19 @@ def cancellation_observed(was_active, active, requests, dispatches, outcomes):
             and outcomes == {"cancelled": 1, "completed": 0, "failed": 0})
 
 
+def parse_cli_version(stdout, returncode):
+    if returncode == 0 and isinstance(stdout, bytes) and len(stdout) <= 128:
+        match = re.fullmatch(rb"codex-cli ([^\r\n]+?)[ \t]*(?:\r?\n)?", stdout)
+        if match:
+            try:
+                version = match[1].decode("ascii")
+            except UnicodeDecodeError:
+                version = None
+            if valid_cli_version(version):
+                return version
+    raise RouterError("explicit_cli_version_unavailable")
+
+
 async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exact", terminal_shell=None,
                    windows_sandbox=None):
     sandbox_settings = terminal_sandbox_settings(case, windows_sandbox)
@@ -291,10 +304,7 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
     terminal = None
     version_result = subprocess.run([str(executable), "--version"], capture_output=True,
                                     timeout=10, creationflags=0x08000000 if os.name == "nt" else 0)
-    match = re.fullmatch(rb"codex-cli (\d+\.\d+\.\d+)\s*", version_result.stdout)
-    if version_result.returncode or not match:
-        raise RouterError("explicit_cli_version_unavailable")
-    version = match[1].decode()
+    version = parse_cli_version(version_result.stdout, version_result.returncode)
     catalog = json.loads(Path(__file__).with_name("operator_core").joinpath(
         "beeper_model_catalog.json").read_text(encoding="utf-8"))
     dispatch_round = ContextVar("evaluation_dispatch_round", default=None)
@@ -407,6 +417,12 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
             "model_reasoning_effort": row["reasoning_efforts"][0], "model_catalog_json": str(catalog_file),
             "approval_policy": "never", "web_search": "disabled", "analytics.enabled": False,
             "features.plugins": False, "features.remote_plugin": False,
+            "skills.include_instructions": False,
+            # MCP fixtures need no shell, image, goal or agent tools. Enforce
+            # that in the real tool inventory, including code-mode discovery.
+            "features.shell_tool": terminal is not None, "features.view_image": False,
+            "features.image_generation": False, "features.goals": False,
+            "features.multi_agent": False, "features.multi_agent_v2": False,
             "model_providers.operator_fixture.name": "Operator explicit evaluation",
             "model_providers.operator_fixture.base_url": f"http://127.0.0.1:{runner.addresses[0][1]}" + router.prefix,
             "model_providers.operator_fixture.wire_api": "responses",

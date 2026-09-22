@@ -502,6 +502,45 @@ class BeeperRelayClient:
     def send_async(self, *args: Any, **kwargs: Any) -> Any:
         return self._pump.start(self._send_steps(*args, **kwargs))
 
+    def queue_user_task_setup(self, request_id: str) -> Callable[[], None]:
+        """One owner-granted management queue, without a business callback.
+
+        A separate durable registration must precede this call. It never retries,
+        falls back, selects a Responder model or refreshes the wake lease.
+        """
+        model = str(self.config.beeper_model_override or BEEPER_DEFAULT_MODEL)
+        effort = beeper_reasoning_effort(model, primary_override=str(
+            self.config.beeper_reasoning_effort_override or ""))
+        target = self.beeper_thread_id
+        argv = [str(self.codex_executable), "queue", "--thread", target,
+                "--model", model, "--config", f'model_reasoning_effort="{effort}"']
+        if model == BEEPER_LOCAL_MODEL:
+            argv.extend(self._local_provider_config())
+        argv.extend(["--message", self._relay_prompt(request_id=request_id, model=model)])
+        try:
+            result = self._runner(argv, shell=False, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                encoding="utf-8", errors="replace", timeout=QUEUE_TIMEOUT_SECONDS, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RelayOutcomeUnknown("native task registration queue uncertain") from exc
+        if int(getattr(result, "returncode", -1)) != 0:
+            raise RelayUnavailable("native task registration queue rejected", code="user_task_queue_rejected")
+        plan = self._new_wake_plan(self._monotonic())
+        attempted = False
+        due = plan.signal_due_at
+
+        def probe_wake() -> None:
+            nonlocal attempted, due
+            now = self._monotonic()
+            if attempted or now < due:
+                return
+            outcome = self._send_wake_signal_from_plan(target, plan, now=now)
+            attempted = outcome.attempted
+            if outcome.retry_at is not None:
+                due = outcome.retry_at
+
+        return probe_wake
+
     def _send_steps(
         self,
         session: dict[str, Any],
@@ -513,6 +552,7 @@ class BeeperRelayClient:
         additional_context: dict[str, str] | None = None,
         on_dispatching: Callable[[RelayDispatchHandle], None] | None = None,
         beeper_model: str = BEEPER_DEFAULT_MODEL,
+        responder_model_selection: dict | None = None,
         allow_rate_limit_fallback: Callable[[], bool] | None = None,
         observation: Any | None = None,
         timing: Any | None = None,
@@ -557,7 +597,8 @@ class BeeperRelayClient:
         try:
             self.callbacks.open(request_id, event_id, responder_thread_id,
                                 relay_prompt=responder_prompt,
-                                responder_host_id=responder_host_id)
+                                responder_host_id=responder_host_id,
+                                model_selection=responder_model_selection)
         except FinalCallbackStoreError as exc:
             raise RelayOutcomeUnknown("callback route could not be opened") from exc
 

@@ -1656,6 +1656,34 @@ class SessionStore:
             self._save_locked()
             return dict(current)
 
+    def update_model_selection(self, scope, expected_session, selection, *, consume=False):
+        """CAS the exact binding and choice; uncertain dispatch never restores it."""
+        from .channel_models import FIELD, ModelSelectionError, pending_arguments
+        with self._lock:
+            original = self._sessions.get(scope, {})
+            if (original.get("thread_id") != expected_session.get("thread_id")
+                    or (original.get("host_id") or "local") != (expected_session.get("host_id") or "local")
+                    or original.get(FIELD) != expected_session.get(FIELD)):
+                raise ModelSelectionError("model_selection_changed")
+            current = dict(original)
+            if consume:
+                if not pending_arguments(current):
+                    raise ModelSelectionError("model_selection_already_consumed")
+                current[FIELD] = dict(current[FIELD], state="requested")
+            elif selection is None:
+                current.pop(FIELD, None)
+            else:
+                current[FIELD] = dict(selection)
+                if not pending_arguments(current):
+                    raise ModelSelectionError("model_selection_invalid")
+            self._sessions[scope] = current
+            try:
+                self._save_locked()
+            except Exception:
+                self._sessions[scope] = original
+                raise
+            return dict(current)
+
     def replace(self, scope: str, session: dict[str, Any]) -> None:
         with self._lock:
             data = dict(session)
@@ -1693,6 +1721,8 @@ class SessionStore:
                 current.pop("binding_operation_receipt", None)
             if values:
                 current.update(values)
+            if old_thread_id != candidate or (current.get("host_id") or "local") != (self._sessions.get(scope, {}).get("host_id") or "local"):
+                current.pop("model_selection", None)
             current["thread_id"] = candidate
             current.pop("session_id", None)
             current.pop("binding_migrated", None)
@@ -1796,6 +1826,8 @@ class SessionStore:
             # routes remain retained history, but none is promoted to active and
             # no label or root is copied from the transient catalog snapshot.
             current.pop("active_project_id", None)
+            if active_thread != candidate or (current.get("host_id") or "local") != candidate_host:
+                current.pop("model_selection", None)
             current["thread_id"] = candidate
             current["host_id"] = candidate_host
             current["desktop_project_id"] = candidate_project

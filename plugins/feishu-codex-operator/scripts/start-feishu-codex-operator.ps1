@@ -170,6 +170,8 @@ function Assert-OperatorRuntimeManifest {
         'operator_core/dispatch.py',
         'operator_core/telemetry.py',
         'operator_core/final_callback.py',
+        'operator_core/user_tasks.py',
+        'operator_core/channel_models.py',
         'operator_core/lark.py',
         'operator_core/rate_limits.py',
         'operator_core/responder_observer.py',
@@ -179,6 +181,26 @@ function Assert-OperatorRuntimeManifest {
         'operator_core/responses_capabilities.py',
         'operator_core/responses_tool_adapter.py',
         'operator_core/responses_events.py',
+        'operator_core/web_model_protocol.py',
+        'operator_core/web_mcp_transport.py',
+        'operator_core/web_responses_provider.py',
+        'operator_core/web_browser_driver.py',
+        'operator_core/web_browser_session.py',
+        'operator_core/web_connection.py',
+        'operator_core/web_openai_tunnel.py',
+        'operator_web_model.py',
+        'operator_web_service.py',
+        'operator_web_acceptance.py',
+        'operator_web_desktop.py',
+        'operator_web_entry.ps1',
+        'operator_product.py',
+        'operator_python.psm1',
+        'codex-operator.ps1',
+        'web_browser_host.cjs',
+        'web_browser_page.cjs',
+        'web_browser_surface.cjs',
+        'licenses/codex-chatgpt-web-MIT.txt',
+        'licenses/webcodex-Apache-2.0.txt',
         'operator_core/responses_metrics.py',
         'operator_core/responses_profiles.py',
         'operator_core/responses_verification.py',
@@ -187,6 +209,9 @@ function Assert-OperatorRuntimeManifest {
         'operator_core/model_router_config.py',
         'operator_core/lmstudio_discovery.py',
         'operator_model_router.py',
+        'restore-codex-official-route.ps1',
+        'install-native-recovery-shortcut.ps1',
+        '恢复官方默认路由.cmd',
         'operator_responses_probe.py',
         'operator_responses_eval.py',
         'operator_terminal_fixture.py',
@@ -199,7 +224,7 @@ function Assert-OperatorRuntimeManifest {
         throw "Feishu operator runtime manifest is missing: $runtimeManifest"
     }
     try {
-        $manifest = Get-Content -LiteralPath $runtimeManifest -Raw | ConvertFrom-Json -ErrorAction Stop
+        $manifest = Get-Content -LiteralPath $runtimeManifest -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop
     } catch {
         throw "Feishu operator runtime manifest is invalid: $($_.Exception.Message)"
     }
@@ -487,32 +512,69 @@ function Write-Lease {
 function Start-DetachedLaunchHelper {
     param([Parameter(Mandatory = $true)][string]$ExactLeaseId)
 
-    $windowsPowerShell = Join-Path (
-        [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
-    ) 'WindowsPowerShell\v1.0\powershell.exe'
-    if (-not (Test-Path -LiteralPath $windowsPowerShell -PathType Leaf)) {
-        throw 'Windows PowerShell is unavailable for detached Operator launch.'
+    # Retain the caller's edition as well as its user token. A direct child
+    # inherits PSModulePath; mixing a PowerShell 7 environment with Windows
+    # PowerShell 5 can hide built-in commands such as Get-FileHash.
+    $powerShellName = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' }
+    $powerShellPath = Join-Path $PSHOME $powerShellName
+    if (-not (Test-Path -LiteralPath $powerShellPath -PathType Leaf)) {
+        throw 'Current PowerShell is unavailable for detached Operator launch.'
     }
     # Both paths are operating-system paths and cannot contain a double quote.
     # LeaseId is constrained to 24 lowercase hexadecimal characters above.
     $commandLine = '"{0}" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{1}" -DetachedLaunch -LeaseId {2}' -f `
-        $windowsPowerShell, $startHookScript, $ExactLeaseId
-    $CREATE_BREAKAWAY_FROM_JOB = [uint32]0x01000000
-    $CREATE_NO_WINDOW = [uint32]0x08000000
-    $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{
-        CreateFlags = [uint32]($CREATE_BREAKAWAY_FROM_JOB -bor $CREATE_NO_WINDOW)
-        ShowWindow = [uint16]0
+        $powerShellPath, $startHookScript, $ExactLeaseId
+    # Create the helper with the caller's token. WMI can create a process with
+    # the same account name but a different credential context: CLI metadata
+    # remains visible while the OS-backed app secret/user token becomes absent.
+    # Break away from the short-lived hook job, without handles, UI or fallback.
+    if (-not ('CodexOperator.ChannelProcessV1' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+namespace CodexOperator {
+    public static class ChannelProcessV1 {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct StartupInfo {
+            public uint cb; public string reserved, desktop, title;
+            public uint x, y, xSize, ySize, xChars, yChars, fill, flags;
+            public ushort show, reservedSize;
+            public IntPtr reservedBytes, input, output, error;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ProcessInfo {
+            public IntPtr process, thread; public uint processId, threadId;
+        }
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CreateProcessW(string application, StringBuilder command,
+            IntPtr processSecurity, IntPtr threadSecurity, bool inheritHandles, uint flags,
+            IntPtr environment, string directory, ref StartupInfo startup, out ProcessInfo process);
+        [DllImport("kernel32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CloseHandle(IntPtr handle);
+        public static int Start(string application, string command, string directory) {
+            var startup = new StartupInfo();
+            startup.cb = (uint)Marshal.SizeOf(typeof(StartupInfo));
+            startup.flags = 1; // STARTF_USESHOWWINDOW
+            startup.show = 0;  // SW_HIDE
+            ProcessInfo process;
+            if (!CreateProcessW(application, new StringBuilder(command), IntPtr.Zero,
+                IntPtr.Zero, false, 0x09000000, IntPtr.Zero, directory, ref startup, out process)) {
+                // A failed breakaway is terminal. Never fall back to WMI or
+                // create a second helper after an uncertain launch.
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            try { return checked((int)process.processId); }
+            finally { CloseHandle(process.thread); CloseHandle(process.process); }
+        }
     }
-    $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-        CommandLine = $commandLine
-        CurrentDirectory = $projectRoot
-        ProcessStartupInformation = $startup
-    } -ErrorAction Stop
-    if (-not $result -or [int]$result.ReturnValue -ne 0 -or [int]$result.ProcessId -le 0) {
-        $returnValue = if ($result) { [int]$result.ReturnValue } else { -1 }
-        throw "Detached Operator helper creation failed with WMI return value $returnValue."
+}
+'@ -ErrorAction Stop
     }
-    return [int]$result.ProcessId
+    return [CodexOperator.ChannelProcessV1]::Start($powerShellPath, $commandLine, $projectRoot)
 }
 
 if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
@@ -647,37 +709,9 @@ function Update-ProcessPathFromEnvironment {
 
 function Get-UsablePython {
     Update-ProcessPathFromEnvironment
-    $candidates = @()
-    $venvPython = Join-Path $projectRoot '.venv\Scripts\python.exe'
-    if (Test-Path -LiteralPath $venvPython -PathType Leaf) {
-        $candidates += [pscustomobject]@{ Path = $venvPython; Prefix = @() }
-    }
-    foreach ($command in @(Get-Command python.exe -All -ErrorAction SilentlyContinue)) {
-        $candidates += [pscustomobject]@{ Path = [string]$command.Source; Prefix = @() }
-    }
-    foreach ($command in @(Get-Command py.exe -All -ErrorAction SilentlyContinue)) {
-        $candidates += [pscustomobject]@{ Path = [string]$command.Source; Prefix = @('-3') }
-    }
-
-    $seen = @{}
-    foreach ($candidate in $candidates) {
-        if (-not $candidate.Path) { continue }
-        $key = ((@($candidate.Path) + @($candidate.Prefix)) -join '|').ToLowerInvariant()
-        if ($seen.ContainsKey($key)) { continue }
-        $seen[$key] = $true
-        try {
-            $global:LASTEXITCODE = 0
-            $versionOutput = (& $candidate.Path @($candidate.Prefix) --version 2>&1 | Out-String).Trim()
-            if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch '(?i)Python\s+(\d+)\.(\d+)') {
-                continue
-            }
-            $version = [version]("{0}.{1}" -f $Matches[1], $Matches[2])
-            if ($version -ge [version]'3.10') { return $candidate }
-        } catch {
-            continue
-        }
-    }
-    throw 'Python 3.10+ was not found for the Feishu operator.'
+    Import-Module (Join-Path $runtimeRoot 'operator_python.psm1') -Force
+    $selected = Get-OperatorPython -Required -PreferredExecutable (Join-Path $projectRoot '.venv\Scripts\python.exe')
+    return [pscustomobject]@{Path=$selected.Source;Prefix=@()}
 }
 
 if (-not $DetachedLaunch) {
@@ -738,7 +772,7 @@ if (-not $DetachedLaunch) {
 }
 
 # This is the only branch that starts Python. It is reached only by the
-# WMI-created helper after the exact lease, manifest and environment revalidate.
+# caller-token helper after the exact lease, manifest and environment revalidate.
 Set-LeaseLaunchState -ExactLeaseId $LeaseId -LaunchState launching
 $pythonRuntime = Get-UsablePython
 $python = $pythonRuntime.Path

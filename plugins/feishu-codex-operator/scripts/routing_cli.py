@@ -174,6 +174,10 @@ def build_parser() -> argparse.ArgumentParser:
     register = commands.add_parser("final-callback-register")
     register.add_argument("--force", action="store_true")
     commands.add_parser("final-callback-unregister")
+    setup = commands.add_parser("user-tasks-configure")
+    setup.add_argument("--grant-file", required=True)
+    commands.add_parser("user-tasks-status")
+    commands.add_parser("user-tasks-revoke")
     commands.add_parser("final-callback-registry-status")
     commands.add_parser("submit-final-callback")
     return parser
@@ -183,7 +187,24 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         runtime = _runtime_dir(args.runtime_dir)
-        if args.command == "final-callback-register":
+        if args.command.startswith("user-tasks-"):
+            from operator_core.user_tasks import configure, read_object, read_profile, revoke, UserTaskError
+            from operator_core.beeper_relay import discover_codex_executable
+            from operator_core.app_server import AppServerError
+            import sqlite3
+            try:
+                if args.command == "user-tasks-configure":
+                    grant, _ = read_object(Path(args.grant_file), 65_536)
+                    result = configure(runtime, grant, executable=discover_codex_executable())
+                elif args.command == "user-tasks-revoke":
+                    result = revoke(runtime)
+                else:
+                    result = {"enabled": read_profile(runtime) is not None}
+            except (UserTaskError, ValueError, KeyError) as exc:
+                raise RoutingError(str(exc)) from exc
+            except (AppServerError, OSError, sqlite3.Error) as exc:
+                raise RoutingError("user_task_configuration_unavailable") from exc
+        elif args.command == "final-callback-register":
             result = _register(runtime, force=args.force)
         elif args.command == "final-callback-unregister":
             result = _unregister(runtime)

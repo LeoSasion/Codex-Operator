@@ -27,7 +27,7 @@ if ($listed.Count -ne @($desktop[0].paths).Count) {
     throw 'Release inventory contains duplicate paths.'
 }
 foreach ($relative in $listed) {
-    if ($relative -match '(^|/)\.\.?(/|$)' -or
+    if ($relative -match '(^|/)(\.\.?|_quarantine)(/|$)' -or
         [System.IO.Path]::IsPathRooted($relative)) {
         throw "Release inventory contains an unsafe path: $relative"
     }
@@ -37,12 +37,19 @@ foreach ($relative in $listed) {
     }
 }
 
+function Get-ReleaseSourceFiles([string]$Directory) {
+    foreach ($item in Get-ChildItem -LiteralPath $Directory -Force) {
+        if ($item.PSIsContainer -and ($item.Name -in @('_quarantine','__pycache__') -or
+            ($item.Name -eq '.tmp' -and (Split-Path -Leaf $Directory) -eq 'tests'))) { continue }
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'Release source contains a linked path.'
+        }
+        if ($item.PSIsContainer) { Get-ReleaseSourceFiles $item.FullName } else { $item }
+    }
+}
+
 [string[]]$actual = @(
-    Get-ChildItem -LiteralPath $pluginRoot -Recurse -File -Force |
-        Where-Object {
-            $_.FullName -notmatch '[\\/]__pycache__[\\/]' -and
-            $_.FullName -notmatch '[\\/]tests[\\/]\.tmp[\\/]'
-        } |
+    Get-ReleaseSourceFiles $pluginRoot |
         ForEach-Object {
             $_.FullName.Substring($pluginRoot.Length).TrimStart('\', '/').Replace('\', '/')
         } |
@@ -70,8 +77,8 @@ if (-not (Test-Path -LiteralPath $rootRules -PathType Leaf) -or
 }
 
 # Behavioral policy belongs in the unit suite, not source-wording regexes.
-$python = Get-Command python -ErrorAction Stop
-& $python.Source -B -c "import json,pathlib,sys; root=pathlib.Path(sys.argv[1]); inventory=json.loads((root/'assets/release-inventory.json').read_text(encoding='utf-8')); files=[root/p for c in inventory['components'] for p in c['paths'] if p.endswith('.py')]; [compile(p.read_text(encoding='utf-8-sig'), str(p), 'exec') for p in files]" $pluginRoot
+$python = Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1
+& $python.Source -B -c "import json,pathlib,sys; root=pathlib.Path(sys.argv[1]); sys.path.insert(0,str(root/'scripts')); from build_codex_operator_release import safe_path; inventory=json.loads((root/'assets/release-inventory.json').read_text(encoding='utf-8')); paths=[safe_path(p) for c in inventory['components'] for p in c['paths']]; files=[root/p for p in paths if p.suffix=='.py']; [compile(p.read_text(encoding='utf-8-sig'), str(p), 'exec') for p in files]" $pluginRoot
 if ($LASTEXITCODE -ne 0) { throw 'Python syntax validation failed.' }
 
 foreach ($script in Get-ChildItem -LiteralPath (Join-Path $pluginRoot 'scripts') -File | Where-Object Extension -in @('.ps1','.psm1')) {

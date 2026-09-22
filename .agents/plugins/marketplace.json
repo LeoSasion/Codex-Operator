@@ -1,11 +1,11 @@
 {
-  "name": "feishu-codex-operator",
+  "name": "codex-operator",
   "interface": {
-    "displayName": "Feishu Codex Operator"
+    "displayName": "Codex-Operator"
   },
   "plugins": [
     {
-      "name": "feishu-codex-operator",
+      "name": "codex-operator",
       "source": {
         "source": "local",
         "path": "./plugins/feishu-codex-operator"

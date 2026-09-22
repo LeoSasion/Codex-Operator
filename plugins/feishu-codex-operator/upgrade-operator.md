@@ -1,5 +1,24 @@
 # Upgrade and naming cutover
 
+Alpha.134 explicitly lists active tasks across model providers for `/init` and
+registered-user task verification. It preserves the existing task/source filters,
+limits and exact identity checks; a catalog miss never creates a replacement.
+Official `/model` selection now also rejects root `openai_base_url` and inherited
+`OPENAI_BASE_URL` overrides before accepting the catalog or consuming a choice.
+The relay MCP program and its contract are unchanged; this runtime-only update
+does not require a Desktop tool refresh. Saved Web services bind core source bytes,
+so stop an idle service and explicitly re-register its unchanged settings before
+starting the updated source. Preserve login, failures and original profile records.
+
+Alpha.133 adds task-scoped `/model` for official native models: read settings/list,
+save a choice for the next new message, and cancel a pending choice. The existing
+Desktop send remains the only business entry; ordinary messages omit overrides.
+Do not enable the channel sender before the loaded relay MCP supports the
+`native_next_turn_v1` contract. An empty retrieval may report that loaded contract
+without a model request or task send; it is version evidence, not authentication.
+Existing installations need stopped, reviewed maintenance and native tool refresh.
+
+
 Development source alpha.123 tightens synthetic probe final-text matching and
 binds new probe receipts to the endpoint contract, adapter and combined evaluator
 revision. It adds content-free CLI request/JSON-output diagnostics. Production
@@ -10,9 +29,9 @@ Version notes describe when behavior was introduced; they do not establish the
 installed version. Verify that separately using read-only status and the runtime
 manifest. Older stopped-install instructions are not a general requirement to
 close Desktop for registry edits. Use the current
-[registration and reload contract](references/model-router.md#registration-and-operation);
+[registration and reload contract](models/common/docs/model-router.md#registration-and-operation);
 the alpha.122 correction to the former label-specific Desktop guard is recorded in
-[acceptance](references/responses-acceptance.md#alpha108-separate-stopped-label-transaction).
+[acceptance](models/common/docs/responses-acceptance.md#alpha108-separate-stopped-label-transaction).
 
 Plugin `1.1.0` packages runtime source `4.2.0-alpha.122`. Label updates now allow
 Desktop to remain open while preserving the stopped Operator/router checks,
@@ -61,7 +80,7 @@ response is serialized into downstream SSE/WS. The default remains
 `"match_client"`, including strict byte comparisons for observed upstream streams.
 This is a transport choice, not an automatic fallback or repaired stream.
 The endpoint contract/evidence changes and first output waits for completion.
-See [Gemma compatibility](references/model-router.md#gemma-and-complete-json-upstream-alpha118).
+See [Gemma compatibility](models/common/docs/model-router.md#gemma-and-complete-json-upstream-alpha118).
 Deploy executable changes only with the exact router request-free and stopped;
 registry reload cannot install code. Template repair and provider protocol tests
 do not establish Desktop execution or approval acceptance. LM Studio per-model
@@ -82,7 +101,7 @@ registrations still reject this input form; custom identities such as
 `functions.exec` still require explicit registration. Paired result names and
 namespaces are checked and mapped consistently; unfinished historical calls
 and unsuccessful tool-discovery outputs are rejected before any upstream send.
-See [the protocol contract](references/model-router.md#input-tool-declarations-alpha117).
+See [the protocol contract](models/common/docs/model-router.md#input-tool-declarations-alpha117).
 This source change requires a new adapter/evidence binding and a request-free
 router restart when deployed; registry reload cannot replace executable code.
 It does not enable hosted search, alter approvals, or rerun failed tasks.
@@ -102,7 +121,7 @@ is archived, and retained taskbar launchers can open native Codex independently
 of plugin source. New-device defaults do not activate the optional router.
 Old installations without original ownership evidence require a reviewed
 migration. Remove the Desktop plugin only after project recovery succeeds.
-See [installation and removal](references/installation-and-removal.md).
+See [installation and removal](shared/docs/installation-and-removal.md).
 
 Version `4.2.0-alpha.114` separates the native Responses HTTP request bound
 from external and WebSocket bounds. Native HTTP wire and decompressed input
@@ -244,7 +263,7 @@ evaluation, content-free phase timings, read-only readiness and explicit restart
 The evaluator includes nested/multiround/error/cancel and read-only patch-plan
 cases, keeps approvals, fixes Windows UTF-8 stdio and bounds child output.
 Install inventory includes the new modules and evaluator; production MCP tools
-and Hooks are unchanged. See [acceptance instructions](references/responses-acceptance.md).
+and Hooks are unchanged. See [acceptance instructions](models/common/docs/responses-acceptance.md).
 Stop the exact Operator/router and ensure no pending callback before upgrading.
 Installation does not register profiles, copy private evidence, enable Windows
 startup or activate global routing. Actual Desktop/file-write acceptance remains.
@@ -317,7 +336,7 @@ acceptance by the current CLI, not visibility in the running Desktop picker.
 Version `4.2.0-alpha.89` includes the optional Python Responses router source,
 registry and reversible configuration helper. Upgrade copies these files but
 does not activate a global router or change task defaults. See
-[router setup and acceptance limits](references/model-router.md). The router
+[router setup and acceptance limits](models/common/docs/model-router.md). The router
 requires its own environment with the pinned transport dependency; it has no
 LiteLLM SDK, Web backend or Chat Completions adapter.
 

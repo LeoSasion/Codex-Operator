@@ -59,6 +59,12 @@ class RequestSizeError(RouterError):
         self.scope = scope
 
 
+class ManagedWebTerminalError(RouterError):
+    def __init__(self, error):
+        super().__init__("managed_web_terminal_error")
+        self.error = error
+
+
 def decode_body(body: bytes, encoding: str, *, limit=None):
     """Inspect a bounded decoded copy for routing; keep native wire bytes intact."""
     limit = MAX_BODY if limit is None else limit
@@ -100,12 +106,12 @@ def decode_request(body: bytes, encoding: str, *, strict=False):
 def request_size_response(limit, scope):
     return web.json_response({"error": {"type": "invalid_request_error",
         "code": "router_request_too_large", "limit_bytes": limit, "scope": scope,
-        "message": "Local router request size limit exceeded; request was not forwarded or retried."}}, status=413)
+        "message": f"Local router request size limit exceeded ({scope}; limit {limit} bytes); request was not forwarded or retried."}}, status=413)
 
 
 class ModelRouter:
     def __init__(self, registry: ModelRegistry, token: str, *, native_base: str = NATIVE_BASE,
-                 registry_sha256: str | None = None) -> None:
+                 registry_sha256: str | None = None, web_profile=None) -> None:
         if not re.fullmatch(r"[a-f0-9]{64}", token):
             raise RouterError("router_token_requires_64_hex_characters")
         self._registry = registry
@@ -113,12 +119,19 @@ class ModelRouter:
         self._registry_snapshot = ContextVar("router_registry_snapshot", default=None)
         self._reload_lock = asyncio.Lock()
         self._reload_not_before = 0.0
+        self.web_profile = web_profile
+        self._web_bind_not_before = 0.0
+        self._web_turn_bindings = {}
         self.prefix = "/" + token + "/v1"
         self.native_base = native_base.rstrip("/")
         self.beeper = BeeperResponsesEngine()
         self.native_models: dict[str, set[str]] = {}
         self.session: aiohttp.ClientSession | None = None
-        self.slots = asyncio.Semaphore(16)
+        # Persistent WebSockets retain their connection slot while idle. Keep
+        # short HTTP work (including native search) independently bounded so
+        # those connections cannot consume every HTTP admission slot.
+        self.http_slots = asyncio.Semaphore(16)
+        self.websocket_slots = asyncio.Semaphore(16)
         self.failure_count = 0
         self.last_failure = None
         self.metrics = ResponsesMetrics()
@@ -145,11 +158,57 @@ class ModelRouter:
                 # off the event loop; cancellation never publishes its result.
                 self._reload_not_before = perf_counter() + 30.0
                 candidate, digest = await asyncio.to_thread(ModelRegistry.load_snapshot, path, expected_sha256)
+                for route in self._registry.routes.values():
+                    if route.web_binding is not None:
+                        candidate = candidate.with_web_route(route)
                 self._registry, self.registry_sha256 = candidate, digest
             return {"changed": changed, "registry_sha256": self.registry_sha256,
                     "registered_models": len(self._registry.routes),
                     "adapted_models": sum(r.responses is not None for r in self._registry.routes.values()),
                     "inference_requests": 0, "desktop_refreshed": False}
+
+    async def bind_web_service(self, expected):
+        """Explicit publication; manager owns lifecycle, Web bridge owns conversion."""
+        if self.web_profile is None:
+            raise RouterError("web_route_profile_not_selected")
+        if (not isinstance(expected, dict) or set(expected) != {"profile_sha256", "session_sha256"}
+                or any(not isinstance(v, str) or not re.fullmatch(r"[a-f0-9]{64}", v)
+                       for v in expected.values())):
+            raise RouterError("web_route_digest_required")
+        if self._reload_lock.locked():
+            raise RouterError("web_route_binding_busy_no_retry")
+        async with self._reload_lock:
+            binding = next((r.web_binding for r in self._registry.routes.values()
+                            if r.web_binding is not None), None)
+            changed = binding is None or (binding.profile_sha256, binding.session_sha256) != (
+                expected['profile_sha256'], expected['session_sha256'])
+            if changed:
+                if perf_counter() < self._web_bind_not_before:
+                    raise RouterError("web_route_binding_throttled_no_retry")
+                self._web_bind_not_before = perf_counter() + 30.0
+                from operator_web_service import resolve_route
+                try:
+                    route = await asyncio.to_thread(resolve_route, self.web_profile, expected)
+                except Exception as exc:
+                    raise RouterError("web_route_service_unavailable_no_retry") from exc
+                self._registry = self._registry.with_web_route(route)
+            return {"changed": changed, **expected, "inference_requests": 0,
+                    "desktop_refreshed": False}
+
+    def bind_web_turn(self, route, payload):
+        if route.web_binding is None:
+            return
+        from .web_mcp_transport import WebResponsesBridge
+        identity = WebResponsesBridge.identity(payload)
+        key = hashlib.sha256(encode(identity)).hexdigest()
+        generation = route.web_binding.session_sha256
+        previous = self._web_turn_bindings.get(key)
+        if previous is not None and previous != generation:
+            raise RouterError("web_route_turn_instance_changed_no_retry")
+        if previous is None:
+            if len(self._web_turn_bindings) >= 4096:
+                raise RouterError("web_route_turn_capacity_no_retry")
+            self._web_turn_bindings[key] = generation
 
     def record_failure(self, exc=None, *, status=None):
         # Fixed categories only: never retain exception messages, request data or URLs.
@@ -165,6 +224,9 @@ class ModelRouter:
         self.failure_count += 1
         self.last_failure = {"phase": PHASE.get(), "category": category,
                              "upstream_status": status}
+        if isinstance(exc, RequestSizeError):
+            self.last_failure.update(code="router_request_too_large",
+                                     scope=exc.scope, limit_bytes=exc.limit)
         if isinstance(exc, UpstreamProtocolError):
             self.last_failure["protocol_reason"] = protocol_reason(exc)
             state = protocol_response_state(exc)
@@ -204,9 +266,12 @@ class ModelRouter:
             yield
 
     async def admit(self, request):
-        if self.slots.locked():
+        websocket = (request.method == "GET" and request.path == self.prefix + "/responses"
+                     and web.WebSocketResponse(max_msg_size=MAX_BODY, compress=False).can_prepare(request).ok)
+        slots = self.websocket_slots if websocket else self.http_slots
+        if slots.locked():
             return web.json_response({"error": "router_busy_no_retry"}, status=503)
-        async with self.slots:
+        async with slots:
             begin = perf_counter()
             token = CURRENT_METRICS.set(self.metrics)
             registry_token = self._registry_snapshot.set(self._registry)
@@ -335,8 +400,10 @@ class ModelRouter:
                     # Reject duplicate keys even though the routing inspection used a
                     # decoded JSON copy. Native/v1 wire behavior remains unchanged.
                     payload = loads(decoded)
-                    with self.metrics.measure("request_adaptation"):
-                        payload, context = prepare_request(payload, route.responses, route.reasoning_efforts)
+                    if route.web_binding is None:
+                        with self.metrics.measure("request_adaptation"):
+                            payload, context = prepare_request(payload, route.responses, route.reasoning_efforts)
+                self.bind_web_turn(route, payload)
                 key = route.key()
                 headers = {"Content-Type": "application/json", "Accept-Encoding": "identity"}
                 if key:
@@ -377,7 +444,7 @@ class ModelRouter:
             return request_size_response(exc.limit, exc.scope)
         except web.HTTPRequestEntityTooLarge:
             request["router_failed"] = True
-            self.record_failure(RouterError("router_request_too_large"))
+            self.record_failure(RequestSizeError(MAX_NATIVE_HTTP_BODY, "http_request"))
             return request_size_response(MAX_NATIVE_HTTP_BODY, "http_request")
         except UpstreamProtocolError as exc:
             request["router_failed"] = True
@@ -518,9 +585,10 @@ class ModelRouter:
         route = self.registry.routes[payload["model"]]
         reject_opaque_context(payload)
         context = None
-        if route.responses is not None:
+        if route.responses is not None and route.web_binding is None:
             with self.metrics.measure("request_adaptation"):
                 payload, context = prepare_request(payload, route.responses, route.reasoning_efforts)
+        self.bind_web_turn(route, payload)
         headers = {"Content-Type": "application/json", "Accept-Encoding": "identity"}
         key = route.key()
         if key:
@@ -544,6 +612,25 @@ class ModelRouter:
                 return
             if response.status != 200 or "text/event-stream" not in response.headers.get("Content-Type", ""):
                 self.record_failure(status=response.status)
+                if route.web_binding is not None and response.status == 400:
+                    # Only the exact authenticated managed Web instance supplies
+                    # terminal errors. Closing 1011 loses their cause and causes
+                    # native sampling retries. Preserve its bounded failure as a
+                    # protocol error, never as successful assistant output.
+                    try:
+                        raw = await response.content.readexactly(65537)
+                    except asyncio.IncompleteReadError as end:
+                        raw = end.partial
+                    if len(raw) > 65536 or response.content_type != "application/json":
+                        raise RouterError("web_terminal_error_invalid")
+                    value = loads(raw)
+                    error = value.get("error") if isinstance(value, dict) else None
+                    if (not isinstance(error, dict) or error.get("retryable") is not False
+                            or not isinstance(error.get("code"), str)
+                            or not re.fullmatch(r"[a-z][a-z0-9_]{0,127}", error["code"])
+                            or not isinstance(error.get("message"), str)):
+                        raise RouterError("web_terminal_error_invalid")
+                    raise ManagedWebTerminalError(error)
                 raise RouterError("external_stream_unavailable")
             if context is not None:
                 if response.headers.get("Content-Encoding", "identity").lower() != "identity":
@@ -682,6 +769,11 @@ class ModelRouter:
                     for task in tasks:
                         task.cancel()
                     await asyncio.gather(*tasks, return_exceptions=True)
+        except ManagedWebTerminalError as exc:
+            request["router_failed"] = True
+            await ws.send_str(encode({"type": "error", "status": 400,
+                                      "error": exc.error}).decode("utf-8"))
+            await ws.close(code=1000)
         except Exception as exc:
             request["router_failed"] = True
             self.record_failure(exc)
