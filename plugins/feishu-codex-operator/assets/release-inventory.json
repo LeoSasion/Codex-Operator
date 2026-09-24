@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "release_name": "feishu-codex-operator-plugin",
-  "source_version": "4.2.0-alpha.137",
+  "source_version": "4.2.0-alpha.138",
   "repository_files": [
     ".agents/plugins/marketplace.json",
     ".gitignore",
@@ -49,6 +49,7 @@
         "development/docs/core-recovery-20260921.md",
         "development/docs/release-audit.md",
         "development/docs/testing.md",
+        "development/docs/workspace-maintenance.md",
         "development/run_tests.py",
         "development/tests/test_product_preview.py",
         "feishu-codex-operator-skill.md",
@@ -79,6 +80,7 @@
         "models/web/docs/chatgpt-web-integration.md",
         "models/web/docs/native-conversation-plan.md",
         "models/web/docs/native-web-experience.md",
+        "models/web/docs/native-web-history-20260924.md",
         "models/web/docs/web-background-sources.md",
         "models/web/docs/web-fixed-tunnel.md",
         "models/web/licenses/codex-chatgpt-web-MIT.txt",
@@ -191,7 +193,11 @@
         "shared/tests/test_source_route_contract.py",
         "skills/feishu-codex-operator/SKILL.md",
         "skills/feishu-codex-operator/agents/openai.yaml",
-        "upgrade-operator.md"
+        "upgrade-operator.md",
+        "scripts/operator_core/web_model_catalog.py",
+        "scripts/operator_core/web_model_catalog.json",
+        "models/web/tests/test_web_model_catalog.py",
+        "models/web/docs/web-model-catalog.md"
       ],
       "allowed_empty_directories": [
         "tests/fixtures"

@@ -147,6 +147,30 @@ class WebModelProtocolTests(unittest.TestCase):
         self.assertEqual([item['type'] for item in result['output']], ['message'])
         self.assertNotIn('web_search_call', json.dumps(events))
 
+    def test_citation_ids_are_opaque_but_spans_and_sources_stay_bound(self):
+        raw = self.citation_fixture()
+        old = raw['public_references'][0]['matched_text']
+        new = '\ue200cite\ue202result_9\ue202source-A\ue201'
+        raw['content']['parts'][0] = raw['content']['parts'][0].replace(old, new)
+        raw['public_references'][0].update(matched_text=new,
+            end_idx=raw['public_references'][0]['start_idx'] + len(new))
+        total = sum(map(len, raw['content']['parts']))
+        raw['public_references'][1].update(start_idx=total, end_idx=total + 1)
+        result = public_web_message(raw, citation_mode='markdown_links_v1')
+        self.assertIn('https://example.com/a?q=x_y', result['content'][0]['text'])
+        for invalid in ('\ue200cite\ue202bad id\ue201',
+                '\ue200cite\ue202bad\ue202\ue201',
+                '\ue200cite\ue202' + 'x' * 129 + '\ue201'):
+            altered = deepcopy(raw)
+            altered['content']['parts'][0] = altered['content']['parts'][0].replace(new, invalid)
+            altered['public_references'][0].update(matched_text=invalid,
+                end_idx=altered['public_references'][0]['start_idx'] + len(invalid))
+            total = sum(map(len, altered['content']['parts']))
+            altered['public_references'][1].update(start_idx=total, end_idx=total + 1)
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                    RouterError, 'web_public_citation_marker_invalid'):
+                public_web_message(altered, citation_mode='markdown_links_v1')
+
     def test_citations_reject_wrong_positions_sources_and_unsafe_links(self):
         mutations = [
             lambda v: v['public_references'][0].update(start_idx=v['public_references'][0]['start_idx'] + 1),
@@ -203,6 +227,103 @@ class WebModelProtocolTests(unittest.TestCase):
         self.assertEqual(raw, original)
         raw['public_references'][-1]['end_idx'] += 1
         self.assertEqual(public_web_message(raw, citation_mode='markdown_links_v1'), result)
+
+    def test_url_reference_accepts_opaque_id_only_with_exact_label(self):
+        raw = self.url_fixture()
+        ref = raw['public_references'][1]
+        old = ref['matched_text']
+        new = '\ue200url\ue202' + ref['title'] + '\ue202result_9\ue201'
+        raw['content']['parts'][3] = new
+        ref.update(matched_text=new, end_idx=ref['start_idx'] + len(new))
+        total = sum(map(len, raw['content']['parts']))
+        raw['public_references'][-1].update(start_idx=total, end_idx=total)
+        self.assertIn('https://example.net/new?q=a_b',
+            public_web_message(raw, citation_mode='markdown_links_v1')['content'][3]['text'])
+        ref['title'] = 'unbound label'
+        with self.assertRaisesRegex(RouterError, 'web_public_citation_marker_invalid'):
+            public_web_message(raw, citation_mode='markdown_links_v1')
+
+    def test_url_reference_accepts_only_its_exact_source_url_as_a_url_marker(self):
+        raw = self.url_fixture()
+        ref = raw['public_references'][1]
+        original = deepcopy(raw)
+        source_url = ref['item']['url']
+        old = ref['matched_text']
+        marker = '\ue200url\ue202' + ref['title'] + '\ue202' + source_url + '\ue201'
+        raw['content']['parts'][3] = marker
+        ref.update(matched_text=marker, end_idx=ref['start_idx'] + len(marker))
+        total = sum(map(len, raw['content']['parts']))
+        raw['public_references'][-1].update(start_idx=total, end_idx=total)
+        result = public_web_message(raw, citation_mode='markdown_links_v1')
+        self.assertEqual(result['content'][3]['text'],
+            '[中文😀 \\[Link\\]](<https://example.net/new?q=a_b>)')
+        self.assertEqual(original['public_references'][1]['matched_text'], old)
+        for invalid in ('https://example.net/other', 'https://example.net/new?q=a_b#different'):
+            altered = deepcopy(raw)
+            wrong = '\ue200url\ue202' + ref['title'] + '\ue202' + invalid + '\ue201'
+            altered['content']['parts'][3] = wrong
+            altered['public_references'][1].update(matched_text=wrong,
+                end_idx=ref['start_idx'] + len(wrong))
+            total = sum(map(len, altered['content']['parts']))
+            altered['public_references'][-1].update(start_idx=total, end_idx=total)
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                    RouterError, 'web_public_citation_marker_invalid'):
+                public_web_message(altered, citation_mode='markdown_links_v1')
+
+    def test_url_reference_accepts_observed_chatgpt_attribution_suffix_only(self):
+        raw = self.url_fixture()
+        ref = raw['public_references'][1]
+        plain = 'https://example.net/new?q=a_b'
+        ref['item']['url'] = plain + '&utm_source=chatgpt.com'
+        marker = '\ue200url\ue202' + ref['title'] + '\ue202' + plain + '\ue201'
+        raw['content']['parts'][3] = marker
+        ref.update(matched_text=marker, end_idx=ref['start_idx'] + len(marker))
+        total = sum(map(len, raw['content']['parts']))
+        raw['public_references'][-1].update(start_idx=total, end_idx=total)
+        rendered = public_web_message(raw, citation_mode='markdown_links_v1')
+        self.assertIn(plain + '&utm_source=chatgpt.com', rendered['content'][3]['text'])
+        for invalid in (plain + '&utm_source=elsewhere',
+                'https://other.example/new?q=a_b', plain + '&secret=1'):
+            altered = deepcopy(raw)
+            wrong = '\ue200url\ue202' + ref['title'] + '\ue202' + invalid + '\ue201'
+            altered['content']['parts'][3] = wrong
+            altered['public_references'][1].update(matched_text=wrong,
+                end_idx=ref['start_idx'] + len(wrong))
+            total = sum(map(len, altered['content']['parts']))
+            altered['public_references'][-1].update(start_idx=total, end_idx=total)
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                    RouterError, 'web_public_citation_marker_invalid'):
+                public_web_message(altered, citation_mode='markdown_links_v1')
+
+    def test_url_attribution_alias_changes_only_the_final_query_parameter(self):
+        base = 'https://example.net/new'
+        cases = [
+            (base + '?utm_source=chatgpt.com', base, True),
+            (base + '?q=a_b&utm_source=chatgpt.com#section', base + '?q=a_b#section', True),
+            (base + '&utm_source=chatgpt.com', base, False),
+            (base + '#section?utm_source=chatgpt.com', base + '#section', False),
+            (base + '?q=a_b#section&utm_source=chatgpt.com', base + '?q=a_b#section', False),
+            (base + '?q=?utm_source=chatgpt.com', base + '?q=', False),
+            (base + '?utm_source=chatgpt.com#section', base + '#changed', False),
+        ]
+        for source, target, accepted in cases:
+            with self.subTest(source=source):
+                raw = self.url_fixture()
+                ref = raw['public_references'][1]
+                ref['item']['url'] = source
+                marker = '\ue200url\ue202' + ref['title'] + '\ue202' + target + '\ue201'
+                raw['content']['parts'][3] = marker
+                ref.update(matched_text=marker, end_idx=ref['start_idx'] + len(marker))
+                total = sum(map(len, raw['content']['parts']))
+                raw['public_references'][-1].update(start_idx=total, end_idx=total)
+                original = deepcopy(raw)
+                if accepted:
+                    rendered = public_web_message(raw, citation_mode='markdown_links_v1')
+                    self.assertIn('<' + source + '>', rendered['content'][3]['text'])
+                else:
+                    with self.assertRaisesRegex(RouterError, 'web_public_citation_marker_invalid'):
+                        public_web_message(raw, citation_mode='markdown_links_v1')
+                self.assertEqual(raw, original)
 
     def test_url_validation_rejects_unbound_labels_spans_and_sources(self):
         mutations = [

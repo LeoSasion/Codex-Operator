@@ -277,7 +277,14 @@ raise SystemExit(1)
             await driver(self.turn())
         shapes = [event['shape'] for event in driver.events if event['kind'] == 'public_user_binding']
         self.assertEqual(shapes, [{'exact': False, 'supportedTextShape': True,
-            'sourceLength': 12, 'promptLength': 10, 'firstDifference': 7, 'sharedSuffix': 3}])
+            'sourceLength': 12, 'promptLength': 10, 'firstDifference': 7}])
+        base = WebTextBrowserDriver({**self.settings, 'window_mode': 'background'},
+            self.root / 'binding-session-diagnostic')
+        session = WebBrowserSession(base)
+        self.addAsyncCleanup(session.close)
+        session.event(event, {})
+        self.assertEqual(base.events[-1]['shape'], shapes[0])
+        self.assertNotIn('DO_NOT_RETAIN', json.dumps(base.status()))
         self.assertNotIn('DO_NOT_RETAIN', json.dumps(driver.status()))
 
     async def test_bound_and_forced_call_reject_before_process_and_retain_json(self):
@@ -1035,6 +1042,21 @@ if VARIANT.startswith('assist'):
   (root/'fixture-assist-done.txt').unlink()
   emit('assistance_hidden',visible=False,focused=False,userClosed=True)
 emit('worker_ready')
+if VARIANT.startswith('prepare_'):
+ assert c['startupPrepare'] is True and 'text' not in c and 'startupAssistance' not in c
+ if VARIANT=='prepare_delayed':
+  while not (root/'fixture-prepare-done.txt').exists():time.sleep(.02)
+  (root/'fixture-prepare-done.txt').unlink()
+ if VARIANT=='prepare_bad':emit('worker_prepared',hidden=False,empty=True)
+ elif VARIANT=='prepare_challenge':
+  emit('worker_attention_required',reason='web_browser_challenge_required_before_dispatch')
+  while not (root/'assist.json').exists():time.sleep(.02)
+  a=json.loads((root/'assist.json').read_text());(root/'assist.json').unlink()
+  emit('assistance_opened',assistanceId=a['id'])
+  while not (root/'fixture-assist-done.txt').exists():time.sleep(.02)
+  (root/'fixture-assist-done.txt').unlink()
+  emit('assistance_hidden',assistanceId=a['id'],visible=False,focused=False,userClosed=True)
+ else:emit('worker_prepared',hidden=True,empty=True)
 count=0
 while not (root/'shutdown.json').exists():
  p=root/'next.json'
@@ -1257,7 +1279,8 @@ while not (root/'shutdown.json').exists():
                 async with client.post(address + '/responses', json=self.payload()) as response:
                     self.assertEqual(response.status, 400)
                     self.assertEqual((await response.json())['error']['cause_http_status'], 503)
-                    self.assertIn('本次未向模型发送消息', (await response.json())['error']['message'])
+                    self.assertIn('先查看当前准确页面', (await response.json())['error']['message'])
+                    self.assertNotIn('完成登录或验证', (await response.json())['error']['message'])
                 self.assertEqual(base.dispatches, 0)
                 self.assertEqual(base.attempts, 0)
                 (driver.folder / 'fixture-assist-done.txt').write_bytes(b'done')
@@ -1288,6 +1311,74 @@ while not (root/'shutdown.json').exists():
             self.assertEqual(base.dispatches, 0)
             await driver.close()
             self.assertEqual(len(seen), 1)
+
+    async def test_hidden_startup_preparation_fences_admission_without_a_model_request(self):
+        base = WebTextBrowserDriver({**self.settings, 'window_mode': 'background'}, self.root / 'startup-prepare')
+        driver = WebBrowserSession(base, startup_prepare=True)
+        self.addAsyncCleanup(driver.close)
+        provider = WebResponsesProvider(WebResponsesBridge(service.text_route(), WebMcpEndpoint(), driver))
+        provider.admission_state = 'preparing'
+        address = await provider.start()
+        self.addAsyncCleanup(provider.stop)
+        seen = []
+        with self.spawn_fixture(self.session_program('prepare_delayed'), seen):
+            preparation = asyncio.create_task(driver.prepare_hidden())
+            while driver.ready is None or not driver.ready.done(): await asyncio.sleep(.02)
+            self.assertEqual(driver.status()['readiness'], 'preparing')
+            async with ClientSession(headers={'Authorization': 'Bearer ' + provider.token}) as client:
+                async with client.post(address + '/responses', json=self.payload('during-preparation')) as response:
+                    self.assertEqual(response.status, 400)
+                    error = (await response.json())['error']
+                    self.assertEqual(error['cause_http_status'], 503)
+                    self.assertEqual(error['code'], 'web_browser_preparing_before_dispatch')
+                # Readiness may change after the HTTP admission check. The
+                # browser's own gate must retain the same fixed classification.
+                provider.admission_state = 'ready'
+                async with client.post(address + '/responses', json=self.payload('preparation-race')) as response:
+                    self.assertEqual(response.status, 400)
+                    error = (await response.json())['error']
+                    self.assertEqual(error['cause_http_status'], 503)
+                    self.assertEqual(error['code'], 'web_browser_preparing_before_dispatch')
+                    self.assertIn('准备完成后可发送新消息', error['message'])
+                    self.assertNotIn('登录', error['message'])
+                self.assertEqual((base.attempts, base.dispatches), (0, 0))
+                self.assertFalse((driver.folder / 'next.json').exists())
+                (driver.folder / 'fixture-prepare-done.txt').write_bytes(b'done')
+                await asyncio.wait_for(preparation, 3)
+                self.assertEqual(driver.status()['readiness'], 'ready')
+                provider.admission_state = 'ready'
+                async with client.post(address + '/responses', json=self.payload('new-after-preparation')) as response:
+                    self.assertEqual(response.status, 200)
+            self.assertEqual((base.attempts, base.dispatches, base.completed), (1, 1, 1))
+            self.assertEqual(len(seen), 1)
+            self.assertTrue(seen[0]['startupPrepare'])
+
+    async def test_startup_preparation_requires_verified_page_or_explicit_assistance(self):
+        for variant in ('prepare_bad', 'prepare_challenge'):
+            with self.subTest(variant=variant):
+                base = WebTextBrowserDriver({**self.settings, 'window_mode': 'background'},
+                    self.root / variant)
+                driver = WebBrowserSession(base, startup_prepare=True)
+                self.addAsyncCleanup(driver.close)
+                seen = []
+                with self.spawn_fixture(self.session_program(variant), seen):
+                    if variant == 'prepare_bad':
+                        with self.assertRaisesRegex(ValueError, 'web_session_worker_failed_no_retry'):
+                            await asyncio.wait_for(driver.prepare_hidden(), 3)
+                        self.assertTrue(driver.closed)
+                    else:
+                        await asyncio.wait_for(driver.prepare_hidden(), 3)
+                        self.assertEqual(driver.status()['readiness'], 'assistance_required')
+                        self.assertEqual(driver.status()['assistance_state'], 'required')
+                        self.assertEqual((base.attempts, base.dispatches), (0, 0))
+                        assistance = asyncio.create_task(driver.assist('a' * 32))
+                        while driver.assistance_state != 'awaiting_user': await asyncio.sleep(.02)
+                        (driver.folder / 'fixture-assist-done.txt').write_bytes(b'done')
+                        await asyncio.wait_for(assistance, 3)
+                        self.assertEqual(driver.status()['readiness'], 'ready')
+                        self.assertEqual((base.attempts, base.dispatches), (0, 0))
+                        self.assertEqual((await driver(self.turn()))['content']['parts'][0], 'exact 中文\r\n')
+                    self.assertEqual(len(seen), 1)
 
 
 if __name__ == '__main__':

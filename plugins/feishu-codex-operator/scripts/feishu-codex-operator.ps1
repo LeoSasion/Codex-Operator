@@ -84,7 +84,7 @@ Usage:
   feishu-codex-operator.ps1 web configure -WebSettings <existing_settings> -PythonExecutable <absolute_python>
   feishu-codex-operator.ps1 web start|status|assist|inspect|stop|verify [-Json]
   feishu-codex-operator.ps1 web recover [-RecoveryDigest <checked_preview_sha256>] [-Json]
-  feishu-codex-operator.ps1 web desktop-prepare|desktop-connect|desktop-status|desktop-check|desktop-disconnect [-Json]
+  feishu-codex-operator.ps1 web desktop-prepare|desktop-connect|desktop-rebind|desktop-status|desktop-check|desktop-disconnect [-Json]
   feishu-codex-operator.ps1 operator access -AccessMode locked -OwnerOpenId <open_id>
   feishu-codex-operator.ps1 doctor
 
@@ -874,6 +874,14 @@ function Get-OperatorParity {
             (Join-Path $skillRoot 'scripts\operator_core\model_router.py'),
             (Join-Path (Get-OperatorPaths).Runtime 'operator_core\model_router.py')
         )
+        'operator_core\web_model_catalog.py' = @(
+            (Join-Path $skillRoot 'scripts\operator_core\web_model_catalog.py'),
+            (Join-Path (Get-OperatorPaths).Runtime 'operator_core\web_model_catalog.py')
+        )
+        'operator_core\web_model_catalog.json' = @(
+            (Join-Path $skillRoot 'scripts\operator_core\web_model_catalog.json'),
+            (Join-Path (Get-OperatorPaths).Runtime 'operator_core\web_model_catalog.json')
+        )
         'operator_core\model_registry.py' = @(
             (Join-Path $skillRoot 'scripts\operator_core\model_registry.py'),
             (Join-Path (Get-OperatorPaths).Runtime 'operator_core\model_registry.py')
@@ -989,6 +997,8 @@ function Get-InstalledOperatorManifestIssues {
         'operator_core/beeper_provider.py',
         'operator_core/beeper_model_catalog.json',
         'operator_core/model_registry.py',
+        'operator_core/web_model_catalog.py',
+        'operator_core/web_model_catalog.json',
         'operator_core/responses_capabilities.py',
         'operator_core/responses_tool_adapter.py',
         'operator_core/responses_events.py',

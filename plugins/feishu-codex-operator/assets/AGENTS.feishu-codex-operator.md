@@ -74,6 +74,20 @@
   arguments and outputs; a successful command for an old request is still failure.
 
 
+- Dated Web model catalogs preserve exact generation and effort selections. GPT-5.6
+  and GPT-6 regular entries expose only observed Instant/Medium/High/Extra high;
+  Pro is a separate entry whose fixed native max means the Web Pro position,
+  never API effort equivalence. Validate the selected radio, visible label,
+  range and explicit generation header before dispatch; Latest alone is not
+  identity proof. Keep one shared browser/admission/consumed-turn ledger and
+  exact per-request completion checks across models. Publish a complete bound
+  catalog atomically without changing native defaults or bypassing recovery.
+  An unbound starting record may be explicitly retired only when its original
+  stopped snapshot shows zero requests, its parent and observed session PID are
+  absent, exact dependencies and tunnel marker are absent, and the listener port
+  is exclusively reservable. Retain originals and uncertainty; never fabricate
+  worker ownership, auto-reset, launch or replay during this maintenance.
+
 - Project memory: before native UX, Web model, tool connection, onboarding or
   background-lifecycle work, read the canonical plugin's
   `models/web/docs/native-web-experience.md` and its implementation-source links.

@@ -16,7 +16,38 @@
 `operator_web_entry.ps1` 与 `operator_product.py`：省略重复配置参数时只读核验原登记，
 不自动采用变化；固定诊断区别检查受限与保存入口变化。未复制上游代码、引入依赖或
 采用其重试策略。39 项专项及全量回归通过，真实保存入口重复复用且文件与进程保持；
-工具声明刷新、预热和原生菜单整合仍是后续计划，详见上述改进计划。
+这是 2026-09-20 的验收范围；隐藏页面准备已在 2026-09-23 落地，工具声明刷新与
+主窗口模型选择仍需各自验收，详见上述改进计划。
+
+2026-09-23 后续研究固定到
+[`750fad9378a0cf9e37791916b11f7ed9add645dd`](https://github.com/totec448-spec/chat-on-steroids/tree/750fad9378a0cf9e37791916b11f7ed9add645dd)：
+
+| 来源 | 本项目独立采用的机制与边界 |
+| --- | --- |
+| [browser-startup.ts](https://github.com/totec448-spec/chat-on-steroids/blob/750fad9378a0cf9e37791916b11f7ed9add645dd/src/main/browser-startup.ts)、[browser-wake.ts](https://github.com/totec448-spec/chat-on-steroids/blob/750fad9378a0cf9e37791916b11f7ed9add645dd/src/main/browser-wake.ts) | 保存服务的后台准备与发送分开；不复制自动重试或引入伴随扩展 |
+| [chat-models.ts](https://github.com/totec448-spec/chat-on-steroids/blob/750fad9378a0cf9e37791916b11f7ed9add645dd/src/shared/chat-models.ts) | 精确别名、保留代际和独立 Pro 身份；不从 Latest 或 API 型号推定网页身份 |
+
+初始未固定的研究入口仍保留用于溯源：
+[connection.ts](https://github.com/totec448-spec/chat-on-steroids/blob/main/src/main/connection.ts)、
+[plugin-refresh.ts](https://github.com/totec448-spec/chat-on-steroids/blob/main/src/main/plugin-refresh.ts)、
+[chatgpt-turn-signals.md](https://github.com/totec448-spec/chat-on-steroids/blob/main/docs/chatgpt-turn-signals.md)、
+[codex-desktop-bridge.md](https://github.com/totec448-spec/chat-on-steroids/blob/main/docs/codex-desktop-bridge.md)。
+这些 main 链接不是固定版本证据；刷新摘要不能忽略输出 schema、风险标记等声明语义，
+Desktop bridge 草案也不是已完成的 Windows 模型菜单方案。没有复制其运行代码。
+
+2026-09-24 对照同一固定提交的
+[`extension/chatgpt-dom.js` 可见性判断](https://github.com/totec448-spec/chat-on-steroids/blob/750fad9378a0cf9e37791916b11f7ed9add645dd/extension/chatgpt-dom.js#L139)
+与 [`chatgpt-turn-signals.md` 屏幕阅读播报误判记录](https://github.com/totec448-spec/chat-on-steroids/blob/750fad9378a0cf9e37791916b11f7ed9add645dd/docs/chatgpt-turn-signals.md#L132)，
+本项目在 [web_browser_page.cjs](../../../scripts/web_browser_page.cjs) 独立排除明确视觉隐藏的
+告警节点，包括上游所列 `sr-only`、`visually-hidden` 与明确隐藏测试标记，防止把无障碍播报
+误作当前可见的人机验证或错误界面。保留真实可见的小尺寸告警，不引入任意像素阈值、
+观察失败即放行、reload 或 retry；没有复制上游代码。验证结果单列在
+[发布验收](../../../development/docs/release-audit.md)，此项不能推导当前页面已登录或服务已部署。
+
+下方历史中的“当前”“优先级不变”均指对应记录日期。2026-09-20 后统一以本节的
+Chat On Steroids 首要策略为准。2026-09-24 已移除仅用于旧验收的项目搜索禁用配置；
+当前 Web-only 搜索方案和通过/失败边界见[项目记忆](native-web-experience.md)，
+合并的逐次验收见[历史索引](native-web-history-20260924.md)。来源登记不是功能验收。
 
 ## 历史实现来源与验证
 
@@ -47,8 +78,8 @@
 以下固定提交是代码审阅与改编来源，不是当前插件在真实账户中的验收证明。
 主体为 Python；必须接触网页渲染的部分使用 Electron，不运行参考项目的产品。
 
-当前参考顺序按所有者 2026-09-18 的最新要求：WebCodex → localmcp / MCPX →
-codex-chatgpt-web。下列历史改编记录用于来源归属，不代表继续优先采用该项目架构。
+2026-09-18 当时的参考顺序为 WebCodex → localmcp / MCPX → codex-chatgpt-web；
+已被上方 2026-09-20 策略取代。下列改编记录用于来源归属，不是当前优先顺序。
 
 ## codex-chatgpt-web
 
@@ -136,7 +167,8 @@ OpenAI_Support 在[相关社区回复](https://community.openai.com/t/tool-respo
 composer 改为当前 turn key 的简短读取说明；完整请求由既有 `operator_begin` 交付。
 这是传输位置调整，不是删减上下文、移植上游权限策略或自动重试。原生搜索声明的
 适配缺口保留明确拒绝；仅隔离验收目录通过原生配置关闭该未实现能力，未复制 hosted
-搜索执行器，也不把这一受限目录的成功当成日常全部功能验收。
+搜索执行器，也不把这一受限目录的成功当成日常全部功能验收。该项目级禁用办法
+在 2026-09-24 已撤回；它会影响同目录其他模型，不能继续作为配置指引。
 
 2026-09-17 的独立 Desktop 准备继续采用 codex-chatgpt-web 的原生任务入口方向，
 并沿用 WebCodex 的“保存配置”和“启动实例”分工。新增准备器由本项目独立实现，

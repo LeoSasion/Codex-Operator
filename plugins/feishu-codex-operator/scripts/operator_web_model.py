@@ -30,6 +30,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, ProxyHandler, HTTPRedirectHandler, build_opener
 
 from operator_core.model_registry import ModelRegistry
+from operator_core.web_model_catalog import MODELS, PREFIX
 from operator_core.responses_tool_adapter import loads
 from operator_core.web_browser_driver import WebTextBrowserDriver, WebMcpBrowserDriver, private_directory
 from operator_core.web_browser_session import WebBrowserSession
@@ -44,12 +45,14 @@ DEFAULT_SERVICE_LIFETIME = 0
 MAX_SERVICE_LIFETIME = 72 * 60 * 60
 
 
-def text_route(*, tools=False):
+def text_route(*, tools=False, model='gpt-5.6-sol'):
     # Only explicit mcp_v1 enables call release through the connected endpoint.
     # The default text transport still rejects every local call.
-    row = {'slug': SLUG, 'display_name': 'Web GPT-5.6 Sol（对话测试）',
-        'model': 'gpt-5.6-sol', 'api_base': 'http://127.0.0.1:1/v1', 'api_key_env': '',
-        'context_window': 16000, 'reasoning_efforts': ['high'], 'responses': {
+    require(model in MODELS, 'web_explicit_model_required')
+    definition = MODELS[model]
+    row = {'slug': PREFIX + model, 'display_name': definition['display_name'],
+        'model': model, 'api_base': 'http://127.0.0.1:1/v1', 'api_key_env': '',
+        'context_window': 16000, 'reasoning_efforts': definition['reasoning_efforts'], 'responses': {
             'protocol': 'responses-tools-v1', 'function_tools': True,
             # Explicit native Desktop codecs; they only represent declarations
             # and history. Codex still owns every execution and permission.
@@ -69,7 +72,11 @@ def text_route(*, tools=False):
             'reasoning_input': True, 'reasoning_summary': True, 'previous_response_id': False,
             'text_verbosity': False, 'codex_tool_mode': 'standard',
             'completed_output_policy': 'require_message_or_tool'}}
-    return ModelRegistry({'version': 2, 'models': [row]}, {'models': [{}]}).routes[SLUG]
+    return ModelRegistry({'version': 2, 'models': [row]}, {'models': [{}]}).routes[row['slug']]
+
+
+def text_routes(*, tools=False):
+    return tuple(text_route(tools=tools, model=model) for model in MODELS)
 
 
 def read_json(path, limit=65536):
@@ -302,7 +309,7 @@ def service_status(instance, browser, provider, *, assistance=None, phase=None, 
     readiness = observation.get('readiness', 'busy' if observation.get('active') else 'ready')
     needs_assistance = observation.get('needs_assistance', False)
     state = phase or ('unavailable' if readiness == 'unavailable' else
-        'assistance' if needs_assistance else 'ready')
+        'assistance' if needs_assistance else 'preparing' if readiness == 'preparing' else 'ready')
     if connection is not None and not connection.ready and phase is None and readiness != 'unavailable':
         state = 'unavailable' if connection.failed.is_set() else 'reconnecting' if connection.reconnecting else 'connection'
         readiness = {'connection': 'connection_required', 'reconnecting': 'connection_reconnecting',
@@ -324,11 +331,13 @@ def service_guidance(details):
     if details.get('needs_assistance'):
         if (details.get('assistance') or {}).get('inspect_completed') is True:
             return '正在查看已结束对话的只读文字快照；关闭预览后恢复接收请求，原页面保留。'
-        return '网页需要完成登录或验证，请打开 Operator 辅助窗口处理；已有固定连接继续沿用。'
+        return '网页会话尚未就绪；先查看当前准确页面，再判断是否需要登录或验证。已有固定连接继续沿用。'
     if state == 'connection':
         return '请完成当前固定连接的绑定；已有插件时先核对绑定，不要重复创建。'
     if state == 'reconnecting':
         return '连接正在恢复，固定配置保留；未自动重做先前请求。'
+    if state == 'preparing':
+        return '后台正在检查已保存的网页会话；尚未发送模型请求，也不会自动重做先前请求。'
     if state == 'unavailable':
         return '后台连接当前不可用，请先检查连接状态；不要重复创建插件或重发先前操作。'
     transport = details.get('transport') or {}
@@ -359,7 +368,7 @@ def assistance_error(error):
         else 'web_assistance_failed_no_retry'
 
 
-async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME):
+async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME, *, prepare_hidden=False):
     require(type(lifetime) is int and (lifetime == 0 or 60 <= lifetime <= MAX_SERVICE_LIFETIME),
         'web_service_lifetime_invalid')
     config = read_json(settings)
@@ -371,6 +380,9 @@ async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME):
     assistance = config.get('startup_assistance', False)
     require(type(assistance) is bool and (not assistance or lifecycle == 'session_v1'),
         'web_startup_assistance_invalid')
+    require(type(prepare_hidden) is bool and (not prepare_hidden
+        or lifecycle == 'session_v1' and not assistance), 'web_startup_prepare_invalid')
+    startup_prepare = prepare_hidden
     private_directory(state)
     endpoint = WebMcpEndpoint(begin_result_mode='structured_begin_v1' if mode == 'mcp_v1' else 'text_v1',
         call_result_mode='structured_call_v1' if mode == 'mcp_v1' else 'text_v1',
@@ -387,8 +399,10 @@ async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME):
         connector=None, pending_connection=True) if connection is not None else
         WebTextBrowserDriver(driver_config, state / 'requests'))
     browser = base_browser
-    if lifecycle == 'session_v1': browser = WebBrowserSession(browser, startup_assistance=assistance)
+    if lifecycle == 'session_v1': browser = WebBrowserSession(browser,
+        startup_assistance=assistance, startup_prepare=startup_prepare)
     bridge = WebResponsesBridge(text_route(tools=connection is not None), endpoint, browser,
+        routes=text_routes(tools=connection is not None),
         timeout=browser.config['timeoutMs'] / 1000 + 15,
         citation_mode=config.get('citation_mode', 'none'),
         check_call=(lambda *_: require(connection.ready, 'web_connection_unavailable'))
@@ -406,6 +420,7 @@ async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME):
         handlers[value] = signal.signal(value, lambda *_: ended.set())
     instance = secrets.token_hex(16)
     preparation = None
+    page_preparation = None
     assistance_result = None
     assistance_ids = set()
     browser_replacements = 0
@@ -418,10 +433,12 @@ async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME):
                 base_browser.bind_connector(connection.connector)
             write_json(state / 'connection.json', {'instance': instance, **connection.setup()})
         needs_connection = connection is not None and not connection.ready
-        provider.admission_state = 'connection' if needs_connection else 'assistance' if assistance else 'ready'
+        provider.admission_state = ('connection' if needs_connection else 'assistance' if assistance
+            else 'preparing' if startup_prepare else 'ready')
         base = await provider.start()
         write_json(state / 'session.json', {'version': 1, 'instance': instance,
             'pid': os.getpid(), 'base_url': base, 'token': provider.token, 'model': SLUG,
+            'models': [route.slug for route in text_routes(tools=connection is not None)],
             'expires_at': int(time.time()) + lifetime if lifetime else None, 'mode': mode})
         print(json.dumps({'status': 'connection_required' if needs_connection else 'ready',
             'mode': mode, 'mcp_listener': connection is not None,
@@ -429,6 +446,8 @@ async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME):
         if assistance:
             assistance_result = {'id': None, 'state': 'opening', 'source': 'startup'}
             preparation = asyncio.create_task(browser.prepare_assistance())
+        elif startup_prepare:
+            page_preparation = asyncio.create_task(browser.prepare_hidden())
         deadline = time.monotonic() + lifetime if lifetime else None
         previous = None
         while not ended.is_set() and (deadline is None or time.monotonic() < deadline):
@@ -441,6 +460,10 @@ async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME):
                 except Exception as error:
                     assistance_result = {**assistance_result, 'state': 'failed', 'code': assistance_error(error)}
                 preparation = None
+            if page_preparation is not None and page_preparation.done():
+                try: page_preparation.result()
+                except Exception: pass  # The owned browser is closed and status becomes unavailable.
+                page_preparation = None
             stop = state / 'stop.json'
             if stop.exists() or stop.is_symlink():
                 try:
@@ -477,7 +500,7 @@ async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME):
                     require(len(assistance_ids) < 128, 'web_assistance_request_limit')
                     assistance_ids.add(assistance_id)
                     require(isinstance(browser, WebBrowserSession), 'web_assistance_requires_session')
-                    require(preparation is None and not request_active(bridge, browser),
+                    require(preparation is None and page_preparation is None and not request_active(bridge, browser),
                         'web_assistance_requires_idle_session')
                     require(not inspect_completed or browser.status()['inspection_available'],
                         'web_inspection_completed_page_required')
@@ -506,10 +529,13 @@ async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME):
                     if preparation is None:
                         assistance_result = rejected
             status = service_status(instance, browser, provider, assistance=assistance_result,
-                phase='assistance' if preparation is not None else None, connection=connection,
+                phase='assistance' if preparation is not None else 'preparing' if page_preparation is not None else None,
+                connection=connection,
                 browser_replacements=browser_replacements)
             if preparation is not None:
                 provider.admission_state = 'assistance'
+            elif page_preparation is not None:
+                provider.admission_state = 'preparing'
             elif status['state'] == 'unavailable':
                 provider.admission_state = 'stopped'
             elif connection is not None and not connection.ready:
@@ -545,6 +571,9 @@ async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME):
             if preparation is not None:
                 preparation.cancel()
                 await asyncio.gather(preparation, return_exceptions=True)
+            if page_preparation is not None:
+                page_preparation.cancel()
+                await asyncio.gather(page_preparation, return_exceptions=True)
             try:
                 await provider.stop()
             finally:
@@ -570,6 +599,8 @@ def main():
     parser.add_argument('action', choices=('serve', 'status', 'assist', 'inspect', 'connect', 'check-connection', 'stop'))
     parser.add_argument('--state', type=Path, required=True)
     parser.add_argument('--settings', type=Path)
+    parser.add_argument('--prepare-hidden', action='store_true',
+        help='serve only: check one empty saved Web page before accepting a model request')
     parser.add_argument('--binding', type=Path, help='connect only: private binding for this exact connection')
     parser.add_argument('--replace-closed-browser', action='store_true',
         help='assist only: explicitly replace a closed idle browser, retaining the live connection and no-replay ledger')
@@ -584,9 +615,11 @@ def main():
             and (args.action == 'stop' or args.drain_seconds == 0), 'web_service_drain_invalid')
         require((args.action == 'connect') == (args.binding is not None), 'web_connection_binding_required')
         require(not args.replace_closed_browser or args.action == 'assist', 'web_assistance_replacement_invalid')
+        require(not args.prepare_hidden or args.action == 'serve', 'web_startup_prepare_invalid')
         if args.action == 'serve':
             require(args.settings is not None and args.settings.is_absolute(), 'web_service_settings_required')
-            asyncio.run(serve(args.settings, args.state, args.lifetime))
+            asyncio.run(serve(args.settings, args.state, args.lifetime,
+                prepare_hidden=args.prepare_hidden))
         else:
             session, health = live_status(args.state)
             if args.action == 'check-connection':

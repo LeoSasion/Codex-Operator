@@ -75,6 +75,12 @@ def trace(kind,ident):
  with open(TRACE,'a',encoding='utf8') as stream:stream.write(json.dumps([kind,ident])+'\\n')
 emit('worker_ready');count=0;seen=set()
 if VARIANT=='exit':raise SystemExit(1)
+if c.get('startupPrepare') is True:
+ if VARIANT=='prepare_hold':
+  while not Path(RELEASE).exists() and not (root/'shutdown.json').exists():time.sleep(.01)
+  if (root/'shutdown.json').exists():raise SystemExit(0)
+  Path(RELEASE).unlink()
+ emit('worker_prepared',hidden=True,empty=True)
 while not (root/'shutdown.json').exists():
  p=root/'assist.json'
  if p.exists():
@@ -413,10 +419,12 @@ while not (root/'shutdown.json').exists():
             with self.assertRaisesRegex(ValueError, 'web_service_drain_invalid'):
                 service.stop_request(path, 'a' * 32)
 
-    async def start_service(self, *, variant='normal', lifetime=service.DEFAULT_SERVICE_LIFETIME):
+    async def start_service(self, *, variant='normal', lifetime=service.DEFAULT_SERVICE_LIFETIME,
+            prepare_hidden=False):
         settings, state = self.root / 'settings.json', self.root / 'service'
         settings.write_text(json.dumps(self.settings), encoding='utf8')
-        task = asyncio.create_task(service.serve(settings, state, lifetime))
+        task = asyncio.create_task(service.serve(settings, state, lifetime,
+            prepare_hidden=prepare_hidden))
         self.addAsyncCleanup(self.finish_service, task, state)
         await self.until(lambda: (state / 'status.json').exists())
         session = service.read_json(state / 'session.json')
@@ -515,6 +523,33 @@ while not (root/'shutdown.json').exists():
             await self.finish_service(task, state)
             self.assertEqual(service.read_json(state / 'status.json')['state'], 'stopped')
             self.assertEqual(launches, [])
+
+    async def test_saved_service_prepares_hidden_page_before_admitting_a_new_turn(self):
+        launches = []
+        with self.spawn_fixture('prepare_hold', launches):
+            task, state, session = await self.start_service(prepare_hidden=True)
+            await self.until(lambda: service.read_json(state / 'status.json')['state'] == 'preparing')
+            self.assertEqual(service.read_json(state / 'status.json')['readiness'], 'preparing')
+            _, health = await asyncio.to_thread(service.live_status, state)
+            self.assertEqual(health['state'], 'preparing')
+            self.assertFalse(health['accepting_requests'])
+            async with ClientSession(headers={'Authorization': 'Bearer ' + session['token']}) as client:
+                async with client.post(session['base_url'] + '/responses', json=self.payload('during-preparation')) as response:
+                    self.assertEqual(response.status, 400)
+                    error = (await response.json())['error']
+                    self.assertEqual((error['code'], error['cause_http_status']),
+                        ('web_browser_preparing_before_dispatch', 503))
+                self.assertFalse(self.trace.exists())
+                self.release.write_bytes(b'page ready')
+                await self.until(lambda: service.read_json(state / 'status.json')['state'] == 'ready')
+                async with client.post(session['base_url'] + '/responses', json=self.payload('new-after-preparation')) as response:
+                    self.assertEqual(response.status, 200)
+            self.assertEqual(len(launches), 1)
+            self.assertTrue(launches[0]['startupPrepare'])
+            await self.until(lambda: service.read_json(state / 'status.json')['browser']['dispatches'] == 1)
+            self.assertEqual(service.read_json(state / 'status.json')['browser']['dispatches'], 1)
+            await self.finish_service(task, state)
+            self.assertEqual(service.read_json(state / 'status.json')['state'], 'stopped')
 
     async def test_opt_in_lifetime_expires_and_rejects_invalid_limits_before_creating_state(self):
         launches = []

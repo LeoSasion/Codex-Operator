@@ -3,7 +3,8 @@
 Codex-Operator's original code is available under the MIT license in LICENSE.
 Included third-party portions retain their original licenses and attribution.
 
-- **yyjeqhc/webcodex** is the primary experience reference for native task ownership and background lifecycle. Its Apache-2.0 license is retained in `models/web/licenses/webcodex-Apache-2.0.txt`.
+- **totec448-spec/chat-on-steroids** is the primary research reference under the owner's 2026-09-20 direction, for smoother native conversations with fewer setup steps and interruptions. This relationship describes research and independent implementation, not a code transplant.
+- **yyjeqhc/webcodex** informed native task ownership and background lifecycle. It is now a dormant reference, consulted for concrete gaps; its Apache-2.0 license is retained in `models/web/licenses/webcodex-Apache-2.0.txt`.
 - **daodao97/localmcp** is a reference for local tool connection and onboarding.
 - **MCPX** is a product reference supplied by the owner. The exact screenshot identity is unconfirmed; `opentokenz/mcpx` is only a candidate.
 - **miuuyy/codex-chatgpt-web** is a supplementary, lowest-priority reference. Adapted browser/tool transport portions retain the MIT notice in `models/web/licenses/codex-chatgpt-web-MIT.txt`.

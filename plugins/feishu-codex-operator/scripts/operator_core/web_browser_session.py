@@ -15,10 +15,11 @@ import re
 import secrets
 import subprocess
 
-from .web_browser_driver import (child_environment, desktop_session_state, safe_generation_progress, safe_model_network,
+from .web_browser_driver import (child_environment, desktop_session_state, safe_effort_diagnostic, safe_generation_progress, safe_model_network, safe_user_binding_diagnostic,
     rejected_http_status, rejected_network_error, safe_public_interruption, public_interruption_code, rejected_ui_code, public_final_timeout)
 from .web_mcp_transport import WebRequestCapacityError, WebBrowserAssistanceRequired, WebDesktopUnavailable, WebBrowserHttpError, WebBrowserNetworkError, WebBrowserUiError, WebBrowserFinalTimeout, require
 from .responses_tool_adapter import loads
+from .web_model_catalog import matches_selection
 
 
 async def wait_owned_future(future, timeout):
@@ -32,9 +33,10 @@ async def wait_owned_future(future, timeout):
 
 
 class WebBrowserSession:
-    def __init__(self, driver, *, startup_assistance=False):
+    def __init__(self, driver, *, startup_assistance=False, startup_prepare=False):
         require(driver.window_mode == 'background', 'web_session_background_required')
-        require(type(startup_assistance) is bool, 'web_startup_assistance_invalid')
+        require(type(startup_assistance) is bool and type(startup_prepare) is bool
+            and not (startup_assistance and startup_prepare), 'web_startup_assistance_invalid')
         self.base, self.config = driver, driver.config
         self.folder = driver.work / 'session'
         self.folder.mkdir(mode=0o700)
@@ -42,10 +44,12 @@ class WebBrowserSession:
         self.readers = []
         self.current = None
         self.ready = None
+        self.prepared = None
         self.closed = False
         self.launches = 0
         self.startup_assistance = startup_assistance
-        self.assistance_state = 'pending' if startup_assistance else 'not_requested'
+        self.startup_prepare = startup_prepare
+        self.assistance_state = 'pending' if startup_assistance else 'preparing' if startup_prepare else 'not_requested'
         self.assistance = None
         self.assistance_reason = None
         self.retained_completed_page = False
@@ -58,6 +62,8 @@ class WebBrowserSession:
             readiness = 'unavailable'
         elif assistance_pending:
             readiness = 'assistance_required'
+        elif self.startup_prepare and (self.prepared is None or not self.prepared.done()):
+            readiness = 'preparing'
         elif self.base.active:
             readiness = 'busy'
         elif self.child is None:
@@ -87,7 +93,7 @@ class WebBrowserSession:
         self.closed = True
         if self.assistance is not None or self.assistance_state in ('opening', 'awaiting_user'):
             self.assistance_state = 'failed'
-        for future in (self.ready, None if self.current is None else self.current['future'],
+        for future in (self.ready, self.prepared, None if self.current is None else self.current['future'],
                 None if self.assistance is None else self.assistance['future']):
             if future is not None and not future.done():
                 future.set_exception(ValueError(code))
@@ -109,6 +115,18 @@ class WebBrowserSession:
         self.check_environment()
         try:
             await self.start(assistance=True)
+        except BaseException:
+            await self.close()
+            raise
+
+    async def prepare_hidden(self):
+        """Observe one empty public page without admitting or sending model input."""
+        require(self.startup_prepare and self.launches == 0 and self.current is None,
+            'web_startup_prepare_invalid')
+        self.check_environment()
+        try:
+            await self.start()
+            await wait_owned_future(self.prepared, 80)
         except BaseException:
             await self.close()
             raise
@@ -157,8 +175,12 @@ class WebBrowserSession:
         if assistance:
             config['startupAssistance'] = True
             self.assistance_state = 'opening'
+        if self.startup_prepare:
+            config['startupPrepare'] = True
         self.packet('config.json', config)
         self.ready = asyncio.get_running_loop().create_future()
+        if self.startup_prepare:
+            self.prepared = asyncio.get_running_loop().create_future()
         self.child = await asyncio.create_subprocess_exec(str(self.base.electron), str(self.base.host),
             str(self.folder / 'config.json'), cwd=self.folder, env=child_environment(),
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -170,12 +192,18 @@ class WebBrowserSession:
         kind = value.get('kind')
         if kind not in ('model_verified', 'dispatch_started', 'public_user_binding', 'window_state', 'generation_state', 'public_interruption_state', 'fresh_chat_navigation', 'model_network_state',
                 'completed', 'failed', 'cancel_requested', 'cancel_click_attempted', 'cancel_click_unavailable',
-                'cancel_idle_unverified'):
+                'cancel_idle_unverified', 'effort_initial_state', 'effort_step_verified',
+                'effort_step_unavailable', 'effort_pro_unavailable', 'effort_pro_verified', 'effort_target_verified'):
             return
         event = {'attempt': self.base.attempts, 'kind': kind,
             'stage': value.get('stage') if value.get('stage') in self.base.stages else 'other',
             'code': value.get('error') if isinstance(value.get('error'), str) and value['error'] in self.base.codes else None}
-        if kind == 'window_state':
+        if kind == 'model_verified':
+            require(matches_selection(value, current['selection']), 'web_browser_selection_identity_invalid')
+            event.update(**current['selection'], effortIndex=value['effortIndex'])
+        elif kind.startswith('effort_'):
+            event.update(safe_effort_diagnostic(value))
+        elif kind == 'window_state':
             require(all(type(value.get(k)) is bool for k in ('visible', 'focused', 'backgroundInput'))
                 and all(type(value.get(k)) is int and 0 <= value[k] <= 10000 for k in ('shown', 'focusedEvents'))
                 and value.get('inputMode') == 'dom_v1', 'web_window_state_invalid')
@@ -205,10 +233,7 @@ class WebBrowserSession:
                 require(current['dispatches'] == 1 and current['terminal'] is None, 'web_model_network_failure_unbound')
                 current['network_errors'].append(network['networkError'])
         elif kind == 'public_user_binding' and isinstance(value.get('shape'), dict):
-            shape = value['shape']
-            event['shape'] = {k: shape[k] for k in ('supportedTextShape', 'exact', 'backslashInsertionsOnly') if type(shape.get(k)) is bool}
-            event['shape'].update({k: shape[k] for k in ('sourceLength', 'promptLength', 'firstDifference')
-                if type(shape.get(k)) is int and -1 <= shape[k] <= 1024 * 1024})
+            event['shape'] = safe_user_binding_diagnostic(value['shape'])
         elif kind == 'completed' and isinstance(value.get('publicMessage'), dict):
             refs = value['publicMessage'].get('public_references')
             if isinstance(refs, list) and len(refs) <= 128:
@@ -232,6 +257,24 @@ class WebBrowserSession:
                         require(not self.ready.done() and (not self.startup_assistance
                             or self.assistance_state == 'background'), 'web_session_duplicate_ready')
                         self.ready.set_result(True)
+                    elif kind in ('worker_prepared', 'worker_attention_required'):
+                        require(self.startup_prepare and self.ready is not None and self.ready.done()
+                            and self.prepared is not None and not self.prepared.done()
+                            and self.current is None and self.assistance is None,
+                            'web_startup_prepare_sequence_invalid')
+                        if kind == 'worker_prepared':
+                            require(value.get('hidden') is True and value.get('empty') is True,
+                                'web_startup_prepare_unverified')
+                            self.assistance_state = 'background'
+                            self.prepared.set_result(True)
+                        else:
+                            reason = value.get('reason')
+                            require(reason in ('web_browser_login_required_before_dispatch',
+                                'web_browser_challenge_required_before_dispatch'),
+                                'web_startup_prepare_reason_invalid')
+                            self.assistance_state = 'required'
+                            self.assistance_reason = reason
+                            self.prepared.set_result(False)
                     elif kind == 'failed':
                         self.fail()
                     continue
@@ -247,8 +290,8 @@ class WebBrowserSession:
                 if kind in ('completed', 'failed'):
                     require(current['terminal'] is None and not current['future'].done(), 'web_session_duplicate_terminal')
                     if kind == 'completed':
-                        require(current['dispatches'] == 1 and value.get('model') == 'gpt-5.6-sol'
-                            and value.get('effortIndex') == 2 and isinstance(value.get('publicMessage'), dict)
+                        require(current['dispatches'] == 1 and matches_selection(value, current['selection'])
+                            and isinstance(value.get('publicMessage'), dict)
                             and not current['http_statuses'] and not current['network_errors'] and public_interruption_code(current.get('interruption')) is None,
                             'web_browser_final_identity_invalid')
                         require(current['windows'] == [{'visible': False, 'focused': False, 'backgroundInput': True,
@@ -340,6 +383,8 @@ class WebBrowserSession:
                 'web_browser_challenge_required_before_dispatch'))
 
     async def __call__(self, turn):
+        if self.startup_prepare and (self.prepared is None or not self.prepared.done()):
+            raise WebBrowserAssistanceRequired('web_browser_preparing_before_dispatch')
         if self.assistance_state in ('pending', 'opening', 'awaiting_user'):
             raise WebBrowserAssistanceRequired('web_browser_assistance_pending_before_dispatch')
         if self.assistance_state == 'required':
@@ -359,6 +404,7 @@ class WebBrowserSession:
             await self.start()
             future = asyncio.get_running_loop().create_future()
             current = self.current = {'id': secrets.token_hex(16), 'future': future,
+                'selection': {key: request[key] for key in ('model', 'effort')},
                 'dispatches': 0, 'windows': [], 'records': 0, 'terminal': None, 'http_statuses': [], 'network_errors': []}
             self.packet('next.json', {'id': current['id'], **request})
             result = await wait_owned_future(future, self.config['timeoutMs'] / 1000 + 12)
@@ -465,7 +511,7 @@ class WebBrowserSession:
         for reader in self.readers:
             if not reader.done(): reader.cancel()
         await asyncio.gather(*self.readers, return_exceptions=True)
-        for future in (self.ready, None if current is None else current['future'], assistance_future):
+        for future in (self.ready, self.prepared, None if current is None else current['future'], assistance_future):
             if future is not None and future.done() and not future.cancelled(): future.exception()
         if self.folder.exists():
             for name in ('config.json', 'next.json', 'active.json', 'cancel.json', 'shutdown.json',

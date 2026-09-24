@@ -15,6 +15,7 @@ from pathlib import Path
 import sys
 import tempfile
 import tomllib
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -153,6 +154,23 @@ class WebAcceptanceTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             check.write_cli_config(self.case,values)
         self.assertEqual((self.case/'home/config.toml').read_bytes(),original)
+
+    def test_explicit_web_model_and_effort_are_bound_to_the_disposable_cli(self):
+        pro=SimpleNamespace(slug='api/chatgpt-web/gpt-6-pro',
+            web_binding=object(),reasoning_efforts=('max',))
+        sol=SimpleNamespace(slug='api/chatgpt-web/gpt-5.6-sol',
+            web_binding=object(),reasoning_efforts=('none','medium','high','xhigh'))
+        registry=SimpleNamespace(routes={sol.slug:sol,pro.slug:pro})
+        selected,effort=check.select_check_route(registry,pro.slug)
+        self.assertIs(selected,pro)
+        self.assertEqual(effort,'max')
+        values=check.cli_settings(self.case,selected.slug,'http://127.0.0.1:1/private',effort)
+        self.assertEqual(values['model'],pro.slug)
+        self.assertEqual(values['model_reasoning_effort'],'max')
+        self.assertEqual(check.select_check_route(registry)[1],'high')
+        for slug,level in ((pro.slug,'high'),('api/chatgpt-web/unknown','max')):
+            with self.subTest(slug=slug,level=level),self.assertRaises(check.RouterError):
+                check.select_check_route(registry,slug,level)
 
 
 class McpEvidenceTests(unittest.TestCase):

@@ -32,8 +32,9 @@ import argparse, json, os, secrets, time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 p=argparse.ArgumentParser()
-p.add_argument('action');p.add_argument('--settings');p.add_argument('--state')
+p.add_argument('action');p.add_argument('--settings');p.add_argument('--state');p.add_argument('--prepare-hidden',action='store_true')
 a=p.parse_args();assert a.action=='serve'
+assert a.prepare_hidden is True
 root=Path(__file__).parent
 variant=(root/'variant').read_text()
 with (root/'launches').open('a') as f:f.write('launched\n')
@@ -732,6 +733,41 @@ class WebServiceRecoveryTests(unittest.TestCase):
         receipt=manager.read_json(next((self.profile/'history').glob('recovery-*/receipt.json')))
         self.assertEqual(receipt['phase'],'marker_archived');self.assertEqual((self.state/'status.json').read_bytes(),old_status)
         with self.assertRaises(ValueError):manager.start(self.profile)
+
+    def unbind_stopped_fixture(self):
+        self.record = {key: value for key, value in self.record.items()
+            if key not in ('worker', 'instance', 'session_sha256')}
+        self.record['phase'] = 'starting'
+        manager.save_record(self.profile, self.record)
+        manager.service.write_json(self.state/'status.json', {'instance':'c'*32, 'state':'stopped',
+            'requests':0, 'browser':{'active':False}, 'transport':{'active_turn':None}})
+        self.marker.unlink()
+
+    def test_unbound_request_free_stopped_launch_can_be_explicitly_retired_without_binding(self):
+        self.unbind_stopped_fixture()
+        before = self.snapshot()
+        preview = manager.recover(self.profile)
+        self.assertEqual(before, self.snapshot())
+        manager.recover(self.profile, expected_preview=preview['preview_sha256'])
+        self.assertEqual(manager.read_json(self.profile/'instances'/('b'*32+'.json')), self.record)
+        receipt = manager.read_json(next((self.profile/'history').glob('recovery-*/receipt.json')))
+        self.assertEqual(receipt['outcome'], 'unbound_request_free_stopped_snapshot_retired')
+        self.assertFalse(receipt['launched']); self.assertFalse(receipt['replayed'])
+
+    def test_unbound_launch_with_requests_live_worker_or_marker_cannot_be_retired(self):
+        self.unbind_stopped_fixture()
+        for changes in ({'requests':1}, {'requests':False}, {'state':'ready'}, {'browser':{'active':True}},
+                {'transport':{'active_turn':{'sequence':1}}}):
+            original = (self.state/'status.json').read_bytes()
+            manager.service.write_json(self.state/'status.json', {**json.loads(original), **changes})
+            before = self.snapshot()
+            with self.assertRaises(ValueError): manager.recover(self.profile)
+            self.assertEqual(before, self.snapshot())
+            (self.state/'status.json').write_bytes(original)
+        with patch.object(manager, 'process_identity', return_value=self.record['process']):
+            with self.assertRaises(ValueError): manager.recover(self.profile)
+        self.marker.write_bytes(b'{}')
+        with self.assertRaisesRegex(ValueError, 'marker_invalid'): manager.recover(self.profile)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "observed_on": "2026-09-23",
+  "efforts": {
+    "none": {"index": 0, "labels": ["即时", "Instant"]},
+    "medium": {"index": 1, "labels": ["中", "Medium"]},
+    "high": {"index": 2, "labels": ["高", "High"]},
+    "xhigh": {"index": 3, "labels": ["极高", "Extra high"]},
+    "max": {"index": 4, "labels": ["Pro"]}
+  },
+  "models": {
+    "gpt-5.6-sol": {"display_name": "Web GPT-5.6 Sol", "generation": "5.6", "picker_labels": ["GPT-5.6 Sol"], "reasoning_efforts": ["high", "none", "medium", "xhigh"]},
+    "gpt-5.6-pro": {"display_name": "Web GPT-5.6 Pro", "generation": "5.6", "picker_labels": ["GPT-5.6 Sol"], "reasoning_efforts": ["max"]},
+    "gpt-6-pro": {"display_name": "Web GPT-6 Pro", "generation": "6", "picker_labels": ["最新", "Latest"], "reasoning_efforts": ["max"]}
+  }
+}

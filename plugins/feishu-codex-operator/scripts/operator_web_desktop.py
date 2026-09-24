@@ -2,7 +2,8 @@
 
 Only an additional provider is registered. No task is created or sent,
 no default/catalog/permission is replaced, and no service is started or retried.
-The private trial pins one service generation; it is not daily startup wiring.
+The private trial pins one service generation. Explicit rebind retains the
+provider name when that saved service is restarted; it never replays a turn.
 """
 import argparse
 from copy import deepcopy
@@ -17,7 +18,7 @@ import tomllib
 
 from operator_core.model_registry import ModelRegistry
 from operator_web_service import (checked_path, digest, file_digest, load_profile,
-    operation_lock, private_directory, read_bytes, read_json, resolve_route,
+    operation_lock, private_directory, read_bytes, read_json, resolve_route, resolve_routes,
     route_preview, service, current_record, session_snapshot, state_path)
 from operator_core.web_mcp_transport import require
 
@@ -52,10 +53,18 @@ def check_binding_files(profile, expected):
 
 
 def catalogue(route):
+    routes = (route,) if hasattr(route, 'slug') else tuple(route)
     template = read_json(Path(__file__).with_name('operator_core') / 'beeper_model_catalog.json')
-    registry = ModelRegistry({'version': 2, 'models': []}, template).with_web_route(route)
+    registry = ModelRegistry({'version': 2, 'models': []}, template)
+    for route in routes:
+        registry = registry.with_web_route(route)
     native = {'models': [{**template['models'][0], 'slug': 'synthetic-native'}]}
-    return {'models': [row for row in registry.merge(native)['models'] if row['slug'] == route.slug]}
+    rows = [row for row in registry.merge(native)['models'] if row['slug'] in {route.slug for route in routes}]
+    for row in rows:
+        for level in row['supported_reasoning_levels']:
+            level['description'] = {'none': '即时', 'medium': '中', 'high': '高', 'xhigh': '极高',
+                'max': 'Pro（网页固定模式）'}[level['effort']]
+    return {'models': rows}
 
 
 def addition(route, provider):
@@ -91,6 +100,7 @@ def result(status, **extra):
         'absent': '尚未准备独立原生验收；现有任务和默认模型保持原样。',
         'prepared': '独立原生验收配置已准备好；尚未登记到 Codex，也未创建任务或发送请求。',
         'connected': '独立 Web 提供方已登记，官方默认模型和现有任务保持原样；真实 Desktop 验收仍待完成。',
+        'stale': '独立 Web 提供方仍指向旧后台实例；可显式重新绑定当前已就绪的后台。',
         'disconnected': '独立 Web 验收登记已撤回，其他配置保持原样；任务历史和后台服务保留。',
         'changed': '独立 Web 验收登记或准备文件已变化，请核对现有记录；未覆盖或重新登记。',
         'checked': '已检查原生进程的模型目录和提供方；此结果不代表运行中的 Desktop 菜单已接入。',
@@ -132,10 +142,11 @@ def prepare(profile, home):
     if existing is not None and existing[3]['phase'] != 'disconnected':
         report = status(profile, target.parent)
         require(report['status'] in ('prepared', 'connected'), 'web_desktop_existing_changed')
-        resolve_route(profile, existing[1]['binding'])
+        resolve_routes(profile, existing[1]['binding'])
         return {**report, 'reused': True}
     expected = route_preview(profile)
-    route = resolve_route(profile, expected)
+    routes = resolve_routes(profile, expected)
+    route = routes[0]
     require(BEGIN not in before and END not in before, 'web_desktop_unowned_block')
     with operation_lock(profile):
         require(config_bytes(target.parent)[1:] == (before, existed), 'web_desktop_config_changed')
@@ -152,7 +163,7 @@ def prepare(profile, home):
         require(len(before) + len(fragment) <= LIMIT, 'web_desktop_config_bound')
         check_scope(before, before + fragment, fragment)
         files = {'before.toml': before, 'addition.toml': fragment,
-            'catalog.json': json.dumps(catalogue(route), ensure_ascii=False).encode('utf-8')}
+            'catalog.json': json.dumps(catalogue(routes), ensure_ascii=False).encode('utf-8')}
         for name, raw in files.items():
             with (folder / name).open('xb') as handle: handle.write(raw)
         plan = {'version': 1, 'home': str(target.parent), 'profile': str(profile),
@@ -192,10 +203,10 @@ def connect(profile, home):
     trial = load_trial(profile, home)
     require(trial is not None, 'web_desktop_prepare_required')
     folder, plan, files, journal = trial
-    require(plan['source_sha256'] == file_digest(Path(__file__).resolve()), 'web_desktop_source_changed')
-    route = resolve_route(profile, plan['binding'])  # idle, exact process/session; zero inference
+    routes = resolve_routes(profile, plan['binding'])  # idle, exact process/session; zero inference
+    route = routes[0]
     require(addition(route, plan['provider']) == files['addition.toml']
-        and json.loads(files['catalog.json']) == catalogue(route), 'web_desktop_preparation_changed')
+        and json.loads(files['catalog.json']) == catalogue(routes), 'web_desktop_preparation_changed')
     with operation_lock(profile):
         require(load_trial(profile, home) == trial, 'web_desktop_preparation_changed')
         check_binding_files(profile, plan['binding'])
@@ -203,6 +214,7 @@ def connect(profile, home):
         if journal['phase'] == 'connected':
             require(owned_fragment(current, files['addition.toml']), 'web_desktop_config_changed')
             return result('connected', reused=True, provider=plan['provider'])
+        require(plan['source_sha256'] == file_digest(Path(__file__).resolve()), 'web_desktop_source_changed')
         require(journal['phase'] == 'prepared' and existed == plan['existed']
             and current == files['before.toml'], 'web_desktop_config_changed')
         service.write_json(folder / 'journal.json', {'phase': 'connecting'})
@@ -262,14 +274,98 @@ def disconnect(profile, home):
 def status(profile, home):
     trial = load_trial(profile, home)
     if trial is None: return result('absent')
-    _, plan, files, journal = trial
+    folder, plan, files, journal = trial
     _, current, existed = config_bytes(home)
     phase = journal['phase']
     if phase == 'prepared' and (current != files['before.toml'] or existed != plan['existed']): phase = 'changed'
     if phase == 'connected' and not owned_fragment(current, files['addition.toml']): phase = 'changed'
     if phase == 'disconnected' and (BEGIN in current or END in current): phase = 'changed'
     if phase in ('connecting', 'disconnecting'): phase = 'changed'
+    pending = folder.parent / 'rebind.json'
+    if pending.exists():
+        transaction = read_json(pending)
+        require(transaction.get('phase') in ('prepared', 'completed')
+            and isinstance(transaction.get('from_trial'), str)
+            and isinstance(transaction.get('to_trial'), str), 'web_desktop_rebind_record_invalid')
+        if transaction['phase'] != 'completed': phase = 'changed'
+    if phase == 'connected':
+        try:
+            record = current_record(profile)
+            current_binding = (record is not None
+                and digest(read_bytes(profile / 'profile.json')) == plan['binding']['profile_sha256']
+                and session_snapshot(state_path(profile, record), record)[1] == plan['binding']['session_sha256'])
+        except (OSError, ValueError, KeyError, TypeError):
+            current_binding = None
+        if current_binding is False:
+            return {**result('stale', provider=plan['provider']),
+                'reason': 'service_generation_changed', 'next_action': 'desktop-rebind'}
+        if current_binding is None: phase = 'changed'
     return result(phase, provider=plan['provider'])
+
+
+def rebind(profile, home):
+    """Explicitly replace only this owned provider's checked local service route.
+
+    Preserve the exact provider ID so a native task keeps its binding after the
+    Desktop process reloads configuration. A failed transaction is review-only.
+    """
+    trial = load_trial(profile, home)
+    require(trial is not None, 'web_desktop_prepare_required')
+    old_folder, old_plan, old_files, old_journal = trial
+    require(old_journal['phase'] == 'connected', 'web_desktop_connected_required')
+    pending = old_folder.parent / 'rebind.json'
+    if pending.exists():
+        require(read_json(pending).get('phase') == 'completed', 'web_desktop_rebind_uncertain')
+    require(isinstance(old_plan.get('provider'), str)
+        and re.fullmatch(r'operator_web_[a-f0-9]{16}', old_plan['provider']),
+        'web_desktop_provider_invalid')
+    target, before, existed = config_bytes(home)
+    require(existed and owned_fragment(before, old_files['addition.toml']),
+        'web_desktop_config_changed')
+    expected = route_preview(profile)
+    routes = resolve_routes(profile, expected)
+    fragment = addition(routes[0], old_plan['provider'])
+    if expected == old_plan['binding'] and fragment == old_files['addition.toml']:
+        return result('connected', reused=True, provider=old_plan['provider'])
+    require(expected != old_plan['binding'], 'web_desktop_binding_changed')
+    remaining = before.replace(old_files['addition.toml'], b'', 1)
+    after = before.replace(old_files['addition.toml'], fragment, 1)
+    require(len(after) <= LIMIT, 'web_desktop_config_bound')
+    check_scope(remaining, after, fragment)
+    with operation_lock(profile):
+        require(load_trial(profile, home) == trial and config_bytes(home) == (target, before, existed),
+            'web_desktop_config_changed')
+        check_binding_files(profile, expected)
+        root = old_folder.parent
+        transaction_path = root / 'rebind.json'
+        if transaction_path.exists():
+            previous = read_json(transaction_path)
+            require(previous.get('phase') == 'completed', 'web_desktop_rebind_uncertain')
+        folder = root / ('trial-' + secrets.token_hex(16))
+        service.write_json(transaction_path, {'phase': 'prepared',
+            'from_trial': old_folder.name, 'to_trial': folder.name,
+            'before_sha256': digest(before), 'after_sha256': digest(after)})
+        private_directory(folder)
+        files = {'before.toml': remaining, 'addition.toml': fragment,
+            'catalog.json': json.dumps(catalogue(routes), ensure_ascii=False).encode('utf-8')}
+        for name, raw in {**files, 'before-rebind.toml': before}.items():
+            with (folder / name).open('xb') as handle: handle.write(raw)
+        plan = {'version': 1, 'home': str(target.parent), 'profile': str(profile),
+            'existed': old_plan['existed'], 'binding': expected,
+            'provider': old_plan['provider'], 'rebind_from': old_folder.name,
+            'before_rebind_sha256': digest(before),
+            'source_sha256': file_digest(Path(__file__).resolve()),
+            'files': {name: digest(raw) for name, raw in files.items()}}
+        service.write_json(folder / 'plan.json', plan)
+        service.write_json(folder / 'journal.json', {'phase': 'rebinding'})
+        replace_config(target, before, after, existed=existed)
+        service.write_json(folder / 'journal.json', {'phase': 'connected'})
+        service.write_json(root / 'current.json', {'trial': folder.name})
+        service.write_json(transaction_path, {'phase': 'completed',
+            'from_trial': old_folder.name, 'to_trial': folder.name,
+            'before_sha256': digest(before), 'after_sha256': digest(after)})
+    return result('connected', reused=False, provider=old_plan['provider'],
+        binding_updated=True, live_desktop_adoption_unverified=True)
 
 
 def native_models(home):
@@ -379,7 +475,7 @@ def check(profile, home):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['desktop-prepare', 'desktop-connect', 'desktop-disconnect', 'desktop-status', 'desktop-check'])
+    parser.add_argument('action', choices=['desktop-prepare', 'desktop-connect', 'desktop-rebind', 'desktop-disconnect', 'desktop-status', 'desktop-check'])
     parser.add_argument('--profile', type=Path, required=True)
     parser.add_argument('--codex-home', type=Path,
         default=Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))))

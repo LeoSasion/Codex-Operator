@@ -139,6 +139,8 @@ def project_overview(project, home, inspect=inspect_entry):
     components = report['components']
     runtime = project / '.codex/feishu-codex-operator-runtime'
     runtime_state = file_state(runtime / 'runtime-manifest.json')
+    ownership_state = (file_state(project / '.codex/operator-installation/ownership.json')
+        if runtime_state == 'present' else 'absent')
     if runtime_state == 'absent':
         feishu = ('not_installed', '尚未安装', 'channels install')
     elif runtime_state == 'unavailable':
@@ -155,6 +157,12 @@ def project_overview(project, home, inspect=inspect_entry):
             feishu = ('unavailable', '通道状态暂时无法确认，现有登录与设置仍保留', 'channels readiness')
         elif observation['ready']:
             feishu = ('ready', '接收与回传服务就绪，飞书消息仍需实际验证', '已有绑定可直接发送消息；需要绑定或改绑时使用 /init')
+        elif ownership_state == 'absent':
+            feishu = ('needs_review', '旧通道安装缺少归属记录，现有运行时与配置已保留',
+                '由助手审核旧安装与原件，确定单独迁移方案；不要直接重装或重投消息')
+        elif ownership_state == 'unavailable':
+            feishu = ('unavailable', '通道安装归属记录暂时无法核对，现有文件已保留',
+                '由助手核对记录文件及访问范围；不要覆盖现有安装')
         elif not gates['runtime_manifest'] and all(value for name, value in gates.items() if name != 'runtime_manifest'):
             feishu = ('needs_review', '接收与回传服务检查通过，安装清单仍需核对；尚未满足完整就绪条件', '由助手核对安装清单与当前源码；保留已有登录和任务绑定')
         else:
@@ -195,7 +203,9 @@ def project_overview(project, home, inspect=inspect_entry):
             binding_observation = observe(inspect, project, 'web', 'desktop-status')
             binding = binding_observation.get('status')
             binding_failure = web_failure(binding_observation)
-            if binding == 'connected':
+            if binding == 'stale' and binding_observation.get('reason') == 'service_generation_changed':
+                web = ('needs_review', '后台已换实例，原生 Web 提供方仍指向旧连接', 'web desktop-rebind')
+            elif binding == 'connected':
                 web = ('ready', '后台就绪，独立提供方已登记；任务绑定和实际执行需分别确认', '在已接入 Web 的 Codex 任务中提出需求')
             elif binding in ('absent', 'disconnected'):
                 web = ('needs_connection', '后台就绪，待登记独立提供方', 'web desktop-prepare')

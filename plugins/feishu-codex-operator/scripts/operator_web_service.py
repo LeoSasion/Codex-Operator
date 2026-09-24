@@ -96,7 +96,8 @@ def file_digest(path):
 def runtime_identity():
     root = Path(__file__).resolve().parent
     sources = [Path(__file__).resolve(), root / 'operator_web_model.py',
-        *sorted((root / 'operator_core').glob('*.py')), *sorted(root.glob('web_browser_*.cjs'))]
+        *sorted((root / 'operator_core').glob('*.py')), *sorted(root.glob('web_browser_*.cjs')),
+        root / 'operator_core' / 'web_model_catalog.json']
     require(len(sources) <= 128, 'web_manager_source_bound')
     return {'python': str(Path(sys.executable).resolve()),
         'python_sha256': file_digest(Path(sys.executable).resolve()),
@@ -415,15 +416,16 @@ def session_worker(session, record, config):
 
 
 def safe_guidance(details, health):
-    require(details.get('state') in ('ready', 'connection', 'reconnecting', 'assistance',
+    require(details.get('state') in ('ready', 'preparing', 'connection', 'reconnecting', 'assistance',
         'unavailable', 'draining', 'stopped') and type(details.get('needs_assistance')) is bool,
         'web_manager_status_invalid')
     if details['state'] == 'assistance' and (details.get('assistance') or {}).get('inspect_completed') is True:
         return '正在查看已结束对话的只读文字快照；关闭预览后恢复接收请求，原页面保留。'
     summaries = {'ready': '后台已就绪，沿用现有固定连接和登录配置。',
+        'preparing': '后台正在无请求地检查已保存的网页会话；请稍后查看状态。',
         'connection': '请完成当前固定连接的绑定；已有插件时先核对绑定，无需重复创建。',
         'reconnecting': '连接正在恢复，已保存的配置保留；未自动重做请求。',
-        'assistance': '当前后台需要人工协助，请显式打开辅助窗口，完成后关闭窗口。',
+        'assistance': '当前网页会话尚未就绪；请先查看准确页面，再判断是否需要人工操作。',
         'unavailable': '当前后台不可用，请检查已有实例；连接和配置仍保留。',
         'draining': '后台正在停止，等待当前请求结束；不会接纳新的请求。',
         'stopped': '后台已停止，等待所属进程结束；固定连接和配置仍保留。'}
@@ -519,7 +521,7 @@ def observe(profile, config, record):
     health = service.loads(raw)
     require(isinstance(health, dict) and health.get('ready') is True
         and type(health.get('active')) is bool and health.get('state') in
-        ('ready', 'connection', 'reconnecting', 'assistance', 'draining', 'stopped'),
+        ('ready', 'preparing', 'connection', 'reconnecting', 'assistance', 'draining', 'stopped'),
         'web_manager_health_invalid')
     details = read_json(state / 'status.json')
     require(details.get('instance') == session['instance'], 'web_manager_status_identity_changed')
@@ -559,6 +561,10 @@ def route_preview(profile):
 
 
 def resolve_route(profile, expected):
+    return resolve_routes(profile, expected)[0]
+
+
+def resolve_routes(profile, expected):
     """Capture one checked service generation. Only the caller retains its key."""
     from dataclasses import replace
     from operator_core.model_registry import WebServiceBinding
@@ -584,9 +590,11 @@ def resolve_route(profile, expected):
             'web_manager_route_digest_changed')
         # Compare again after the network observation. No process/config mutation.
         load_profile(profile)
-        return replace(service.text_route(tools=True), model=service.SLUG,
-            display_name='ChatGPT Web · GPT-5.6 Sol（待原生验收）', api_base=session['base_url'],
-            web_binding=WebServiceBinding(**expected, token=session['token']))
+        routes = service.text_routes(tools=True) if 'models' in session else (service.text_route(tools=True),)
+        require('models' not in session or session['models'] == [route.slug for route in routes],
+            'web_manager_model_catalog_changed')
+        return tuple(replace(route, model=route.slug, api_base=session['base_url'],
+            web_binding=WebServiceBinding(**expected, token=session['token'])) for route in routes)
 
 
 def windows_powershell():
@@ -704,7 +712,47 @@ def recovery_dependencies_absent(config):
                 'web_manager_recovery_dependencies_live')
 
 
+def unbound_stopped_snapshot(profile, config, record):
+    """Retire an unbound, request-free stopped launch without inventing ownership.
+
+    This explicit maintenance path never binds a dead worker or changes status.
+    A live process, request, marker or listener leaves the uncertainty intact.
+    """
+    import socket
+    require(record.get('phase') == 'starting'
+        and not {'worker', 'instance', 'session_sha256'} & set(record),
+        'web_manager_recovery_required')
+    require(not owned_process(record, config), 'web_manager_recovery_not_dead')
+    require(settings_identity(config['settings']['path']) == config['settings'], 'web_manager_settings_changed')
+    state = state_path(profile, record)
+    session, session_hash = session_snapshot(state, record)
+    details = read_json(state / 'status.json')
+    require(details.get('instance') == session['instance'] and details.get('state') == 'stopped'
+        and type(details.get('requests')) is int and details['requests'] == 0
+        and details.get('browser', {}).get('active') is False
+        and details.get('transport', {}).get('active_turn') is None,
+        'web_manager_recovery_required')
+    require(process_identity(session['pid']) is None, 'web_manager_recovery_not_dead')
+    recovery_dependencies_absent(config)
+    settings = service.loads(read_bytes(config['settings']['path']))
+    if settings.get('transport', 'text_only') == 'mcp_v1':
+        marker = Path(settings['mcp']['binding_file']).parent / ('active-' + settings['mcp']['tunnel_id'] + '.json')
+        require(not marker.exists() and not marker.is_symlink(), 'web_manager_recovery_marker_invalid')
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
+        if os.name == 'nt': reservation.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        reservation.bind(('127.0.0.1', int(session['base_url'].split(':')[2][:-3])))
+    files = {str(path): digest(read_bytes(path)) for path in (profile / 'profile.json', profile / 'current.json',
+        profile / 'instances' / (record['attempt'] + '.json'), state / 'session.json', state / 'status.json')}
+    value = {'version': 1, 'attempt': record['attempt'], 'instance': session['instance'],
+        'session_sha256': session_hash, 'files': files, 'marker': None,
+        'outcome': 'unbound_request_free_stopped_snapshot_retired'}
+    value['preview_sha256'] = digest(json.dumps(value, sort_keys=True).encode('utf-8'))
+    return value
+
+
 def recovery_snapshot(profile, config, record):
+    if record is not None and 'worker' not in record:
+        return unbound_stopped_snapshot(profile, config, record)
     require(record is not None and 'worker' in record and 'instance' in record,
         'web_manager_recovery_required')
     # PID reuse, missing ownership or observation failure remains a rejection.
@@ -761,7 +809,7 @@ def recover(profile, *, expected_preview=None):
         for index, (name, expected) in enumerate(value['files'].items()):
             raw = read_bytes(Path(name)); require(digest(raw) == expected, 'web_manager_recovery_changed')
             (transaction / (str(index) + '.original')).write_bytes(raw)
-        journal = {**value, 'phase': 'prepared', 'outcome': 'uncontrolled_exit_retired',
+        journal = {**value, 'phase': 'prepared', 'outcome': value.get('outcome', 'uncontrolled_exit_retired'),
             'replayed': False, 'launched': False}
         service.write_json(transaction / 'receipt.json', journal)
         # Reobserve processes and every source immediately before changing the
@@ -804,7 +852,7 @@ def start(profile, *, observation_seconds=START_OBSERVATION_SECONDS):
         service.write_json(profile / 'current.json', {'version': 1, 'attempt': record['attempt']})
         state = state_path(profile, record)
         argv = [config['runtime']['python'], '-E', '-s', '-u', config['runtime']['backend'],
-            'serve', '--settings', config['settings']['path'], '--state', str(state)]
+            'serve', '--settings', config['settings']['path'], '--state', str(state), '--prepare-hidden']
         try:
             child = spawn_child(argv, profile)
             record['pid'] = child.pid

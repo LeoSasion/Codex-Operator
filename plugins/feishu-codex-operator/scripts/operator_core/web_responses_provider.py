@@ -16,6 +16,14 @@ from .responses_tool_adapter import dumps
 from .web_mcp_transport import INDEX_REPLY_BYTES, INDEX_READ_LIMIT, WebRequestCapacityError, WebBrowserHttpError, WebBrowserNetworkError, WebBrowserUiError, WebBrowserFinalTimeout, require
 
 
+_READINESS_MESSAGES = {
+    'web_browser_assistance_pending_before_dispatch':
+        '网页会话尚未就绪。请先查看当前准确页面，确认是否确有登录或验证要求；本次没有向网页模型发送消息。',
+    'web_browser_preparing_before_dispatch':
+        '网页正在无请求地检查已保存的会话；准备完成后可发送新消息。本次未向网页模型提交。',
+}
+
+
 _CONTINUATION_ERRORS = frozenset((
     'web_mcp_history_changed', 'web_mcp_request_binding_changed',
     'web_mcp_exact_call_result_required', 'web_mcp_call_identity_changed',
@@ -48,6 +56,7 @@ _PUBLIC_ROUTER_ERRORS = _CONTINUATION_ERRORS | _REQUEST_CONTRACT_ERRORS | PUBLIC
     'web_workspace_telemetry_shape_unsupported',
     'web_desktop_locked_before_dispatch', 'web_desktop_unavailable_before_dispatch',
     'web_browser_assistance_pending_before_dispatch',
+    'web_browser_preparing_before_dispatch',
     'web_browser_login_required_before_dispatch', 'web_browser_challenge_required_before_dispatch'))
 
 
@@ -153,11 +162,11 @@ class WebResponsesProvider:
                     and self.bridge.identity(payload) == self.bridge.owner)
                 if not continuing:
                     code = ('web_browser_assistance_pending_before_dispatch' if state == 'assistance'
+                        else 'web_browser_preparing_before_dispatch' if state == 'preparing'
                         else 'web_connection_required_before_dispatch' if state == 'connection'
                         else 'web_connection_reconnecting_before_dispatch' if state == 'reconnecting'
                         else 'web_provider_draining' if state == 'draining' else 'web_provider_not_accepting')
-                    message = ('网页连接需要人工协助。请主动打开 Operator 辅助窗口，完成登录或验证后关闭窗口，再发送新消息。本次没有向网页模型发送消息。'
-                        if state == 'assistance' else '网页服务正在停止，本次新请求未接纳。'
+                    message = (_READINESS_MESSAGES[code] if code in _READINESS_MESSAGES else '网页服务正在停止，本次新请求未接纳。'
                         if state == 'draining' else '工具连接正在恢复，地址和已授权插件仍保留。本次没有向网页模型发送消息，请连接恢复后再发新消息。'
                         if state == 'reconnecting' else '请先完成当前网页工具连接的绑定，再发送新消息。本次没有向网页模型发送消息。'
                         if state == 'connection' else '网页服务当前不可用，请检查连接状态。本次没有向网页模型发送消息。')
@@ -240,8 +249,8 @@ class WebResponsesProvider:
                 status = 502
             if code in {'web_desktop_locked_before_dispatch', 'web_desktop_unavailable_before_dispatch'}:
                 return self.error(code, 503, message='请解锁并打开这台 Windows 的桌面，再发送新消息。此次没有向网页模型发送消息。', **failure_details())
-            if code == 'web_browser_assistance_pending_before_dispatch':
-                return self.error(code, 503, message='请先在已打开的 Operator 辅助窗口完成登录或验证，然后关闭该窗口，再发送新消息。本次未向模型发送消息。', **failure_details())
+            if code in _READINESS_MESSAGES:
+                return self.error(code, 503, message=_READINESS_MESSAGES[code], **failure_details())
             if code in {'web_browser_login_required_before_dispatch', 'web_browser_challenge_required_before_dispatch'}:
                 action = '登录' if code == 'web_browser_login_required_before_dispatch' else '真人验证'
                 return self.error(code, 503, message='网页模型需要完成' + action

@@ -8,6 +8,7 @@ const { app, BrowserWindow, WebContentsView, session } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const page = require("./web_browser_page.cjs");
+const modelCatalog = require("./operator_core/web_model_catalog.json");
 const { BrowserSurface, validateAssistancePacket, assistanceReady,
   recoverableBeforeDispatch, navigationAllowed, isEmptyTemporaryChatUrl,
   isEmptyChatHomeUrl, isPublicLoginUrl, isPluginMaintenanceUrl } = require("./web_browser_surface.cjs");
@@ -24,6 +25,27 @@ let needsAssistanceNavigation = false;
 let preparedPage = false;
 let completedPage = null;
 let inspectionPage = null;
+let verifiedSelection = null;
+
+function modelSelection(value) {
+  requireValue(Object.hasOwn(modelCatalog.models, value.model), "web_explicit_model_required");
+  const definition = modelCatalog.models[value.model];
+  requireValue(definition.reasoning_efforts.includes(value.effort), "web_explicit_effort_required");
+  return { ...definition, effort: modelCatalog.efforts[value.effort] };
+}
+function effortDiagnostic(state) {
+  const knownLabels = ["即时", "中", "高", "极高", "Instant", "Medium", "High", "Extra high", "Pro"];
+  const rawHeader = state?.generationLabel;
+  return {
+    value: Number.isInteger(state?.value) && state.value >= 0 && state.value <= 4 ? state.value : null,
+    label: knownLabels.includes(state?.label) ? state.label : "unrecognized",
+    announcedGeneration: ["5.6", "6"].includes(state?.announcedGeneration)
+      ? state.announcedGeneration : null,
+    // Model-menu text is public UI, but never retain arbitrary page text.
+    header: typeof rawHeader === "string" && /^[A-Za-z0-9. -]{1,32}$/.test(rawHeader)
+      ? rawHeader : "unrecognized",
+  };
+}
 const networkRequests = new Map();
 let networkEventCount = 0;
 function record(kind, value = {}) {
@@ -129,12 +151,14 @@ try {
   requireValue(bytes.length <= 1024 * 1024, "web_config_too_large");
   config = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   requireValue(config && typeof config === "object" && !Array.isArray(config), "web_config_required");
-  const allowed = new Set(["version", "mode", "profileDirectory", "sessionPartition", "proxyRules", "model", "text", "visible", "timeoutMs", "awaitSendRelease", "sendReleaseFile", "prepareReleaseFile", "connectorMention", "connectorSelectionName", "autoSelectConnector", "parentPid", "cancelFile", "softwareRendering", "inspectCitations", "includeCitations", "backgroundInput", "workerDirectory", "startupAssistance", "mcpContinuation"]);
+  const allowed = new Set(["version", "mode", "profileDirectory", "sessionPartition", "proxyRules", "model", "effort", "text", "visible", "timeoutMs", "awaitSendRelease", "sendReleaseFile", "prepareReleaseFile", "connectorMention", "connectorSelectionName", "autoSelectConnector", "parentPid", "cancelFile", "softwareRendering", "inspectCitations", "includeCitations", "backgroundInput", "workerDirectory", "startupAssistance", "startupPrepare", "mcpContinuation"]);
   requireValue(Object.keys(config).every(k => allowed.has(k)) && config.version === 1, "web_config_fields_invalid");
   requireValue(["assist", "inspect", "prepare", "generate", "worker"].includes(config.mode), "web_mode_invalid");
   workerMode = config.mode === "worker";
   requireValue(config.startupAssistance === undefined || workerMode && config.startupAssistance === true,
     "web_startup_assistance_invalid");
+  requireValue(config.startupPrepare === undefined || workerMode && config.startupPrepare === true
+    && config.startupAssistance !== true, "web_startup_prepare_invalid");
   assisting = config.startupAssistance === true;
   requireValue(workerMode ? config.backgroundInput === "dom_v1" && typeof config.workerDirectory === "string"
     && path.resolve(config.workerDirectory) === path.dirname(path.resolve(configPath))
@@ -148,7 +172,9 @@ try {
     && typeof config.includeCitations === "boolean", "web_citation_selection_invalid");
   requireValue(typeof config.profileDirectory === "string" && path.isAbsolute(config.profileDirectory), "web_profile_required");
   requireValue(typeof config.sessionPartition === "string" && /^persist:[a-z0-9-]{1,96}$/.test(config.sessionPartition), "web_partition_required");
-  requireValue(config.model === "gpt-5.6-sol", "web_explicit_model_required");
+  // Only old single-model packets may omit effort; keep their exact high default.
+  if (config.effort === undefined && config.model === "gpt-5.6-sol") config.effort = "high";
+  modelSelection(config);
   requireValue(typeof config.visible === "boolean", "web_visibility_required");
   requireValue(config.backgroundInput === undefined || config.backgroundInput === false
     || config.backgroundInput === "dom_v1" && (config.visible === false && config.mode !== "assist"
@@ -446,42 +472,96 @@ async function menu() {
   await waitFor(async () => (await inPage(page.controls)).chooser);
 }
 async function selectModel() {
+  verifiedSelection = null;
+  const requested = modelSelection(config);
+  const controls = () => inPage(page.controls, requested.picker_labels);
   stage = "open_model_menu";
   await menu();
   stage = "open_versions";
   await inPage(page.clickModelChooser);
-  await waitFor(async () => (await inPage(page.controls)).modelOption);
-  stage = "choose_sol";
-  await inPage(page.chooseSol);
+  await waitFor(async () => (await controls()).modelOption);
+  stage = "choose_model";
+  await inPage(page.chooseModel, requested.picker_labels);
   await waitFor(async () => (await inPage(page.controls)).chooser);
   stage = "verify_selection";
   await inPage(page.clickModelChooser);
   const selected = await waitFor(async () => {
-    const state = await inPage(page.controls);
+    const state = await controls();
     return state.modelOption && state;
   });
   requireValue(selected.modelChecked === "true", "web_selected_model_not_retained");
   record("model_selection_checked", { model: config.model, checked: selected.modelChecked });
   stage = "close_versions";
   await key("Escape");
-  await waitFor(async () => !(await inPage(page.controls)).modelOption);
+  await waitFor(async () => !(await controls()).modelOption);
   stage = "open_effort_menu";
   await menu();
   stage = "select_effort";
   let slider = await inPage(page.effortState);
-  requireValue(slider && slider.min === 0 && [3, 4].includes(slider.max), "web_effort_range_invalid");
-  while (slider.value !== 2) {
-    const direction = slider.value < 2 ? 1 : -1;
+  requireValue(slider && slider.min === 0 && slider.max === 4 && !slider.locked, "web_effort_range_invalid");
+  record("effort_initial_state", effortDiagnostic(slider));
+  const move = async target => { for (let steps = 0; slider.value !== target; steps++) {
+    requireValue(steps < 4, "web_effort_step_mismatch");
+    const direction = slider.value < target ? 1 : -1;
     await inPage(page.focusEffort);
     await key(direction > 0 ? "Right" : "Left");
     const previous = slider.value;
+    let lastStepState = slider;
+    try {
+      slider = await waitFor(async () => {
+        const next = await inPage(page.effortState);
+        lastStepState = next;
+        return next && next.value !== previous && next;
+      });
+    } catch (error) {
+      record("effort_step_unavailable", { previous, target, ...effortDiagnostic(lastStepState) });
+      throw error;
+    }
+    record("effort_step_verified", { previous, target, ...effortDiagnostic(slider) });
+    requireValue(slider.min === 0 && slider.max === 4 && !slider.locked
+      && slider.value === previous + direction, "web_effort_step_mismatch");
+  }};
+  // Latest is a moving alias. Its public Pro header currently names the
+  // generation even when ordinary effort labels omit it. Never infer 6 from
+  // the word Latest alone or silently adopt a future generation.
+  await move(4);
+  // The slider value and its model header are committed by separate UI updates.
+  // Wait for the Pro header before comparing generations; a different named
+  // generation still fails below, without submitting the request.
+  let lastProState = slider;
+  try {
     slider = await waitFor(async () => {
       const next = await inPage(page.effortState);
-      return next && next.value !== previous && next;
-    });
-    requireValue(slider.value === previous + direction, "web_effort_step_mismatch");
+      lastProState = next;
+      return next && next.value === 4 && next.label === "Pro"
+        && /Pro$/.test((next.generationLabel || "").replace(/\s+/g, "")) && next;
+    }, 5000);
+  } catch (error) {
+    record("effort_pro_unavailable", effortDiagnostic(lastProState));
+    throw error;
   }
-  record("model_verified", { model: config.model, visibleLabel: "GPT-5.6 Sol", effortIndex: slider.value });
+  const observedHeader = (slider.generationLabel || "").replace(/\s+/g, "");
+  const allowedHeaders = [requested.generation + "Pro", "GPT-" + requested.generation + "Pro"];
+  // This account's managed Electron page renders the selected 5.6 Pro header
+  // as "5.6 Sol Pro"; the in-app browser renders "5.6 Pro". Both name the
+  // same explicit generation, and the 5.6 radio option was checked above.
+  if (requested.generation === "5.6") allowedHeaders.push("5.6SolPro", "GPT-5.6SolPro");
+  // The managed Latest page can render just "Pro" in its heading while the
+  // same visible slider announces "6 Pro". Accept that observed combination
+  // only after the Latest radio option was checked and the slider names 6.
+  const announcedLatestPro = requested.generation === "6" && observedHeader === "Pro"
+    && slider.announcedGeneration === "6";
+  requireValue(slider.label === "Pro" && (allowedHeaders.includes(observedHeader) || announcedLatestPro)
+    && (slider.announcedGeneration === null || slider.announcedGeneration === requested.generation),
+    "web_model_generation_mismatch");
+  record("effort_pro_verified", effortDiagnostic(slider));
+  await move(requested.effort.index);
+  requireValue(requested.effort.labels.includes(slider.label), "web_effort_label_mismatch");
+  requireValue(slider.announcedGeneration === null || slider.announcedGeneration === requested.generation,
+    "web_model_generation_mismatch");
+  record("effort_target_verified", effortDiagnostic(slider));
+  verifiedSelection = { model: config.model, effortIndex: slider.value };
+  record("model_verified", { ...verifiedSelection, generation: requested.generation, effort: config.effort });
   await key("Escape");
   await waitFor(async () => !(await inPage(page.controls)).chooser);
 }
@@ -507,11 +587,11 @@ app.whenReady().then(async () => {
     if (navigationAllowed(url, assisting || config.mode === "assist")) return;
     event.preventDefault();
     if (workerMode && config.backgroundInput === "dom_v1" && !assisting && !sent
-        && stage === "load_fresh_page" && isPublicLoginUrl(url)) {
+        && (stage === "load_fresh_page" || stage === "startup_prepare") && isPublicLoginUrl(url)) {
       // This rejected public login redirect is not a dispatched model request.
       // Keep only a boolean, never the authorization URL or its query values.
       needsAssistanceNavigation = true;
-      finish(1, { error: "web_browser_login_required_before_dispatch" });
+      if (stage !== "startup_prepare") finish(1, { error: "web_browser_login_required_before_dispatch" });
       return;
     }
     finish(1, { error: assisting || config.mode === "assist"
@@ -683,7 +763,15 @@ async function openWorkerAssistance(id, inspectCompleted = false) {
 
 async function loadFreshPage() {
   stage = "load_fresh_page";
-  if (preparedPage) { preparedPage = false; return; }
+  if (preparedPage) {
+    // Preparation is a cached page, not a promise that the public page stayed
+    // empty while idle. Recheck it at consumption without another navigation.
+    requireBackgroundWindow();
+    requireValue(isEmptyTemporaryChatUrl(surface.webContents.getURL())
+      && assistanceReady(await inPage(page.controls)), "web_prepared_page_changed");
+    preparedPage = false;
+    return;
+  }
   if (!completedPage) { await surface.loadURL("https://chatgpt.com/?temporary-chat=true"); return; }
   requireValue(workerMode && !sent, "web_new_chat_worker_required");
   requireBackgroundWindow();
@@ -815,8 +903,16 @@ async function runCurrentPage() {
   const prefix = await inPage(page.composerPrefix, mention);
   await inPage(page.focusComposer, prefix);
   await insertText(config.text);
-  await waitFor(async () => (await inPage(page.controls)).sendReady);
-  requireValue(await inPage(page.composerMatches, config.text, prefix, mention), "web_prompt_text_mismatch");
+  // A model switch can settle the editor after the send control becomes ready.
+  // Observe the already inserted text briefly; never insert it a second time.
+  let exactPrompt = false;
+  try {
+    exactPrompt = await waitFor(async () => (await inPage(page.controls)).sendReady
+      && await inPage(page.composerMatches, config.text, prefix, mention), 2000);
+  } catch (error) {
+    if (error.message !== "web_page_state_timeout") throw error;
+  }
+  requireValue(exactPrompt, "web_prompt_text_mismatch");
   stage = "send_once";
   sent = true; // An uncertain input is terminal. Never submit a second time.
   record("dispatch_started");
@@ -832,7 +928,9 @@ async function runCurrentPage() {
   if (config.inspectCitations === true)
     record("public_citation_shape", { shape: await inPage(page.publicCitationShape, true) });
   if (workerMode) completedPage = { prompt: publicPrompt, message };
-  finish(0, { model: config.model, effortIndex: 2, publicMessage: message });
+  requireValue(verifiedSelection?.model === config.model
+    && verifiedSelection.effortIndex === modelSelection(config).effort.index, "web_model_selection_unverified");
+  finish(0, { ...verifiedSelection, publicMessage: message });
 }
 async function handleFailure(error) {
   if (win && !win.isDestroyed() && !ended) {
@@ -853,6 +951,47 @@ async function handleFailure(error) {
   finish(1, { error: safeError(error) });
 }
 
+async function prepareWorkerPage() {
+  // A saved service checks its own empty public page before accepting a turn.
+  // This navigation has no prompt, model request, connector selection or retry.
+  stage = "startup_prepare";
+  requireValue(readWorkerPacket("next.json", 1024 * 1024) === null,
+    "web_worker_request_during_preparation");
+  try { await surface.loadURL("https://chatgpt.com/?temporary-chat=true"); }
+  catch (error) { if (!needsAssistanceNavigation) throw error; }
+  if (needsAssistanceNavigation) {
+    assistanceRequired = true;
+    record("worker_attention_required", { reason: "web_browser_login_required_before_dispatch" });
+    return;
+  }
+  let ready = false;
+  try {
+    ready = await waitFor(async () => {
+      if (workerClosing || readWorkerPacket("shutdown.json", 256) !== null)
+        throw new Error("web_host_closed");
+      const controls = await inPage(page.controls);
+      return isEmptyTemporaryChatUrl(surface.webContents.getURL()) && assistanceReady(controls);
+    }, 65000);
+  } catch (error) {
+    if (error.message !== "web_page_state_timeout") throw error;
+  }
+  if (ready) {
+    requireBackgroundWindow();
+    requireValue(readWorkerPacket("next.json", 1024 * 1024) === null,
+      "web_worker_request_during_preparation");
+    preparedPage = true;
+    record("worker_prepared", { hidden: true, empty: true });
+    return;
+  }
+  const controls = await inPage(page.controls);
+  const reason = controls.pageKind === "challenge"
+    ? "web_browser_challenge_required_before_dispatch"
+    : controls.loginVisible === true ? "web_browser_login_required_before_dispatch" : null;
+  requireValue(reason !== null, "web_startup_prepare_unavailable");
+  assistanceRequired = true;
+  record("worker_attention_required", { reason });
+}
+
 function readWorkerPacket(name, maximum) {
   const file = path.join(config.workerDirectory, name);
   let info;
@@ -869,9 +1008,10 @@ function readWorkerPacket(name, maximum) {
   return value;
 }
 function validateWorkerRequest(request, seen) {
-  requireValue(Object.keys(request).every(k => ["id", "text", "connectorMention", "autoSelectConnector"].includes(k))
+  requireValue(Object.keys(request).every(k => ["id", "text", "model", "effort", "connectorMention", "autoSelectConnector"].includes(k))
     && typeof request.id === "string" && /^[a-f0-9]{32}$/.test(request.id)
     && !seen.has(request.id) && seen.size < 128, "web_worker_request_identity_invalid");
+  modelSelection(request);
   requireValue(typeof request.text === "string" && request.text.length > 0
     && Buffer.byteLength(request.text, "utf8") <= 65536
     && [...request.text].every(c => c.codePointAt(0) < 0xd800 || c.codePointAt(0) > 0xdfff), "web_text_invalid");
@@ -888,6 +1028,7 @@ async function workerLoop() {
   // retire this hidden worker; retain request deadlines and the no-replay cap.
   const base = { ...config }, seen = new Set(), assistanceSeen = new Set();
   record("worker_ready");
+  if (config.startupPrepare === true) await prepareWorkerPage();
   while (!workerClosing && seen.size < 128) {
     const stop = readWorkerPacket("shutdown.json", 256);
     if (stop !== null) {

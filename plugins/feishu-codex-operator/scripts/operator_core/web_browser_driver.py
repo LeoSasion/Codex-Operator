@@ -18,6 +18,7 @@ import sys
 
 from .responses_capabilities import RouterError
 from .responses_tool_adapter import loads
+from .web_model_catalog import CATALOG_PATH, browser_selection, matches_selection
 from .web_mcp_transport import WebDesktopUnavailable, WebBrowserAssistanceRequired, WebBrowserHttpError, WebBrowserNetworkError, WebBrowserUiError, WebBrowserFinalTimeout, require
 
 
@@ -160,6 +161,15 @@ def current_user_preview(source):
     return preview if len(encoded_user_json(preview).encode('utf8')) <= 16384 else None
 
 
+def safe_user_binding_diagnostic(shape):
+    """Shared bounded observations; never retain source or submitted text."""
+    value = {key: shape[key] for key in ('supportedTextShape', 'exact', 'backslashInsertionsOnly')
+        if type(shape.get(key)) is bool}
+    value.update({key: shape[key] for key in ('sourceLength', 'promptLength', 'firstDifference')
+        if type(shape.get(key)) is int and -1 <= shape[key] <= 1024 * 1024})
+    return value
+
+
 def safe_generation_progress(value):
     counts = ('userRows', 'assistantRows', 'finalRows', 'finishedFinalRows', 'currentFinalRows', 'currentFinishedFinalRows', 'renderedTextLength')
     flags = ('stopPresent', 'stopVisible', 'subscriptionWarning', 'errorAlert')
@@ -167,6 +177,23 @@ def safe_generation_progress(value):
         and all(type(value.get(k)) is int and 0 <= value[k] <= (1024 * 1024 if k == 'renderedTextLength' else 10000) for k in counts)
         and all(type(value.get(k)) is bool for k in flags), 'web_generation_state_invalid')
     return {k: value[k] for k in counts + flags}
+
+
+def safe_effort_diagnostic(value):
+    """Retain only bounded, public model-control labels; never page or request text."""
+    result = {}
+    for name in ('value', 'previous', 'target'):
+        if type(value.get(name)) is int and 0 <= value[name] <= 4:
+            result[name] = value[name]
+    if value.get('label') in ('即时', '中', '高', '极高', 'Instant', 'Medium',
+            'High', 'Extra high', 'Pro', 'unrecognized'):
+        result['label'] = value['label']
+    if value.get('announcedGeneration') in ('5.6', '6'):
+        result['announcedGeneration'] = value['announcedGeneration']
+    header = value.get('header')
+    if isinstance(header, str) and re.fullmatch(r'[A-Za-z0-9. -]{1,32}', header):
+        result['header'] = header
+    return result
 
 
 def safe_model_network(value):
@@ -248,13 +275,13 @@ class WebTextBrowserDriver:
         self.host = Path(__file__).resolve().parents[1] / 'web_browser_host.cjs'
         self.bound = {path: hashlib.sha256(path.read_bytes()).digest() for path in (
             self.electron, self.host, self.host.with_name('web_browser_page.cjs'),
-            self.host.with_name('web_browser_surface.cjs'))}
+            self.host.with_name('web_browser_surface.cjs'), CATALOG_PATH)}
         # Only literal codes/stages declared by these bound, plugin-owned files
         # may enter diagnostics. Arbitrary page/error strings are discarded.
         source = ''.join(path.read_text(encoding='utf-8') for path in self.bound if path.suffix == '.cjs')
         self.codes = frozenset(re.findall(r'["\'](web_[a-z_]+)["\']', source))
         self.stages = frozenset(re.findall(r'stage\s*=\s*"([a-z_]+)"', source))
-        self.config = {'version': 1, 'mode': 'generate', 'model': 'gpt-5.6-sol',
+        self.config = {'version': 1, 'mode': 'generate', 'model': 'gpt-5.6-sol', 'effort': 'high',
             'profileDirectory': str(profile), 'sessionPartition': settings['session_partition'],
             'visible': self.window_mode == 'visible', 'timeoutMs': timeout}
         if self.window_mode == 'background':
@@ -285,7 +312,7 @@ class WebTextBrowserDriver:
             'window_mode': self.window_mode, 'retries': 0}
 
     def request_config(self, turn):
-        return {'text': text_prompt(turn.begin(turn.key)['request'])}
+        return {**browser_selection(turn.protocol), 'text': text_prompt(turn.begin(turn.key)['request'])}
 
     async def __call__(self, turn):
         require(not self.active, 'web_text_browser_busy')
@@ -378,28 +405,28 @@ class WebTextBrowserDriver:
                         self.dispatches += 1
                         require(len(dispatches) == 1, 'web_browser_duplicate_dispatch')
                     if kind == 'completed':
-                        require(value.get('model') == 'gpt-5.6-sol' and value.get('effortIndex') == 2
+                        require(matches_selection(value, request_config)
                             and isinstance(value.get('publicMessage'), dict) and not finals and not http_statuses
                             and not ui_failures and not final_timeouts and not network_errors and public_interruption_code(interruption) is None,
                             'web_browser_final_identity_invalid')
                         finals.append(value['publicMessage'])
                     if kind in ('dispatch_started', 'model_verified', 'public_user_binding', 'generation_state', 'completed', 'failed', 'exit_requested', 'cancel_requested',
-                                'cancel_click_attempted', 'cancel_click_unavailable'):
+                                'cancel_click_attempted', 'cancel_click_unavailable', 'effort_initial_state', 'effort_step_verified',
+                                'effort_step_unavailable', 'effort_pro_unavailable', 'effort_pro_verified', 'effort_target_verified'):
                         event = {'attempt': self.attempts, 'kind': kind,
                             'stage': value.get('stage') if value.get('stage') in self.stages else 'other',
                             'code': value.get('error') if isinstance(value.get('error'), str)
                                 and value['error'] in self.codes else None}
                         if kind == 'generation_state':
                             event['progress'] = safe_generation_progress(value.get('progress'))
+                        if kind == 'model_verified':
+                            require(matches_selection(value, request_config), 'web_browser_selection_identity_invalid')
+                            event.update(model=request_config['model'], effort=request_config['effort'],
+                                effortIndex=value['effortIndex'])
+                        if kind.startswith('effort_'):
+                            event.update(safe_effort_diagnostic(value))
                         if kind == 'public_user_binding' and isinstance(value.get('shape'), dict):
-                            shape = value['shape']
-                            event['shape'] = {name: shape[name] for name in ('supportedTextShape', 'exact', 'backslashInsertionsOnly')
-                                if type(shape.get(name)) is bool}
-                            for name in ('promptOffset', 'sourceLength', 'promptLength', 'firstDifference',
-                                    'sharedSuffix', 'sourceSpaces', 'promptSpaces', 'sourceLineFeeds',
-                                    'promptLineFeeds', 'sourceNbsp', 'promptNbsp', 'sourceBackslashes', 'promptBackslashes'):
-                                if type(shape.get(name)) is int and -1 <= shape[name] <= 1024 * 1024:
-                                    event['shape'][name] = shape[name]
+                            event['shape'] = safe_user_binding_diagnostic(value['shape'])
                         if kind == 'completed':
                             references = value['publicMessage'].get('public_references')
                             if isinstance(references, list) and len(references) <= 128:
@@ -600,4 +627,5 @@ class WebMcpBrowserDriver(WebTextBrowserDriver):
         require(len(text.encode('utf-8')) <= 65536, 'web_mcp_input_too_large_no_retry')
         # Do not consume begin locally: the actual connected Web client must
         # retrieve it. All declared schemas and permission fields stay intact.
-        return {'text': text, 'connectorMention': deepcopy(self.connector), 'autoSelectConnector': True}
+        return {**browser_selection(turn.protocol), 'text': text,
+            'connectorMention': deepcopy(self.connector), 'autoSelectConnector': True}

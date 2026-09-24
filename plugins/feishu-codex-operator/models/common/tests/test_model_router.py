@@ -697,7 +697,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
 
     async def publish(self, route):
         self.router._web_bind_not_before = 0 # Explicit fixture clock boundary only.
-        with patch('operator_web_service.resolve_route', return_value=route) as resolve:
+        with patch('operator_web_service.resolve_routes', return_value=(route,)) as resolve:
             value = await self.router.bind_web_service({'profile_sha256':route.web_binding.profile_sha256,
                 'session_sha256':route.web_binding.session_sha256})
         return value, resolve
@@ -849,13 +849,13 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
         _, _, route = await self.provider(browser)
         await self.publish(route)
         expected = {'profile_sha256':'a'*64,'session_sha256':'b'*64}
-        with patch('operator_web_service.resolve_route',side_effect=AssertionError('no read')):
+        with patch('operator_web_service.resolve_routes',side_effect=AssertionError('no read')):
             self.assertFalse((await self.router.bind_web_service(expected))['changed'])
         before = self.router._registry
         with self.assertRaisesRegex(RouterError,'throttled'):
             await self.router.bind_web_service({**expected,'session_sha256':'c'*64})
         self.router._web_bind_not_before = 0
-        with patch('operator_web_service.resolve_route',side_effect=OSError('PRIVATE')):
+        with patch('operator_web_service.resolve_routes',side_effect=OSError('PRIVATE')):
             with self.assertRaisesRegex(RouterError,'^web_route_service_unavailable_no_retry$'):
                 await self.router.bind_web_service({**expected,'session_sha256':'c'*64})
         self.assertIs(before,self.router._registry)
@@ -951,8 +951,8 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
         _,_,route=await self.provider(browser)
         expected={'profile_sha256':'a'*64,'session_sha256':'b'*64}
         def delayed(*args):
-            entered.set();release.wait(5);return route
-        with patch('operator_web_service.resolve_route',side_effect=delayed):
+            entered.set();release.wait(5);return (route,)
+        with patch('operator_web_service.resolve_routes',side_effect=delayed):
             pending=asyncio.create_task(self.router.bind_web_service(expected))
             try:
                 self.assertTrue(await asyncio.to_thread(entered.wait,3))
@@ -991,7 +991,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
                 ({'data':b'x'*1025,'headers':{'Content-Type':'application/json'}},400)]:
             response=await client.post('/binding',**options)
             self.assertEqual(response.status,status)
-        with patch('operator_web_service.resolve_route',side_effect=OSError('SECRET')):
+        with patch('operator_web_service.resolve_routes',side_effect=OSError('SECRET')):
             response=await client.post('/binding',json=expected)
             self.assertNotIn('SECRET',await response.text())
             self.assertEqual(response.status,409)
