@@ -247,8 +247,8 @@ def mcp_evidence(before, after, client_requests):
         return unknown
 
 
-def cli_settings(case, slug, base_url):
-    settings={'model':slug,'model_provider':'operator_check','model_reasoning_effort':'high',
+def cli_settings(case, slug, base_url, effort='high'):
+    settings={'model':slug,'model_provider':'operator_check','model_reasoning_effort':effort,
         'model_catalog_json':str(case/'catalog.json'),'approval_policy':'never',
         'web_search':'disabled','project_doc_max_bytes':0,'analytics.enabled':False,
         'skills.include_instructions':False,
@@ -273,6 +273,20 @@ def cli_settings(case, slug, base_url):
     return settings
 
 
+def select_check_route(registry, model_slug=None, effort=None):
+    """Choose one published Web route before the disposable native turn starts."""
+    routes=registry.routes
+    require(bool(routes),'web_check_model_unavailable')
+    slug=model_slug if model_slug is not None else next(iter(routes))
+    route=routes.get(slug)
+    require(route is not None and route.web_binding is not None,
+        'web_check_model_unavailable')
+    selected=effort if effort is not None else ('high' if 'high' in route.reasoning_efforts
+        else route.reasoning_efforts[-1])
+    require(selected in route.reasoning_efforts,'web_check_effort_unavailable')
+    return route,selected
+
+
 def write_cli_config(case, settings):
     # The isolated home is private and new. No ancestor AGENTS or user/plugin
     # configuration belongs in a synthetic coding request.
@@ -282,7 +296,7 @@ def write_cli_config(case, settings):
         handle.write(raw)
 
 
-async def verify(profile):
+async def verify(profile, model_slug=None, effort=None):
     from aiohttp import web
     from operator_core.beeper_relay import discover_codex_executable
     from operator_core.model_registry import ModelRegistry
@@ -327,7 +341,10 @@ async def verify(profile):
         expected=await asyncio.to_thread(route_preview,profile)
         await router.bind_web_service(expected)
         receipt.update(expected)
-        slug=next(iter(router.registry.routes))
+        route,selected_effort=select_check_route(router.registry,model_slug,effort)
+        slug=route.slug
+        receipt['model']=slug
+        receipt['reasoning_effort']=selected_effort
         @web.middleware
         async def admission(request,handler):
             if request.method!='POST' or request.path!=router.prefix+'/responses':
@@ -343,7 +360,8 @@ async def verify(profile):
         port=site._server.sockets[0].getsockname()[1]
         native={'models':[{**catalog['models'][0],'slug':'synthetic-native'}]}
         save(case/'catalog.json',router.registry.merge(native))
-        settings=cli_settings(case,slug,f'http://127.0.0.1:{port}'+router.prefix)
+        settings=cli_settings(case,slug,f'http://127.0.0.1:{port}'+router.prefix,
+            selected_effort)
         write_cli_config(case,settings)
         command=[str(executable),'exec','--ephemeral','--strict-config','--ignore-rules',
             '--skip-git-repo-check','--sandbox','read-only','--color','never','-C',str(case/'work'),
@@ -406,14 +424,17 @@ def main():
     parser.add_argument('action',choices=('verify','fixture'))
     parser.add_argument('--profile',type=Path)
     parser.add_argument('--case',type=Path)
+    parser.add_argument('--model')
+    parser.add_argument('--effort',choices=('none','minimal','low','medium','high','xhigh','max'))
     args=parser.parse_args()
     if args.action=='fixture':
-        require(args.case is not None and args.profile is None,'web_check_arguments_invalid')
+        require(args.case is not None and args.profile is None and args.model is None
+            and args.effort is None,'web_check_arguments_invalid')
         fixture_main(args.case)
         return 0
     require(args.profile is not None and args.case is None,'web_check_arguments_invalid')
     try:
-        result=asyncio.run(verify(args.profile))
+        result=asyncio.run(verify(args.profile,args.model,args.effort))
     except Exception:
         result={'status':'unavailable','summary':'完整编码检查尚未开始或准备未完成；请先核对现有后台状态和上次检查记录，无需重新创建连接。'}
     print(dumps(result))

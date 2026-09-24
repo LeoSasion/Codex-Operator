@@ -36,6 +36,11 @@ retained separately from the successful model/CLI/file evidence.
 
 Official configuration sources: [GLM](https://docs.bigmodel.cn/cn/coding-plan/tool/codex)
 and [DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex/).
+The later [DeepSeek Responses API compatibility table](https://api-docs.deepseek.com/guides/responses_api/#tools)
+explicitly lists built-in `web_search` as ignored. That is a direct-endpoint limitation,
+not evidence about a separately verified Codex-executed search route. The observed
+GLM-5.3 hosted event likewise does not establish search for every GLM model or
+for the separate GLM-5.3 Flash adapter registration.
 These profiles do not establish provider selection from a shared Desktop picker;
 the [architecture requirement](../../common/docs/responses-tool-compatibility-plan.md) remains open.
 

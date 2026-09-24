@@ -113,6 +113,7 @@ function hiddenHostFixture(overrides = {}) {
         if (name === 'node:path') return path;
         if (name === './web_browser_page.cjs') return page;
         if (name === './web_browser_surface.cjs') return surfaceHelpers;
+        if (name === './operator_core/web_model_catalog.json') return require(operatorTestScript('operator_core/web_model_catalog.json'));
         throw Error('unexpected dependency');
       } });
   vm.runInContext(source, context);
@@ -310,7 +311,7 @@ test('background model pointer input binds the focused enabled public control an
 });
 test('persistent worker admits only bounded text and registered connector data, without replay or runtime overrides', () => {
   const host = hiddenHostFixture();
-  const valid = { id: 'a'.repeat(32), text: '中文😀 a_b\r\n' };
+  const valid = { id: 'a'.repeat(32), text: '中文😀 a_b\r\n', model:'gpt-5.6-sol', effort:'high' };
   host.invoke(`validateWorkerRequest(${JSON.stringify(valid)}, new Set())`);
   host.invoke(`validateWorkerRequest(${JSON.stringify({ ...valid,
     connectorMention: { id: 'plugin:asdk_app_' + 'b'.repeat(32), name: 'Operator fixture' },
@@ -336,7 +337,7 @@ test('connector labels preserve Chinese names across startup, worker and public 
     }
     assert.deepEqual(hiddenHostFixture({ mode: 'generate', text: 'fixture', visible: true, backgroundInput: undefined,
       awaitSendRelease: true, connectorSelectionName: name }).exits, []);
-    host.invoke(`validateWorkerRequest(${JSON.stringify({ id: 'c'.repeat(32), text: 'fixture',
+    host.invoke(`validateWorkerRequest(${JSON.stringify({ id: 'c'.repeat(32), text: 'fixture', model:'gpt-5.6-sol', effort:'high',
       connectorMention: mention, autoSelectConnector: true })}, new Set())`);
     const f = connectorFixture({ name });
     assert.deepEqual(plain(vm.runInNewContext(`(${selectedConnector.toString()})(name)`,
@@ -357,7 +358,7 @@ test('connector labels preserve Chinese names across startup, worker and public 
     const mention = { id, name };
     assert.deepEqual(hiddenHostFixture({ connectorMention: mention, autoSelectConnector: true }).exits, [1]);
     assert.throws(() => host.invoke(`validateWorkerRequest(${JSON.stringify({ id: 'c'.repeat(32),
-      text: 'fixture', connectorMention: mention, autoSelectConnector: true })}, new Set())`), /web_connector_mention_invalid/);
+      text: 'fixture', model:'gpt-5.6-sol', effort:'high', connectorMention: mention, autoSelectConnector: true })}, new Set())`), /web_connector_mention_invalid/);
     assert.throws(() => vm.runInNewContext(`(${selectedConnector.toString()})(name)`, { name }), /web_connector_name_invalid/);
     assert.throws(() => vm.runInNewContext(`(${connectorMenuChoice.toString()})(name, query, true)`,
       { name, query: '@' + name.split(' ')[0] }), /web_connector_query_invalid/);
@@ -399,7 +400,7 @@ test('public interruptions require rendered UI and exact connector heading, neve
     getClientRects: () => options.unrendered ? [] : [{}], closest: () => options.hidden ? {} : null,
     querySelectorAll: () => options.headings || [], click() { throw Error('approval must not be clicked'); } });
   const read = (entries, name = 'Operator 固定连接') => plain(vm.runInNewContext(
-    `(${publicInterruptionState.toString()})(name)`, { name, document: { querySelectorAll: selector => {
+    `(${publicInterruptionState.toString()})(name)`, { name, getComputedStyle: () => ({}), document: { querySelectorAll: selector => {
       assert.ok(['[role="alert"]', '[role="dialog"]', '[data-testid="tool-approval-card"]',
         '[data-testid="regenerate-thread-error-button"]'].includes(selector));
       return entries[selector] || [];
@@ -423,6 +424,49 @@ test('public interruptions require rendered UI and exact connector heading, neve
   // Ordinary final text is never queried, even if it quotes every error phrase.
   const prose = element('Something went wrong. OpenAI safety blocked run_tests. Your session has expired.');
   assert.deepEqual(read({ '[data-message-author-role="assistant"]': [prose] }), clear);
+});
+
+test('public interruptions exclude accessibility-only and CSS-hidden surfaces and ancestors', () => {
+  const { publicInterruptionState } = require(operatorTestScript('web_browser_page.cjs'));
+  const clear = { approvalCards: 0, connectorDialogs: 0, sessionExpired: false,
+    subscriptionUnavailable: false, responseError: false };
+  const element = (options = {}) => ({ innerText: 'Something went wrong. Your session has expired.',
+    parentElement: options.parent || null, style: options.style || {}, hiddenSelector: options.hiddenSelector,
+    // A tiny rectangle alone does not establish hiddenness.
+    getClientRects: () => [{ width: 1, height: 1 }],
+    closest(selector) {
+      for (let node = this; node; node = node.parentElement)
+        if (node.hiddenSelector && selector.split(',').includes(node.hiddenSelector)) return node;
+      return null;
+    },
+    querySelectorAll: () => [] });
+  const read = node => plain(vm.runInNewContext(`(${publicInterruptionState.toString()})()`, {
+    getComputedStyle: element => {
+      let visibility = 'visible';
+      for (let node = element; node; node = node.parentElement) {
+        if (node.style.visibility !== undefined) { visibility = node.style.visibility; break; }
+      }
+      return { ...element.style, visibility };
+    },
+    document: { querySelectorAll: () => [node] }
+  }));
+  for (const hiddenSelector of ['.sr-only', '.visually-hidden', '[data-testid="visually-hidden"]']) {
+    assert.deepEqual(read(element({ hiddenSelector })), clear, hiddenSelector);
+    assert.deepEqual(read(element({ parent: element({ hiddenSelector }) })), clear, hiddenSelector + ' ancestor');
+  }
+  for (const style of [{ display: 'none' }, { visibility: 'hidden' },
+      { visibility: 'collapse' }, { contentVisibility: 'hidden' }]) {
+    assert.deepEqual(read(element({ style })), clear, JSON.stringify(style));
+    assert.deepEqual(read(element({ parent: element({ style }) })), clear, JSON.stringify(style) + ' ancestor');
+  }
+  const shown = { ...clear, approvalCards: 1, sessionExpired: true, responseError: true };
+  assert.deepEqual(read(element()), shown);
+  assert.deepEqual(read(element({ style: { visibility: 'visible' },
+    parent: element({ style: { visibility: 'hidden' } }) })), shown);
+  for (const style of [{ display: 'none' }, { contentVisibility: 'hidden' }]) {
+    assert.deepEqual(read(element({ style: { display: 'block', visibility: 'visible', contentVisibility: 'visible' },
+      parent: element({ style }) })), clear, 'visible child cannot override ' + JSON.stringify(style));
+  }
 });
 
 test('persistent public interruption stops without approval clicks or accepting a simultaneous final', async () => {
@@ -780,6 +824,26 @@ test("connector prompt comparison retains paragraph breaks and rejects collapsed
   assert.equal(invoke(), false);
 });
 
+test("plain multiline prompt accepts exact editor paragraphs without normalizing input", () => {
+  const text = '  first line\n\n中文😀 last line  ';
+  const paragraph = value => ({ nodeType: 1, tagName: 'P', textContent: value,
+    querySelectorAll: () => value === '' ? [{}] : [] });
+  const composer = { innerText: '  first line\n\n\n中文😀 last line  ',
+    childNodes: text.split('\n').map(paragraph),
+    querySelectorAll: () => [] };
+  const document = { querySelector: () => composer, activeElement: composer };
+  const invoke = () => vm.runInNewContext(`(${composerMatches.toString()})(text)`, { document, text });
+  assert.equal(invoke(), true);
+  composer.childNodes[1] = paragraph('unexpected');
+  assert.equal(invoke(), false);
+  composer.childNodes = text.split('\n').map(paragraph);
+  composer.childNodes.push(paragraph(''));
+  assert.equal(invoke(), false);
+  composer.childNodes = text.split('\n').map(paragraph);
+  composer.querySelectorAll = selector => selector === '[data-inline-selection-pill]' ? [{}] : [];
+  assert.equal(invoke(), false);
+});
+
 test("selection waits only for an absent pill and rejects ambiguity or altered app metadata", () => {
   const invoke = options => {
     const f = connectorFixture(options);
@@ -877,11 +941,12 @@ test('model selection ignores retained inert panels and closing menu animations'
     closest: blocked, getAttribute: key => attributes[key] ?? null, click: () => clicks++ });
   const chooser = element({ 'aria-label': '选择模型', text: '5.6高' });
   const option = element({ text: 'GPT-5.6 Sol', 'aria-checked': 'true' });
-  const focusControl = { focus: () => { document.activeElement = focusControl; } };
+  const focusControl = { focus: () => { document.activeElement = focusControl; }, getAttribute: () => 'effort-label' };
   const slider = element({ 'aria-valuemin': '0', 'aria-valuemax': '4', 'aria-valuenow': '2' });
   slider.closest = () => focusControl;
-  const panel = { ...element({}), querySelectorAll: () => [slider], querySelector: () => slider };
+  const panel = { ...element({}), querySelectorAll: () => [slider], querySelector: selector => selector === '[role="slider"]' ? slider : null };
   const document = { title: 'ChatGPT', readyState: 'complete', activeElement: null,
+    getElementById: () => ({textContent:'高，第 3 项，共 5 项。'}),
     hasFocus: () => false, querySelector: () => null, querySelectorAll: selector => {
       if (selector === '[role="menuitem"]') return [chooser];
       if (selector === '[role="menuitemradio"]') return [option];
@@ -889,7 +954,7 @@ test('model selection ignores retained inert panels and closing menu animations'
       if (selector === '[data-model-reasoning-effort-slider]') return [panel];
       return [];
     } };
-  const invoke = name => vm.runInNewContext(`(${page[name].toString()})()`, { document });
+  const invoke = name => vm.runInNewContext(`(${page[name].toString()})(["GPT-5.6 Sol"])`, { document });
   for (const attribute of ['[inert]', '[aria-hidden="true"]', '[hidden]', '[role="menu"][data-state="closed"]']) {
     hiddenAncestor = attribute;
     const state = invoke('controls');
@@ -899,17 +964,44 @@ test('model selection ignores retained inert panels and closing menu animations'
     assert.deepEqual(plain(state.modelMenuLabels), []);
     assert.equal(invoke('effortState'), null);
     assert.throws(() => invoke('clickModelChooser'), /web_model_chooser_ambiguous/);
-    assert.throws(() => invoke('chooseSol'), /web_model_option_ambiguous/);
+    assert.throws(() => invoke('chooseModel'), /web_model_option_ambiguous/);
     assert.throws(() => invoke('focusEffort'), /web_effort_control_ambiguous/);
     assert.equal(clicks, 0);
     assert.equal(document.activeElement, null);
   }
   hiddenAncestor = null;
   assert.equal(invoke('controls').modelChecked, 'true');
-  assert.deepEqual(plain(invoke('effortState')), { min: 0, max: 4, value: 2 });
-  invoke('clickModelChooser'); invoke('chooseSol'); invoke('focusEffort');
+  assert.deepEqual(plain(invoke('effortState')), { min: 0, max: 4, value: 2, label: '高', announcedGeneration: null,
+    generationLabel: '5.6高', locked: false });
+  invoke('clickModelChooser'); invoke('chooseModel'); invoke('focusEffort');
   assert.equal(clicks, 2);
   assert.equal(document.activeElement, focusControl);
+});
+
+test('effort control reads generation-prefixed public slider announcements', () => {
+  const { effortState } = require(operatorTestScript('web_browser_page.cjs'));
+  let described = '5.6 极高，第 4 项，共 5 项。', value = '3';
+  const control = { getAttribute: name => name === 'aria-describedby' ? 'effort-help' : null };
+  const slider = { getAttribute: name => ({ 'aria-valuemin':'0', 'aria-valuemax':'4', 'aria-valuenow':value })[name],
+    closest: () => control };
+  const panel = { getClientRects: () => [{}], closest: () => null,
+    querySelectorAll: () => [slider], querySelector: () => null };
+  const chooser = { getClientRects: () => [{}], closest: () => null,
+    getAttribute: name => name === 'aria-label' ? '选择模型' : null,
+    textContent: '5.6 SolPro' };
+  const document = { getElementById: () => ({ textContent: described }),
+    querySelectorAll: selector => selector === '[data-model-reasoning-effort-slider]' ? [panel]
+      : selector === '[role="menuitem"]' ? [chooser] : [] };
+  const read = () => plain(vm.runInNewContext(`(${effortState.toString()})()`, { document }));
+  assert.deepEqual(read(), { min:0, max:4, value:3, label:'极高', announcedGeneration:'5.6',
+    generationLabel:'5.6 SolPro', locked:false });
+  described = '5.6 Pro，第 5 项，共 5 项。'; value = '4';
+  assert.deepEqual(read(), { min:0, max:4, value:4, label:'Pro', announcedGeneration:'5.6',
+    generationLabel:'5.6 SolPro', locked:false });
+  described = '6 Pro，第 5 项，共 5 项。';
+  assert.equal(read().announcedGeneration, '6');
+  described = 'unexpected page text';
+  assert.equal(read().label, null);
 });
 
 test("menu input requires the unique enabled model control to own focus", () => {
@@ -932,4 +1024,104 @@ test("menu input requires the unique enabled model control to own focus", () => 
   rows = [{ ...button, getAttribute: name => name === "aria-expanded" ? "true" : "false" }];
   assert.equal(invoke(), false);
   assert.equal(focused, 1);
+});
+
+function pickerFixture(model, effort, generation) {
+  const fixture = hiddenHostFixture({model, effort});
+  fixture.invoke(`
+    const picker = { panel: 'none', value: 1, generation: ${JSON.stringify(generation)}, announcedGeneration: ${JSON.stringify(generation)}, badLabel: false,
+      staleProHeaderReads: 0, proHeader: null };
+    page.chooseModel = function chooseModel() {};
+    page.clickModelChooser = function clickModelChooser() {};
+    page.effortState = function effortState() {};
+    page.focusEffort = function focusEffort() {};
+    menu = async () => { picker.panel = 'effort'; };
+    key = async direction => {
+      if (direction === 'Escape') picker.panel = 'none';
+      else picker.value += direction === 'Right' ? 1 : -1;
+    };
+    waitFor = async check => { const found = await check(); if (!found) throw Error('fixture missing state'); return found; };
+    inPage = async fn => {
+      if (fn === page.controls) return {chooser: picker.panel === 'effort',
+        modelOption: picker.panel === 'versions', modelChecked: 'true'};
+      if (fn === page.clickModelChooser) { picker.panel = 'versions'; return; }
+      if (fn === page.chooseModel) { picker.panel = 'effort'; return; }
+      if (fn === page.focusEffort) return;
+      if (fn === page.effortState) {
+        const generationLabel = picker.value===4 && picker.staleProHeaderReads-- > 0
+          ? picker.generation+'极高' : picker.proHeader || picker.generation+'Pro';
+        return {min:0,max:4,value:picker.value,locked:false,
+           generationLabel, announcedGeneration: picker.announcedGeneration,
+          label:picker.badLabel && picker.value===2 ? 'Medium' : ['即时','中','高','极高','Pro'][picker.value]};
+      }
+      throw Error('unexpected fixture operation');
+    };
+  `);
+  return fixture;
+}
+
+test('public picker verifies every generation and effort before returning selection', async () => {
+  const catalog = require(operatorTestScript('operator_core/web_model_catalog.json'));
+  let count = 0;
+  for (const [model, definition] of Object.entries(catalog.models)) {
+    for (const effort of definition.reasoning_efforts) {
+      const fixture = pickerFixture(model, effort, definition.generation);
+      await fixture.invoke('selectModel()');
+      const verified = fixture.events.find(event => event.kind === 'model_verified');
+      assert.equal(verified.model, model);
+      assert.equal(verified.effortIndex, catalog.efforts[effort].index);
+      assert.equal(verified.generation, definition.generation);
+      assert.equal(fixture.events.some(event => event.kind === 'dispatch_started'), false);
+      count++;
+    }
+  }
+  assert.equal(count, 6);
+});
+
+test('public picker waits for the Pro header after the slider moves', async () => {
+  const fixture = pickerFixture('gpt-5.6-sol', 'high', '5.6');
+  fixture.invoke('picker.staleProHeaderReads = 1');
+  await fixture.invoke('selectModel()');
+  assert.equal(fixture.events.find(event => event.kind === 'model_verified')?.generation, '5.6');
+  assert.equal(fixture.events.some(event => event.kind === 'dispatch_started'), false);
+});
+
+test('public picker accepts the observed 5.6 Sol Pro header but not another generation', async () => {
+  const selected = pickerFixture('gpt-5.6-sol', 'high', '5.6');
+  selected.invoke("picker.proHeader = '5.6 Sol Pro'");
+  await selected.invoke('selectModel()');
+  assert.equal(selected.events.find(event => event.kind === 'model_verified')?.generation, '5.6');
+  const changed = pickerFixture('gpt-5.6-sol', 'high', '5.6');
+  changed.invoke("picker.proHeader = '6 Sol Pro'");
+  await assert.rejects(changed.invoke('selectModel()'), /web_model_generation_mismatch/);
+  assert.equal(changed.invoke('verifiedSelection'), null);
+  const inconsistent = pickerFixture('gpt-5.6-sol', 'high', '5.6');
+  inconsistent.invoke("picker.announcedGeneration = '6'");
+  await assert.rejects(inconsistent.invoke('selectModel()'), /web_model_generation_mismatch/);
+  assert.equal(inconsistent.invoke('verifiedSelection'), null);
+});
+
+test('Latest accepts a bare Pro heading only when the visible slider announces 6', async () => {
+  const selected = pickerFixture('gpt-6-pro', 'max', '6');
+  selected.invoke("picker.proHeader = 'Pro'");
+  await selected.invoke('selectModel()');
+  assert.equal(selected.events.find(event => event.kind === 'model_verified')?.generation, '6');
+  const missing = pickerFixture('gpt-6-pro', 'max', '6');
+  missing.invoke("picker.proHeader = 'Pro'; picker.announcedGeneration = null");
+  await assert.rejects(missing.invoke('selectModel()'), /web_model_generation_mismatch/);
+  assert.equal(missing.invoke('verifiedSelection'), null);
+  const changed = pickerFixture('gpt-6-pro', 'max', '6');
+  changed.invoke("picker.proHeader = 'Pro'; picker.announcedGeneration = '5.6'");
+  await assert.rejects(changed.invoke('selectModel()'), /web_model_generation_mismatch/);
+  assert.equal(changed.invoke('verifiedSelection'), null);
+});
+
+test('Latest generation drift and a mismatched visible effort label stop before sending', async () => {
+  const drift = pickerFixture('gpt-6-pro', 'max', '7');
+  await assert.rejects(drift.invoke('selectModel()'), /web_model_generation_mismatch/);
+  assert.equal(drift.invoke('verifiedSelection'), null);
+  const wrong = pickerFixture('gpt-5.6-sol', 'high', '5.6');
+  wrong.invoke('picker.badLabel = true');
+  await assert.rejects(wrong.invoke('selectModel()'), /web_effort_label_mismatch/);
+  assert.equal(wrong.invoke('verifiedSelection'), null);
 });

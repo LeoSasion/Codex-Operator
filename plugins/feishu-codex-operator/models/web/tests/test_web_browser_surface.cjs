@@ -250,7 +250,7 @@ test("only pre-dispatch login and challenge failures can preserve the worker for
 
 // Run the actual host in a VM with an in-memory file mailbox and Electron fakes.
 // No browser, remote URL, child process, profile or real file is opened.
-function hostHarness() {
+function hostHarness(configOverride = {}) {
   const outputs = [], files = new Map(), timeouts = new Set(), intervals = new Set();
   let elapsedMs = 0;
   class FixtureDate extends Date { static now() { return Date.now() + elapsedMs; } }
@@ -260,7 +260,8 @@ function hostHarness() {
   const configPath = path.join(root, "config.json");
   const config = { version: 1, mode: "worker", profileDirectory: path.join(root, "profile"),
     sessionPartition: "persist:operator-test", model: "gpt-5.6-sol", visible: false,
-    timeoutMs: 10000, backgroundInput: "dom_v1", workerDirectory: root, parentPid: 99999 };
+    timeoutMs: 10000, backgroundInput: "dom_v1", workerDirectory: root, parentPid: 99999,
+    ...configOverride };
   files.set(configPath, Buffer.from(JSON.stringify(config)));
   const memoryFs = {
     readFileSync: file => files.get(file),
@@ -293,7 +294,7 @@ function hostHarness() {
       return super.loadURL(url);
     }
     async executeJavaScript(source) {
-      if (source.includes("function controls()")) return { ok: true, value: { ...fixture.state } };
+      if (source.includes("function controls(")) return { ok: true, value: { ...fixture.state } };
       if (source.includes("function composerPrefix(")) return { ok: true, value: fixture.draft };
       if (source.includes("function publicUserBindingShape("))
         return { ok: true, value: { exact: fixture.bindingExact !== false } };
@@ -345,7 +346,8 @@ function hostHarness() {
   return { outputs, context, fixture, signal: name => signals.get(name)(),
     advanceTime: milliseconds => { elapsedMs += milliseconds; },
     invoke: expression => vm.runInContext(expression, context),
-    put: (name, value) => files.set(path.join(root, name), Buffer.from(JSON.stringify(value))),
+    put: (name, value) => files.set(path.join(root, name), Buffer.from(JSON.stringify(
+      name === 'next.json' ? {model:'gpt-5.6-sol',effort:'high',...value} : value))),
     cleanup() { context.__host.stop(); for (const id of timeouts) clearTimeout(id); for (const id of intervals) clearInterval(id); } };
 }
 async function observed(harness, predicate) {
@@ -355,6 +357,65 @@ async function observed(harness, predicate) {
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 }
+
+test("saved worker prepares one hidden empty page before any model request", async () => {
+  const h = hostHarness({ startupPrepare: true });
+  try {
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_prepared'));
+    assert.equal(h.outputs.filter(x => x.kind === 'worker_ready').length, 1);
+    assert.equal(h.outputs.find(x => x.kind === 'worker_prepared').hidden, true);
+    assert.equal(h.outputs.find(x => x.kind === 'worker_prepared').empty, true);
+    assert.equal(h.invoke('preparedPage'), true);
+    assert.deepEqual(h.context.__host.surface.webContents.calls.filter(([kind]) => kind === 'load'),
+      [['load', 'https://chatgpt.com/?temporary-chat=true']]);
+    assert.equal(h.context.__host.surface.window.isVisible(), false);
+    assert.equal(h.outputs.some(x => x.requestId || x.kind === 'dispatch_started'), false);
+  } finally { h.cleanup(); }
+});
+
+test("a prepared page is rechecked at consumption and cannot hide a later draft", async () => {
+  const h = hostHarness({ startupPrepare: true });
+  try {
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_prepared'));
+    h.fixture.state.userCount = 1;
+    await assert.rejects(h.invoke('loadFreshPage()'), /web_prepared_page_changed/);
+    assert.equal(h.outputs.some(x => x.kind === 'dispatch_started'), false);
+    assert.equal(h.context.__host.surface.webContents.calls.filter(([kind]) => kind === 'load').length, 1);
+  } finally { h.cleanup(); }
+});
+
+test("an idle challenge may clear during hidden preparation without a popup", async () => {
+  const h = hostHarness({ startupPrepare: true });
+  h.fixture.state = { ...ready, pageKind: 'challenge', composer: false };
+  try {
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
+    setTimeout(() => { h.fixture.state = { ...ready }; }, 80);
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_prepared'));
+    assert.equal(h.outputs.some(x => x.kind === 'worker_attention_required'), false);
+    assert.equal(h.context.__host.surface.window.isVisible(), false);
+    assert.equal(h.outputs.some(x => x.kind === 'dispatch_started'), false);
+  } finally { h.cleanup(); }
+});
+
+test("persistent challenge and login redirect request assistance without consuming a turn", async () => {
+  for (const variant of ['challenge', 'login']) {
+    const h = hostHarness({ startupPrepare: true });
+    if (variant === 'challenge') h.fixture.state = { ...ready, pageKind: 'challenge', composer: false };
+    else h.fixture.redirectOnce = 'https://auth.openai.com/login';
+    try {
+      await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
+      if (variant === 'challenge') h.advanceTime(65001);
+      await observed(h, () => h.outputs.some(x => x.kind === 'worker_attention_required'));
+      const attention = h.outputs.find(x => x.kind === 'worker_attention_required');
+      assert.equal(attention.reason, variant === 'challenge'
+        ? 'web_browser_challenge_required_before_dispatch'
+        : 'web_browser_login_required_before_dispatch');
+      assert.equal(h.invoke('assistanceRequired'), true);
+      assert.equal(h.context.__host.surface.window.isVisible(), false);
+      assert.equal(h.outputs.some(x => x.requestId || x.kind === 'dispatch_started'), false);
+    } finally { h.cleanup(); }
+  }
+});
 
 test("model network errors seal only tracked generation and preserve cancellation", async () => {
   for (const variant of ['reset', 'offline', 'dns', 'proxy', 'aborted', 'unknown', 'cancel', 'foreign', 'untracked']) {

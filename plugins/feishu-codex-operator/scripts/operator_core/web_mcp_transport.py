@@ -41,6 +41,39 @@ def same_json(left, right):
     return json.dumps(left, **options) == json.dumps(right, **options)
 
 
+def web_page_search_projection(payload):
+    """Bind one live hosted-search advertisement to Web's own search.
+
+    This Web-only representation cannot emit a Codex web_search_call. The
+    original request remains in the caller; unsupported search constraints
+    fail before browser dispatch rather than being silently discarded.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get('tools'), list):
+        return payload, None
+    source = payload['tools']
+    search = [(index, tool) for index, tool in enumerate(source) if isinstance(tool, dict)
+        and tool.get('type') == 'web_search']
+    if not search:
+        return payload, None
+    require(len(search) == 1 and payload.get('tool_choice', 'auto') == 'auto',
+        'unsupported_tool_type')
+    source_index, source_tool = search[0]
+    require(source_tool.get('external_web_access') is True
+        and set(source_tool) in ({'type', 'external_web_access'},
+            {'type', 'external_web_access', 'search_content_types'})
+        and source_tool.get('search_content_types', ['text']) in (['text'], ['text', 'image']),
+        'unsupported_tool_type')
+    # Copy only tool declarations here. WebModelProtocol takes its own bounded
+    # input/history snapshot; duplicating an entire native body at this gate
+    # would compound the existing large-request memory cost.
+    projected = dict(payload)
+    projected['tools'] = [deepcopy(tool) for index, tool in enumerate(source)
+        if index != source_index]
+    # The projected protocol cannot bind this removed declaration. Preserve
+    # its complete source and position privately across native tool returns.
+    return projected, {'source_index': source_index, 'source_tool': deepcopy(source_tool)}
+
+
 class QuickTunnelAnnouncement:
     """Parse the explicit cloudflared banner and subsequent connection report.
 
@@ -356,7 +389,8 @@ class IndexedWebRequest:
 class WebMcpTurn:
     """Single-loop, single-call transport; all state transitions are explicit."""
 
-    def __init__(self, protocol, *, timeout=180, call_limit=16, check_call=None):
+    def __init__(self, protocol, *, timeout=180, call_limit=16, check_call=None,
+                 web_page_search_binding=None):
         require(10 <= timeout <= 900 and 1 <= call_limit <= 32, "web_mcp_limits_invalid")
         self.protocol = protocol
         # Keep 256 random bits while avoiding punctuation that the public JSON
@@ -365,6 +399,7 @@ class WebMcpTurn:
         self.deadline = time.monotonic() + timeout
         self.call_limit = call_limit
         self.check_call = check_call
+        self._web_page_search_binding = deepcopy(web_page_search_binding)
         self.begun = False
         self.closed = False
         self.client_cancelled = False
@@ -573,6 +608,7 @@ class WebMcpTurn:
             'pending_call': ('released_without_result' if pending['released'] else 'not_released')
                 if pending is not None else None,
             'public_final_returned': self.final_returned,
+            **({'search_route': 'web_page_auto_v1'} if self._web_page_search_binding is not None else {}),
             **({'indexed_reads': self.indexed.read_observation()} if self.indexed is not None else {}),
             **({'binding_changes': deepcopy(self.binding_changes)} if self.binding_changes is not None else {})}
 
@@ -672,9 +708,10 @@ class WebDesktopUnavailable(RouterError):
 
 
 class WebBrowserAssistanceRequired(RouterError):
-    """Observed pre-dispatch login/challenge; never bypass or retry it."""
+    """Pre-dispatch readiness gate; preparation need not require human action."""
     def __init__(self, code):
-        require(code in ('web_browser_login_required_before_dispatch',
+        require(code in ('web_browser_preparing_before_dispatch',
+            'web_browser_login_required_before_dispatch',
             'web_browser_challenge_required_before_dispatch',
             'web_browser_assistance_pending_before_dispatch'), 'web_browser_assistance_code_invalid')
         super().__init__(code)
@@ -732,10 +769,12 @@ class WebResponsesBridge:
     These metadata values are correlation data, never caller authentication.
     """
     def __init__(self, route, endpoint, run_browser, *, timeout=300, call_limit=16,
-                 check_call=None, citation_mode='none'):
+                 check_call=None, citation_mode='none', routes=None):
         require(citation_mode in ('none', 'markdown_links_v1'), 'web_public_citation_mode_required')
         self.citation_mode = citation_mode
         self.route = route
+        self.routes = {candidate.slug: candidate for candidate in (routes or (route,))}
+        require(self.routes.get(route.slug) == route, 'web_explicit_route_required')
         self.endpoint = endpoint
         self.run_browser = run_browser
         self.timeout = timeout
@@ -838,13 +877,16 @@ class WebResponsesBridge:
                     # A previous browser can fail between native tool steps.
                     # Its error cannot become a new caller's validation error.
                     self.failure = None
-            protocol = WebModelProtocol(self.route, payload, citation_mode=self.citation_mode)
+            route = self.routes.get(payload.get('model'))
+            require(route is not None, 'web_explicit_route_required')
+            projected, search_binding = web_page_search_projection(payload)
+            protocol = WebModelProtocol(route, projected, citation_mode=self.citation_mode)
             if self.owner is None:
                 require(identity not in self.admitted, 'web_bridge_turn_consumed_no_retry')
                 require(len(self.admitted) < 128, 'web_bridge_admission_limit')
                 require(self.endpoint.turn is None, 'web_bridge_endpoint_already_owned')
                 turn = WebMcpTurn(protocol, timeout=self.timeout, call_limit=self.call_limit,
-                    check_call=self.check_call)
+                    check_call=self.check_call, web_page_search_binding=search_binding)
                 self.admitted.add(identity)
                 self.turn_sequence += 1
                 request_turn, request_sequence = turn, self.turn_sequence
@@ -854,6 +896,8 @@ class WebResponsesBridge:
                 self.driver = asyncio.create_task(self._drive(turn))
             else:
                 turn = self.turn
+                require(same_json(search_binding, turn._web_page_search_binding),
+                    'web_mcp_request_binding_changed')
                 turn.accept_result(protocol)
             frame = await turn.next_response()
             if turn._final_queued:

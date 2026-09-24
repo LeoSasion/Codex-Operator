@@ -8,6 +8,8 @@ Tunnel/key 向导；必要内部配置由插件承担。该新增模块尚未接
 
 通用适配经验与跨模型原生/路由工具对照已提炼到独立 `codex-model-adaptation` skill 的 `adaptation-playbook.md`、`model-support-matrix.md`；本文件继续维护项目架构、协议合同和研发历史。
 
+2026-09-24 搜索路由补充：下表的 hosted `web_search` 拒绝规则仍适用于通用 API/Local 适配器，不能把模型目录或厂商名称当成执行方。独立 ChatGPT Web provider 另有严格的 Web-only 表示：只接纳当前观察到的、`tool_choice=auto` 的可选 live 声明，把搜索留给 ChatGPT 网页自身，并仅返回其可验证的公开来源；它不调用 Codex 搜索，也不返回伪造的 `web_search_call`。其他搜索约束在网页提交前拒绝。GLM-5.3 官方直连曾得到服务商托管搜索事件，GLM-5.3 Flash 的既有验收是 Codex 搜索；DeepSeek 官方 Responses 文档明确忽略 hosted `web_search`。这些路径分别验证，不为任一模型在全局或项目 TOML 关闭搜索。当前 Web 路径和不完整验收见[原生 Web 体验](../../web/docs/native-web-experience.md)。
+
 2026-09-14 当前首要任务：补齐本地模型的完整工具往返。所有陌生本地模型先用
 官方 TOML provider 建立直连基线，记录具体缺口后才做显式适配；同绑定有效失败
 无需重放。优先处理 Huihui Qwen3.8 的 MCP namespace、图片工具结果回传和搜索，

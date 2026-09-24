@@ -186,12 +186,12 @@ class ModelRouter:
                 if perf_counter() < self._web_bind_not_before:
                     raise RouterError("web_route_binding_throttled_no_retry")
                 self._web_bind_not_before = perf_counter() + 30.0
-                from operator_web_service import resolve_route
+                from operator_web_service import resolve_routes
                 try:
-                    route = await asyncio.to_thread(resolve_route, self.web_profile, expected)
+                    routes = await asyncio.to_thread(resolve_routes, self.web_profile, expected)
                 except Exception as exc:
                     raise RouterError("web_route_service_unavailable_no_retry") from exc
-                self._registry = self._registry.with_web_route(route)
+                self._registry = self._registry.with_web_routes(routes)
             return {"changed": changed, **expected, "inference_requests": 0,
                     "desktop_refreshed": False}
 

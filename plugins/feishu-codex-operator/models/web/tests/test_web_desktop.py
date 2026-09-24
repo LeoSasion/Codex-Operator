@@ -43,6 +43,10 @@ class WebDesktopTests(unittest.TestCase):
                 ('load_profile', lambda profile: (profile, {})),
                 ('route_preview', lambda profile: self.binding),
                 ('resolve_route', lambda profile, expected: self.route),
+                ('resolve_routes', lambda profile, expected: (self.route,)),
+                ('current_record', lambda profile: {'attempt': 'fixture'}),
+                ('state_path', lambda profile, record: profile),
+                ('session_snapshot', lambda state, record: (None, self.binding['session_sha256'])),
                 ('check_binding_files', lambda profile, expected: None)):
             mock = patch.object(desktop, name, side_effect=value)
             mock.start(); self.addCleanup(mock.stop)
@@ -88,6 +92,8 @@ class WebDesktopTests(unittest.TestCase):
         self.assertNotIn('model_catalog_json', current)
         self.assertNotIn('approval_policy', current)
         self.assertEqual(desktop.connect(self.profile, self.home)['reused'], True)
+        with patch.object(desktop, 'file_digest', return_value='new-source'):
+            self.assertTrue(desktop.connect(self.profile, self.home)['reused'])
         self.assertEqual(self.target.read_bytes(), registered)
         later = b'\r\n[projects."C:/unrelated"]\r\ntrust_level="trusted"\r\n'
         self.target.write_bytes(registered + later)
@@ -98,6 +104,59 @@ class WebDesktopTests(unittest.TestCase):
         self.assertFalse(report['desktop_acceptance'])
         self.assertIn(first['provider'], current['model_providers'])
         self.assertNotIn('profiles', current)
+
+    def test_explicit_rebind_keeps_provider_and_restores_original_after_service_restart(self):
+        self.prepare(); desktop.connect(self.profile, self.home)
+        old_folder, old_plan, old_files, _ = desktop.load_trial(self.profile, self.home)
+        old_registered = self.target.read_bytes()
+        later = b'\n# later owner comment\n'
+        self.target.write_bytes(old_registered + later)
+        self.binding = {'profile_sha256': self.binding['profile_sha256'],
+            'session_sha256': 'b' * 64}
+        self.route = replace(self.route, api_base='http://127.0.0.1:54322/v1',
+            web_binding=WebServiceBinding(**self.binding, token='new-private-local-token'))
+        status = desktop.status(self.profile, self.home)
+        self.assertEqual(status['status'], 'stale')
+        self.assertEqual(status['reason'], 'service_generation_changed')
+        report = desktop.rebind(self.profile, self.home)
+        self.assertEqual(report['status'], 'connected')
+        self.assertTrue(report['live_desktop_adoption_unverified'])
+        self.assertEqual(report['provider'], old_plan['provider'])
+        current_folder, plan, files, _ = desktop.load_trial(self.profile, self.home)
+        self.assertNotEqual(current_folder, old_folder)
+        self.assertEqual(plan['rebind_from'], old_folder.name)
+        self.assertEqual((current_folder / 'before-rebind.toml').read_bytes(), old_registered + later)
+        self.assertEqual(old_files['addition.toml'], (old_folder / 'addition.toml').read_bytes())
+        self.assertEqual(desktop.parse(self.target.read_bytes())['model_providers'][plan['provider']]['base_url'],
+            self.route.api_base)
+        self.assertNotIn(b'private-local-test-token', self.target.read_bytes())
+        self.assertTrue(desktop.rebind(self.profile, self.home)['reused'])
+        self.assertEqual(desktop.status(self.profile, self.home)['status'], 'connected')
+        desktop.disconnect(self.profile, self.home)
+        self.assertEqual(self.target.read_bytes(), self.original + later)
+
+    def test_rebind_rejects_modified_owned_block_or_uncertain_transaction(self):
+        self.prepare(); desktop.connect(self.profile, self.home)
+        self.binding = {'profile_sha256': self.binding['profile_sha256'],
+            'session_sha256': 'b' * 64}
+        self.route = replace(self.route, api_base='http://127.0.0.1:54322/v1',
+            web_binding=WebServiceBinding(**self.binding, token='new-private-local-token'))
+        changed = self.target.read_bytes().replace(b'request_max_retries = 0', b'request_max_retries = 3')
+        self.target.write_bytes(changed)
+        with self.assertRaisesRegex(ValueError, 'config_changed'):
+            desktop.rebind(self.profile, self.home)
+        self.assertEqual(self.target.read_bytes(), changed)
+        self.assertFalse((self.profile / 'desktop/rebind.json').exists())
+        self.target.write_bytes(changed.replace(b'request_max_retries = 3', b'request_max_retries = 0'))
+        with patch.object(desktop, 'replace_config', side_effect=OSError('interrupted')):
+            with self.assertRaises(OSError): desktop.rebind(self.profile, self.home)
+        self.assertEqual(desktop.status(self.profile, self.home)['status'], 'changed')
+        with self.assertRaisesRegex(ValueError, 'rebind_uncertain'):
+            desktop.rebind(self.profile, self.home)
+        self.binding = {'profile_sha256': self.binding['profile_sha256'],
+            'session_sha256': 'a' * 64}
+        with self.assertRaisesRegex(ValueError, 'rebind_uncertain'):
+            desktop.rebind(self.profile, self.home)
 
     def test_changed_snapshot_stops_connect_without_overwriting_user_bytes(self):
         self.prepare()
@@ -117,7 +176,7 @@ class WebDesktopTests(unittest.TestCase):
 
     def test_stale_service_or_changed_source_stops_before_connect(self):
         self.prepare()
-        with patch.object(desktop, 'resolve_route', side_effect=ValueError('stale')):
+        with patch.object(desktop, 'resolve_routes', side_effect=ValueError('stale')):
             with self.assertRaises(ValueError): desktop.connect(self.profile, self.home)
             with self.assertRaises(ValueError): self.prepare()
         with patch.object(desktop, 'file_digest', return_value='changed'):

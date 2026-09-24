@@ -58,7 +58,7 @@ Codex-Operator · Windows preview
   codex-operator.ps1 channels user-tasks-configure -GrantFile <saved owner grant>
   codex-operator.ps1 channels user-tasks-status|user-tasks-revoke
   codex-operator.ps1 models web configure|start|status|assist|inspect|stop
-  codex-operator.ps1 models web desktop-prepare|desktop-connect|desktop-status|desktop-check|desktop-disconnect
+  codex-operator.ps1 models web desktop-prepare|desktop-connect|desktop-rebind|desktop-status|desktop-check|desktop-disconnect
   codex-operator.ps1 models <router action> --state-dir <absolute private directory>
   codex-operator.ps1 uninstall [reviewed product-removal arguments]
 Use -ProjectRoot to select the Codex project. Modules are configured independently.

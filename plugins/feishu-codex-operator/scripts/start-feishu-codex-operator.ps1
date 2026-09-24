@@ -178,6 +178,8 @@ function Assert-OperatorRuntimeManifest {
         'operator_core/beeper_provider.py',
         'operator_core/beeper_model_catalog.json',
         'operator_core/model_registry.py',
+        'operator_core/web_model_catalog.py',
+        'operator_core/web_model_catalog.json',
         'operator_core/responses_capabilities.py',
         'operator_core/responses_tool_adapter.py',
         'operator_core/responses_events.py',

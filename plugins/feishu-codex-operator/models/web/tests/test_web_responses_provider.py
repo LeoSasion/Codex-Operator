@@ -185,7 +185,7 @@ class WebResponsesProviderTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await response.json())['error']['cause_http_status'], 503)
                 error = (await response.json())['error']
                 self.assertEqual(error['code'], 'web_browser_assistance_pending_before_dispatch')
-                self.assertIn('主动打开 Operator 辅助窗口', error['message'])
+                self.assertIn('先查看当前准确页面', error['message'])
             self.assertFalse(provider.bridge.admitted)
             provider.admission_state = 'ready'
             await asyncio.sleep(0)
@@ -485,6 +485,129 @@ class WebResponsesProviderTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn('transport', error)
         self.assertEqual(calls, [])
         self.assertEqual(provider.bridge.turn_sequence, 0)
+
+    async def test_live_hosted_search_is_bound_only_to_web_page_search(self):
+        observed = []
+        async def browser(turn):
+            observed.append(turn.begin(turn.key))
+            return message(['Web page answer with its own search'])
+        provider, url, headers = await self.create_provider(browser)
+        payload = self.payload('web-page-search', stream=False)
+        payload['tools'].append({'type': 'web_search', 'external_web_access': True,
+            'search_content_types': ['text', 'image']})
+        original = json.dumps(payload, ensure_ascii=False)
+        async with ClientSession(headers=headers) as client:
+            async with client.post(url + '/responses', json=payload) as response:
+                self.assertEqual(response.status, 200)
+                output = await response.json()
+            async with client.get('http://' + provider.host + '/health') as response:
+                transport = (await response.json())['transport']
+        self.assertEqual(json.dumps(payload, ensure_ascii=False), original)
+        self.assertEqual(len(observed), 1)
+        self.assertEqual([tool['name'] for tool in observed[0]['request']['tools']], ['inspect'])
+        self.assertNotIn('web_search', json.dumps(observed))
+        self.assertEqual([item['type'] for item in output['output']], ['message'])
+        self.assertNotIn('web_search_call', json.dumps(output))
+        self.assertEqual(transport['last_turn']['search_route'], 'web_page_auto_v1')
+        self.assertEqual(transport['last_turn']['calls_released'], 0)
+
+    async def test_web_page_search_rejects_unmapped_hosted_constraints_before_dispatch(self):
+        observed = []
+        async def browser(turn):
+            observed.append(turn)
+            return message()
+        provider, url, headers = await self.create_provider(browser)
+        live = {'type': 'web_search', 'external_web_access': True}
+        cases = [
+            [{'type': 'web_search', 'external_web_access': False}],
+            [{**live, 'indexed_web_access': True}],
+            [{**live, 'filters': {'allowed_domains': ['example.com']}}],
+            [{**live, 'user_location': {'country': 'US'}}],
+            [{**live, 'search_context_size': 'high'}],
+            [{**live, 'search_content_types': ['image']}],
+            [live, live],
+        ]
+        async with ClientSession(headers=headers) as client:
+            for index, search in enumerate(cases):
+                payload = self.payload('search-rejected-' + str(index))
+                payload['tools'] += search
+                async with client.post(url + '/responses', json=payload) as response:
+                    self.assertEqual(response.status, 400)
+                    error = (await response.json())['error']
+                self.assertEqual(error['code'], 'unsupported_tool_type')
+                self.assertIs(error['retryable'], False)
+            payload = self.payload('search-required')
+            payload['tools'].append(live)
+            payload['tool_choice'] = 'required'
+            async with client.post(url + '/responses', json=payload) as response:
+                self.assertEqual(response.status, 400)
+                self.assertEqual((await response.json())['error']['code'], 'unsupported_tool_type')
+        self.assertEqual(observed, [])
+        self.assertEqual(provider.bridge.turn_sequence, 0)
+
+    async def test_web_page_search_binding_cannot_change_during_native_tool_return(self):
+        delivered = []
+        async def browser(turn):
+            turn.begin(turn.key)
+            delivered.append(await turn.invoke(turn.key, 1, 'inspect', {'value': 'fixture'}))
+            return message()
+        provider, url, headers = await self.create_provider(browser)
+        search = {'type': 'web_search', 'external_web_access': True,
+            'search_content_types': ['text', 'image']}
+        cases = {
+            'removed': [FUNCTION],
+            'content_types': [FUNCTION, {**search, 'search_content_types': ['text']}],
+            'absent_content_types': [FUNCTION, {'type': 'web_search', 'external_web_access': True}],
+            'position': [search, FUNCTION],
+        }
+        async with ClientSession(headers=headers) as client:
+            for name, tools in cases.items():
+                with self.subTest(change=name):
+                    payload = self.payload('search-binding-' + name, stream=False)
+                    payload['tools'].append(search)
+                    async with client.post(url + '/responses', json=payload) as response:
+                        self.assertEqual(response.status, 200)
+                        call = (await response.json())['output'][0]
+                    payload['tools'] = tools
+                    payload['input'] += [call, {'type': 'function_call_output',
+                        'call_id': call['call_id'], 'output': 'fixture result'}]
+                    async with client.post(url + '/responses', json=payload) as response:
+                        self.assertEqual(response.status, 400)
+                        error = (await response.json())['error']
+                    self.assertEqual(error['code'], 'web_mcp_request_binding_changed')
+                    self.assertEqual(provider.bridge.last_turn['results_received'], 0)
+                    self.assertNotIn('source_tool', json.dumps(error))
+                    self.assertNotIn('source_index', json.dumps(error))
+        self.assertEqual(delivered, [])
+        self.assertEqual(provider.bridge.turn_sequence, len(cases))
+
+    async def test_web_page_search_binding_allows_unchanged_tool_return(self):
+        delivered = []
+        async def browser(turn):
+            turn.begin(turn.key)
+            delivered.append(await turn.invoke(turn.key, 1, 'inspect', {'value': 'fixture'}))
+            return message(['search continuation complete'])
+        provider, url, headers = await self.create_provider(browser)
+        payload = self.payload('search-binding-unchanged', stream=False)
+        payload['tools'].append({'type': 'web_search', 'external_web_access': True,
+            'search_content_types': ['text', 'image']})
+        async with ClientSession(headers=headers) as client:
+            async with client.post(url + '/responses', json=payload) as response:
+                self.assertEqual(response.status, 200)
+                call = (await response.json())['output'][0]
+            # JSON object key order is not a declaration change.
+            payload['tools'][-1] = dict(reversed(list(payload['tools'][-1].items())))
+            result = {'type': 'function_call_output', 'call_id': call['call_id'],
+                'output': 'fixture result'}
+            payload['input'] += [call, result]
+            async with client.post(url + '/responses', json=payload) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual((await response.json())['output'][0]['content'][0]['text'],
+                    'search continuation complete')
+        self.assertEqual(delivered, [{'codex_function_result': result}])
+        self.assertEqual(provider.bridge.turn_sequence, 1)
+        self.assertEqual(provider.bridge.last_turn['search_route'], 'web_page_auto_v1')
+        self.assertNotIn('source_tool', json.dumps(provider.bridge.diagnostics()))
 
     async def test_opaque_history_guidance_does_not_dispatch_rewrite_or_expose_history(self):
         calls = []

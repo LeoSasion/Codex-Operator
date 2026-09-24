@@ -41,7 +41,7 @@ function Test-WebEntryAccessDenied($Record) {
 
 try {
     if ($Action -cnotin @('configure','start','status','assist','inspect','stop','recover','verify',
-            'desktop-prepare','desktop-connect','desktop-disconnect','desktop-status','desktop-check') -or
+            'desktop-prepare','desktop-connect','desktop-rebind','desktop-disconnect','desktop-status','desktop-check') -or
         ($Settings -and $Action -cne 'configure') -or
         ($PythonExecutable -and $Action -cne 'configure') -or
         ($ReplaceClosedBrowser -and $Action -cne 'assist') -or

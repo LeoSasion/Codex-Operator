@@ -1,9 +1,9 @@
 """Operator-owned Web protocol conversion, independent of any reference app.
 
 This module performs no network, browser, credential, process or tool execution.
-It is not registered by the router yet. A future authenticated transport must
-bind the actual browser document/model/turn before supplying public messages or
-completed structured calls. Page text can never declare or invoke a tool here.
+The authenticated transport binds the actual browser document/model/turn before
+supplying public messages or completed structured calls. Page text can never
+declare or invoke a tool here.
 """
 
 from copy import deepcopy
@@ -29,6 +29,11 @@ PUBLIC_CITATION_ERRORS = frozenset({
     'web_public_sources_footnote_mismatch', 'web_public_citation_text_mismatch',
     'web_public_citation_unmapped',
 })
+
+# ChatGPT's public reference metadata binds each citation to an exact text
+# span and source URL. Search/view IDs are opaque; a URL marker's trailing
+# value may instead be the exact URL of its bound public source.
+PUBLIC_CITATION_ID = r'[A-Za-z0-9_-]{1,128}'
 
 
 def render_public_citations(parts, references):
@@ -96,15 +101,29 @@ def render_public_citations(parts, references):
         if start == end:
             raise RouterError('web_public_citation_position_invalid')
         if kind == 'url':
-            marker = re.fullmatch(r'\ue200url\ue202([^\ue200\ue201\ue202]+)\ue202turn[0-9]+(?:search|view|news)[0-9]+\ue201', matched)
+            marker = re.fullmatch(r'\ue200url\ue202([^\ue200\ue201\ue202]+)\ue202'
+                r'([^\ue200\ue201\ue202]+)\ue201', matched)
             if marker is None or marker[1] != reference['title']:
                 raise RouterError('web_public_citation_marker_invalid')
             # The page's displayed label and source title have distinct roles.
-            # Validate both; render the exact label with the exact item URL.
+            # A URL-valued marker must match its validated source URL. The
+            # public page may append one observed ChatGPT attribution suffix
+            # to that source link; only that exact suffix may differ.
             source = links([reference['item']])[0]
+            source_urls = {source[1]}
+            head, fragment_separator, fragment = source[1].partition('#')
+            base, query_separator, query = head.partition('?')
+            attribution = 'utm_source=chatgpt.com'
+            if query_separator and query == attribution:
+                source_urls.add(base + fragment_separator + fragment)
+            elif query_separator and query.endswith('&' + attribution):
+                source_urls.add(head[:-len('&' + attribution)] + fragment_separator + fragment)
+            if not re.fullmatch(PUBLIC_CITATION_ID, marker[2]) and marker[2] not in source_urls:
+                raise RouterError('web_public_citation_marker_invalid')
             values = links([{'title': reference['title'], 'url': source[1]}])
         else:
-            if not re.fullmatch(r'\ue200cite\ue202turn[0-9]+(?:search|view|news)[0-9]+(?:\ue202turn[0-9]+(?:search|view|news)[0-9]+)*\ue201', matched):
+            if not re.fullmatch(r'\ue200cite\ue202' + PUBLIC_CITATION_ID
+                    + r'(?:\ue202' + PUBLIC_CITATION_ID + r')*\ue201', matched):
                 raise RouterError('web_public_citation_marker_invalid')
             values = links(reference['items'])
             cited.update((title, url) for title, url, _ in values)

@@ -52,8 +52,22 @@ class ProductOverviewTests(unittest.TestCase):
         self.assertEqual(list(self.root.rglob('*')), before)
 
     def configured(self):
-        for relative in ['.codex/feishu-codex-operator-runtime/runtime-manifest.json', '.codex/operator-web-service/profile.json']:
+        for relative in ['.codex/feishu-codex-operator-runtime/runtime-manifest.json',
+                '.codex/operator-installation/ownership.json', '.codex/operator-web-service/profile.json']:
             p = self.root / relative; p.parent.mkdir(parents=True, exist_ok=True); p.write_text('{}')
+
+    def test_stopped_legacy_runtime_without_ownership_requires_review(self):
+        self.configured()
+        (self.root / '.codex/operator-installation/ownership.json').unlink()
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        gates = dict.fromkeys(product.READINESS_GATES, False)
+        value = product.project_overview(self.root, self.home,
+            lambda *args: {'status': 'not_ready', 'ready': False, 'gates': gates})
+        channel = value['components']['channels']
+        self.assertEqual(channel['state'], 'needs_review')
+        self.assertIn('旧通道安装缺少归属记录', channel['summary'])
+        self.assertNotIn('install', channel['next_action'])
+        self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
 
     def test_ready_only_projects_fixed_status_not_private_output(self):
         self.configured()
@@ -69,6 +83,17 @@ class ProductOverviewTests(unittest.TestCase):
         self.assertEqual(value['components']['models']['state'], 'configured')
         self.assertEqual(value['components']['models']['registry_state'], 'not_configured')
         self.assertNotIn('PRIVATE', json.dumps(value))
+
+    def test_ready_web_service_with_stale_desktop_route_requests_rebind(self):
+        self.configured()
+        def inspect(p, scope, action):
+            if action == 'status':
+                return {'status': 'ready', 'active': False, 'configuration_current': True}
+            return {'status': 'stale', 'reason': 'service_generation_changed'}
+        value = product.project_overview(self.root, self.home, inspect)
+        web = value['components']['models']['providers']['web']
+        self.assertEqual(web['state'], 'needs_review')
+        self.assertEqual(web['next_action'], 'models web desktop-rebind')
 
     def test_changed_and_active_states_do_not_suggest_restart(self):
         self.configured()

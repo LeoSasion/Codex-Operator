@@ -107,6 +107,14 @@ class ModelRegistry:
         result.routes = {**self.routes, route.slug: route}
         return result
 
+    def with_web_routes(self, routes):
+        """Publish a complete service catalog atomically; retain old snapshots."""
+        result = copy(self)
+        result.routes = {slug: route for slug, route in self.routes.items() if route.web_binding is None}
+        for route in routes:
+            result = result.with_web_route(route)
+        return result
+
     @classmethod
     def load(cls, path: Path) -> "ModelRegistry":
         return cls(json.loads(path.read_text(encoding="utf-8")), json.loads(

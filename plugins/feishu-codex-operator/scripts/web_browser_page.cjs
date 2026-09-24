@@ -2,7 +2,7 @@
 
 // These fixed page operations accept data only. No caller-supplied JavaScript,
 // authentication material, private reasoning or general DOM dump crosses out.
-function controls() {
+function controls(modelLabels = ["GPT-5.6 Sol"]) {
   const visible = e => !!e && e.getClientRects().length > 0;
   // The picker retains both panels and closing animations with layout boxes.
   // Inert/hidden panels are not usable controls, even when their bounds remain.
@@ -11,8 +11,8 @@ function controls() {
   const composer = document.querySelector('#prompt-textarea[contenteditable="true"]');
   const form = composer?.closest("form");
   const modelButtons = [...(form?.querySelectorAll('button[aria-haspopup="menu"][data-tone="neutral"],button[data-testid="model-switcher-dropdown-button"]') || [])].filter(visible);
-  const chooser = [...document.querySelectorAll('[role="menuitem"]')].filter(e => menuVisible(e) && e.getAttribute("aria-label") === "选择模型");
-  const options = [...document.querySelectorAll('[role="menuitemradio"]')].filter(e => menuVisible(e) && e.textContent.trim() === "GPT-5.6 Sol");
+  const chooser = [...document.querySelectorAll('[role="menuitem"]')].filter(e => menuVisible(e) && ["选择模型", "Choose model"].includes(e.getAttribute("aria-label")));
+  const options = [...document.querySelectorAll('[role="menuitemradio"]')].filter(e => menuVisible(e) && modelLabels.includes(e.textContent.trim()));
   const send = form?.querySelector('[data-testid="send-button"]');
   const modelControl = modelButtons.length === 1 ? modelButtons[0] : null;
   const modelPropsKey = modelControl && Object.keys(modelControl).find(k => k.startsWith("__reactProps$"));
@@ -149,14 +149,14 @@ function composerFocused() {
 function clickModelChooser() {
   const found = [...document.querySelectorAll('[role="menuitem"]')].filter(e => e.getClientRects().length
     && !e.closest('[hidden],[inert],[aria-hidden="true"],[role="menu"][data-state="closed"]')
-    && e.getAttribute("aria-label") === "选择模型");
+    && ["选择模型", "Choose model"].includes(e.getAttribute("aria-label")));
   if (found.length !== 1) throw new Error("web_model_chooser_ambiguous");
   found[0].click();
 }
-function chooseSol() {
+function chooseModel(modelLabels) {
   const found = [...document.querySelectorAll('[role="menuitemradio"]')].filter(e => e.getClientRects().length
     && !e.closest('[hidden],[inert],[aria-hidden="true"],[role="menu"][data-state="closed"]')
-    && e.textContent.trim() === "GPT-5.6 Sol");
+    && modelLabels.includes(e.textContent.trim()));
   if (found.length !== 1) throw new Error("web_model_option_ambiguous");
   found[0].click();
 }
@@ -168,7 +168,21 @@ function effortState() {
   if (sliders.length !== 1) return null;
   const values = ["aria-valuemin", "aria-valuemax", "aria-valuenow"].map(k => sliders[0].getAttribute(k));
   if (values.some(v => !/^[0-4]$/.test(v || ""))) throw new Error("web_effort_shape_invalid");
-  return { min: Number(values[0]), max: Number(values[1]), value: Number(values[2]) };
+  const control = sliders[0].closest('[role="menuitem"]');
+  const descriptions = (control?.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
+    .slice(0, 4).map(id => document.getElementById(id)?.textContent || '');
+  const chooser = [...document.querySelectorAll('[role="menuitem"]')].filter(e => e.getClientRects().length
+    && !e.closest('[hidden],[inert],[aria-hidden="true"],[role="menu"][data-state="closed"]')
+    && ["选择模型", "Choose model"].includes(e.getAttribute('aria-label')));
+  // The current public slider announcement prefixes the effort with its
+  // generation (for example "5.6 极高" and "5.6 Pro"). Retain that prefix as
+  // separate evidence instead of treating the entire label as unknown.
+  const labels = descriptions.map(text => text.match(/^(?:(?:GPT-)?(5\.6|6)(?:\s*Sol)?\s*)?(即时|中|高|极高|Instant|Medium|High|Extra high|Pro)[，,]/)).filter(Boolean);
+  return { min: Number(values[0]), max: Number(values[1]), value: Number(values[2]),
+    label: labels.length === 1 ? labels[0][2] : null,
+    announcedGeneration: labels.length === 1 ? labels[0][1] || null : null,
+    generationLabel: chooser.length === 1 ? chooser[0].textContent.trim().slice(0, 64) : null,
+    locked: !!containers[0].querySelector('[data-locked="true"],[aria-disabled="true"]') };
 }
 function focusEffort() {
   const container = [...document.querySelectorAll('[data-model-reasoning-effort-slider]')].filter(e => e.getClientRects().length
@@ -268,7 +282,6 @@ function focusComposer(prefix = "") {
 function composerMatches(text, prefix = "", mention = null) {
   const composer = document.querySelector('#prompt-textarea[contenteditable="true"]');
   if (!composer || document.activeElement !== composer) return false;
-  if (mention == null) return prefix === "" && composer.innerText === text;
   const pills = composer.querySelectorAll('[data-inline-selection-pill]');
   const cursors = composer.querySelectorAll('[data-inline-selection-pill-cursor-target]');
   // The observed editor represents each inserted LF line as a direct P child,
@@ -282,6 +295,10 @@ function composerMatches(text, prefix = "", mention = null) {
       const breaks = p.querySelectorAll('br');
       return breaks.length === 0 || (breaks.length === 1 && p.textContent === '');
     });
+  // A plain multiline paste also becomes one P per source line. innerText can
+  // add layout breaks, so accept only the exact ordered paragraph structure.
+  if (mention == null) return prefix === '' && pills.length === 0 && cursors.length === 0
+    && (composer.innerText === text || exactParagraphs);
   return prefix === '\uFEFF' + mention.name + ' '
     && pills.length === 1 && cursors.length === 1
     && cursors[0].getAttribute('contenteditable') === 'false' && cursors[0].textContent === '\uFEFF'
@@ -554,8 +571,21 @@ function publicInterruptionState(connectorName = null) {
   if (connectorName !== null && (typeof connectorName !== 'string'
       || !/^[A-Za-z0-9\u3400-\u4dbf\u4e00-\u9fff][A-Za-z0-9\u3400-\u4dbf\u4e00-\u9fff -]{0,63}(?![\s\S])/.test(connectorName)))
     throw new Error('web_connector_name_invalid');
-  const visible = element => !!element && element.getClientRects().length > 0
-    && !element.closest('[hidden],[inert],[aria-hidden="true"]');
+  const visible = element => {
+    if (!element || !element.getClientRects().length
+        || element.closest('[hidden],[inert],[aria-hidden="true"],.sr-only,.visually-hidden,[data-testid="visually-hidden"]')) return false;
+    // Accessibility announcements can retain a layout rectangle. Only actual
+    // displayed UI may interrupt a turn; do not infer visibility from size.
+    // Computed visibility already includes inheritance and allows a visible
+    // descendant to override a hidden ancestor.
+    const visibility = getComputedStyle(element).visibility;
+    if (visibility === 'hidden' || visibility === 'collapse') return false;
+    for (let node = element; node; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.display === 'none' || style.contentVisibility === 'hidden') return false;
+    }
+    return true;
+  };
   const uiText = element => {
     // Only short rendered alerts/headings are inspected. Never export their
     // text, call arguments or arbitrary page content into diagnostics.
@@ -708,6 +738,6 @@ function publicCitationShape(committedView = false) {
   return { observations };
 }
 
-module.exports = { controls, freshChatControls, pluginMaintenanceReady, startFreshChat, enableTemporaryChat, currentPublicFiber, publicGenerationState, publicInterruptionState, inspectionSnapshot, focusModelMenu, clickModelChooser, chooseSol, effortState,
+module.exports = { controls, freshChatControls, pluginMaintenanceReady, startFreshChat, enableTemporaryChat, currentPublicFiber, publicGenerationState, publicInterruptionState, inspectionSnapshot, focusModelMenu, clickModelChooser, chooseModel, effortState,
   backgroundModelInput, backgroundMenuKey, composerFocused,
   focusEffort, connectorAccessState, connectorMenuChoice, selectedConnector, composerPrefix, focusComposer, composerMatches, sendOnce, cancelGeneration, publicFinal, publicMessageShape, publicUserBindingShape, publicCitationShape };

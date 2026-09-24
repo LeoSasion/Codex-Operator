@@ -315,6 +315,8 @@ function Write-RuntimeManifest {
         'operator_core/beeper_provider.py',
         'operator_core/beeper_model_catalog.json',
         'operator_core/model_registry.py',
+        'operator_core/web_model_catalog.py',
+        'operator_core/web_model_catalog.json',
         'operator_core/responses_capabilities.py',
         'operator_core/responses_tool_adapter.py',
         'operator_core/responses_events.py',
@@ -364,7 +366,7 @@ function Write-RuntimeManifest {
     }
     $manifest = [ordered]@{
         schema_version = 1
-        operator_version = '4.2.0-alpha.137'
+        operator_version = '4.2.0-alpha.138'
         public_entry = [ordered]@{
             path = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'codex-operator.ps1'))
             sha256 = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'codex-operator.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -420,6 +422,8 @@ if ($HooksOnly) {
     'operator_core\beeper_provider.py',
     'operator_core\beeper_model_catalog.json',
     'operator_core\model_registry.py',
+        'operator_core\web_model_catalog.py',
+        'operator_core\web_model_catalog.json',
     'operator_core\responses_capabilities.py',
     'operator_core\responses_tool_adapter.py',
     'operator_core\responses_events.py',
@@ -484,6 +488,6 @@ if (Test-Path -LiteralPath $health -PathType Leaf) {
     Remove-Item -LiteralPath $health -Force
 }
 
-Write-Output "Installed Feishu Codex Operator 4.2.0-alpha.137 into $runtime"
+Write-Output "Installed Feishu Codex Operator 4.2.0-alpha.138 into $runtime"
 Write-Output 'The Operator remains stopped. Configure the minimal Beeper UUID, register Final Callback routing, review Hooks in Desktop settings, then start it.'
 if (-not $SkipDesktopEntry) { Install-OperatorDesktopEntry -ProjectRoot $project | ConvertTo-Json }

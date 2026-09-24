@@ -10,7 +10,10 @@
 - [原生对话改进计划](models/web/docs/native-conversation-plan.md)：重点研究 Chat On Steroids，减少 Codex 原生对话中的点击、配置和中断；大方向改动先汇报。
 - [架构](shared/docs/architecture.md)：投递、回调、额度缓存与等待策略。
 - [命名](shared/docs/terminology.md)：Operator、Beeper、Responder、wake-up signal 与 wake lease。
+- [文件复盘与清理](development/docs/workspace-maintenance.md)：区分运行依赖、历史证据与可重建产物，按清单清理并保留经验。
 - [升级](upgrade-operator.md)：新命名切换与数据保留。
 - [初始化和安全卸载](shared/docs/installation-and-removal.md)：首次说明、入口备份、恢复冲突和卸载顺序。
 
 Beeper 只中继，Responder 执行业务，Operator 负责接收、路由和回传。
+
+Web 模型目录维护先读 [版本与推理档位契约](models/web/docs/web-model-catalog.md)。网页档位以当前可见菜单为准；Pro 单列，“最新”须核对明确代际标签。普通与 Pro 请求共享串行执行和已消费任务记录，不能通过换模型重试。目录准备、CLI 执行、Desktop 菜单与路由分别验收，不为增加菜单项自动恢复全局路由。
