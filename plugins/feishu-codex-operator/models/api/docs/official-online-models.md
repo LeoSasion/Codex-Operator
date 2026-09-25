@@ -48,7 +48,7 @@ Local-model follow-up on 2026-09-14: the Huihui endpoint's explicit standard
 function mode passed native search before and after registry reload. This changes
 only that local row; the online registrations remain unchanged. The observed exec
 name confusion and remaining Desktop/compaction gates are documented in the
-[local diagnosis](../../common/docs/model-router.md#local-exec-call-level-diagnosis-20260914).
+[local diagnosis](../../common/docs/model-router.md#local-exec-call-level-diagnosis-2026-09-14).
 
 These explicit registrations are development candidates for the existing
 Responses adapter. They are packaged source assets, never automatically copied

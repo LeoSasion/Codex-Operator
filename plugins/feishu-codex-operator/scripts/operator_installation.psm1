@@ -145,6 +145,17 @@ function Set-OperatorManagedFile {
         if ($state.entries.Contains($Path)) {
             $row = $state.entries[$Path]
             if ($row.status -eq 'restored') { throw 'Previously uninstalled integration requires an explicit fresh setup.' }
+            if ($row.before -cnotmatch '^(absent|[a-f0-9]{64})$' -or
+                $row.after -cnotmatch '^[a-f0-9]{64}$' -or
+                $row.status -notin @('pending','installed')) {
+                throw 'Invalid ownership record.'
+            }
+            if ($row.before -ne 'absent') {
+                $backup = Join-Path $ProjectRoot ('.codex/operator-installation/originals/' + $row.before + '.bin')
+                if ((Get-OperatorFingerprint $backup) -cne $row.before) {
+                    throw 'Original backup verification failed.'
+                }
+            }
             if ($current -cne $row.after -and -not ($row.status -eq 'pending' -and $current -ceq $row.previous)) {
                 throw 'Managed file changed after installation; preserved for review.'
             }

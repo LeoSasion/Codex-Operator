@@ -2,6 +2,48 @@
 
 This is a Windows preview, not a claim of production stability or support for every IM/model.
 
+The entries below are dated observations, not a live status dashboard. Test
+counts refer to their individual runs; the current source must be checked with
+the [test instructions](testing.md). A later source-only pass never changes an
+earlier live-task result or proves that installed services were updated.
+
+2026-09-25 final source gate: the complete suite passed 925 Python cases
+(915 passed, 10 existing skips) and all 103 Node checks. After an explicit,
+backed-up legacy runtime migration of 20 code files, the current Channels
+source completed one exact Feishu user-to-bot reply: one inbox attempt and
+the expected bound task's final callback closed. This verifies that existing
+user's route, not first contact from another account. The current Web source
+remains fail-closed before browser dispatch because the managed effort slider
+is under `aria-hidden`; that attempt made zero browser dispatches and zero MCP
+calls. Current Web coding and live main-window acceptance remain unverified;
+the earlier successful cases below are historical evidence, not a pass for
+this source.
+
+2026-09-25 source verification: the complete suite passed 910 Python cases
+(900 passed, 10 skips) with Python 3.14.3 and aiohttp 3.14.3, and all 94 Node
+checks with Node 24.14.0. Eight skips require an explicitly enabled current
+Desktop CLI fixture; two Windows reparse-point subcases could not create a
+symbolic link without the required host privilege. A first attempt with a
+system interpreter missing aiohttp failed import and isolated-install checks;
+the dependency-equipped interpreter produced the passing complete run. The
+179-file inventory, five reviewed-document digests, source syntax and content
+screen passed. This is source-only evidence: the saved Web service still needs
+a reviewed update to the current source, and fresh Desktop and Feishu turns
+must be checked separately.
+
+2026-09-24 source follow-up: fixed a private-chat sender-ID mismatch in the
+secondary name lookup, the public Web `tools/list` check against its actual
+structured declaration, and direct model-registry CLI writes that could miss
+the installed Operator's running processes or pending callbacks. Disposable
+first-contact and failure-path cases cover the affected boundaries. The complete
+run passed 906 Python cases (896 passed, 10 existing skips), all 94 Node checks,
+the 179-file inventory/syntax audit and whitespace checks. Read-only live status
+still found the saved Web service ready/idle but bound to an older source digest;
+the native default remains official direct. A fresh native App Server confirmed
+the Web provider registration with zero model requests, but its model is not in
+the picker list and running Desktop acceptance remains unverified. No installed
+service, real Feishu task, or model request was changed for this source follow-up.
+
 2026-09-24 bounded Web cleanup: tool-result continuations now bind the complete original hosted-search declaration and its source position, including absent versus explicit fields. Citation attribution compatibility is limited to an actual final query parameter; path, fragment and query-value lookalikes are rejected. Public interruption checks exclude explicitly hidden accessibility announcements and CSS-hidden surfaces while retaining real visible alerts. A final CSS-inheritance review preserves an explicitly visible descendant of a visibility-hidden ancestor; all 94 Node checks passed again, and the final service refresh made no model request. The browser preparation race keeps its fixed readiness code, and both assistance paths first require current-page inspection. Shared user-binding diagnostics now use one bounded whitelist; lifecycle ownership remains separate.
 
 The complete regression passed 883 Python cases (873 passed, 10 existing skips), all 94 Node checks, the 184-file inventory/syntax audit and a 189-file content-screened source collection. One initial focused fixture failed because its synthetic session lacked background mode; it was corrected before the complete run. Current guidance and plans were reduced from 38,325 to 14,360 bytes; exact original documents and hashes are retained privately under the Web module, with unique dated events consolidated into the history index. No private transcript, credential or recovery original was deleted. Similar acceptance programs had distinct inputs/receipts and were retained. The older 2026-09-20 test-count discrepancy is documented, not silently resolved without its raw output.
@@ -184,4 +226,9 @@ The 2026-09-20 saved-entry reuse and diagnostic improvements passed 39 focused c
 
 Known failures remain: occasional Web cold-page timeout, long-context/task-selection failures, and global-routing request-size/retry concerns. Official native direct routing is retained. Preview scope explicitly defers stability work without removing permissions, capacity limits or no-replay boundaries.
 
-The public package uses reviewed public documentation in place of four private development journals and the development-heavy plugin README. Implementation source bytes are preserved. Personal accounts, credentials, browser profiles, runtime databases, private evidence and task histories are not included. Raw private evidence remains local.
+The public package includes five reviewed documents at their original source
+paths, including this audit and the plugin README. The release inventory binds
+their reviewed SHA-256 digests, and the builder screens the complete allowlisted
+source before packaging without substituting document copies. Personal accounts,
+credentials, browser profiles, runtime databases, private evidence and task
+histories are not included. Raw private evidence remains local.

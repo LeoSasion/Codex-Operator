@@ -287,6 +287,33 @@ raise SystemExit(1)
         self.assertNotIn('DO_NOT_RETAIN', json.dumps(base.status()))
         self.assertNotIn('DO_NOT_RETAIN', json.dumps(driver.status()))
 
+    async def test_failed_effort_range_diagnostic_retains_only_fixed_shape(self):
+        base = WebTextBrowserDriver({**self.settings, 'window_mode': 'background'},
+            self.root / 'effort-range-diagnostic')
+        session = WebBrowserSession(base)
+        self.addAsyncCleanup(session.close)
+        value = {'kind': 'effort_range_unavailable', 'stage': 'select_effort',
+            'containerCount': 'one', 'sliderCount': 'one', 'statePresent': 'yes',
+            'newContainerTotal': 'one', 'newContainerVisible': 'one',
+            'min': 0, 'max': 5, 'now': 4, 'locked': 'yes',
+            'globalSliderTotal': 'one', 'globalSliderVisible': 'one',
+            'globalMin': 0, 'globalMax': 5, 'globalNow': 4,
+            'globalSliderRect': 'yes', 'globalSliderHidden': 'no',
+            'globalSliderInert': 'no', 'globalSliderAriaHidden': 'no',
+            'globalSliderClosedMenu': 'no', 'globalSliderInNewContainer': 'yes',
+            'ownerMenuitem': 'yes', 'ownerMenu': 'yes', 'sameMenuAsChooser': 'yes',
+            'generationMatches': 'yes', 'proLabel': 'yes', 'proHeader': 'yes',
+            'private': 'DO_NOT_RETAIN'}
+        session.event(value, {})
+        event = base.events[-1]
+        self.assertEqual(event['kind'], 'effort_range_unavailable')
+        self.assertEqual(event['max'], 5)
+        self.assertEqual(event['locked'], 'yes')
+        self.assertNotIn('DO_NOT_RETAIN', json.dumps(base.status()))
+        with self.assertRaisesRegex(ValueError, 'web_effort_range_diagnostic_invalid'):
+            session.event({**value, 'max': 'PRIVATE PAGE TEXT'}, {})
+        self.assertEqual(len(base.events), 1)
+
     async def test_bound_and_forced_call_reject_before_process_and_retain_json(self):
         request = self.payload()
         request['instructions'] = 'spaces  \n中文'

@@ -18,8 +18,10 @@ from dataclasses import replace
 import json
 import os
 import re
+import shutil
 import sqlite3
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import threading
@@ -229,6 +231,118 @@ class PerformanceTests(unittest.TestCase):
             self.assertEqual("closed", client.callbacks.submit(request, "late")["state"])
             self.assertIsNone(client.callbacks.settle(request))
             client.close()
+
+    def test_authorized_first_contact_registration_callback_and_uncertain_setup_offline(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch.dict(os.environ, {"CODEX_OPERATOR_PROJECT_ROOT": str(root)}, clear=True):
+                config = load_config()
+            config = replace(config, owner_open_id="ou_owner", beeper_thread_id=BEEPER_ID,
+                allowed_user_open_ids=frozenset({"ou_guest", "ou_uncertain"}),
+                download_resources=False, codex_executable=str(root / "codex.exe"))
+            runtime = OperatorRuntime(config, "fake-lark")
+            runtime.bot_open_id = "ou_bot"
+            runtime.relay._codex_executable = root / "codex.exe"
+            runtime.relay._lifecycle_observer = None
+            runtime.relay._wake_signal_sender = lambda _: None
+            runtime.rate_limits._reader = lambda: parse_account_rate_limits(result_for(used=1))
+            runtime.rate_limits.prime()
+            project = root / "native-project"
+            project.mkdir()
+            configure_user_tasks(config.runtime_dir, dict(status="granted", project_registered=True,
+                allow_fixed_relay_task=True, scope="authorized_private_users", channel="Feishu",
+                app_id="cli_synthetic", bot_open_id="ou_bot",
+                project_id="11111111-1111-4111-8111-111111111111", project_path=str(project),
+                allow_create_project=True, allow_create_user_tasks=True, allow_reuse_user_tasks=True,
+                fixed_relay_creation={"status": "created", "thread_id": BEEPER_ID}),
+                executable=root / "codex.exe")
+
+            native_task = {}
+            native_reads, setup_calls, business_calls, delivered = [], [], [], []
+            current_event = ""
+
+            class NativeMetadata:
+                def __init__(self, *_args, **_kwargs): pass
+                def __enter__(self): return self
+                def __exit__(self, *_args): pass
+                def request(self, method, args):
+                    native_reads.append((method, args))
+                    if native_task.get("id") != RESPONDER_ID:
+                        raise AssertionError("native task not created before metadata read")
+                    if method == "thread/list":
+                        return {"data": [native_task]}
+                    if method == "thread/read":
+                        return {"thread": native_task}
+                    raise AssertionError(method)
+
+            def setup(request_id):
+                setup_calls.append(request_id)
+                if len(setup_calls) > 1:
+                    raise TimeoutError("synthetic native creation outcome unknown")
+                job, profile = UserTaskStore(config.runtime_dir).take(request_id)
+                self.assertEqual(profile["app_id"], "cli_synthetic")
+                self.assertEqual(job["display_name"], "阿青")
+                native_task.update(id=RESPONDER_ID, cwd=str(project), turns=[], createdAt=time.time())
+                (project / RECEIPT_DIR / (request_id + ".json")).write_text(json.dumps(
+                    dict(request_id=request_id, thread_id=RESPONDER_ID, host_id="local")), encoding="utf-8")
+            runtime.relay.queue_user_task_setup = setup
+
+            def queue(_args, **_kwargs):
+                business_calls.append(current_event)
+                self.assertEqual(runtime.sessions.get("p2p:guest-chat")["thread_id"], RESPONDER_ID)
+                request_id = runtime.relay.request_id(current_event)
+                payload = runtime.relay.callbacks.take_relay(request_id)
+                self.assertEqual(payload["threadId"], RESPONDER_ID)
+                self.assertIn("请回答 😀", payload["prompt"])
+                runtime.relay.callbacks.submit(request_id, "精确回复 ✅")
+                return SimpleNamespace(returncode=0)
+            runtime.relay._runner = queue
+
+            def reply(_cli, event, answer, *_args, **_kwargs):
+                delivered.append((event["event_id"], answer))
+                return lark.ReplyResult(True)
+
+            def settle():
+                deadline = time.monotonic() + 5
+                while runtime._scheduled and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertFalse(runtime._scheduled)
+
+            def event(event_id, user_id="ou_guest", chat_id="guest-chat"):
+                return dict(event_id=event_id, message_id="message-" + event_id,
+                    chat_id=chat_id, chat_type="p2p", sender_id=user_id,
+                    sender_name="阿青" if user_id == "ou_guest" else "另一个用户",
+                    message_type="text", content="请回答 😀")
+
+            try:
+                with patch("operator_core.user_tasks.AppServerSession", NativeMetadata), \
+                     patch.object(runtime_module, "reply_to_message", side_effect=reply), \
+                     patch.object(lark, "run_command", side_effect=AssertionError("unexpected external CLI")):
+                    current_event = "first-contact"
+                    runtime.intake(event(current_event)); settle()
+                    runtime.intake(event(current_event)); settle()
+                    self.assertEqual(runtime.sessions.get("p2p:guest-chat")["thread_id"], RESPONDER_ID)
+                    current_event = "followup"
+                    runtime.intake(event(current_event)); settle()
+                    current_event = "uncertain"
+                    runtime.intake(event(current_event, "ou_uncertain", "uncertain-chat")); settle()
+                    current_event = "uncertain-followup"
+                    runtime.intake(event(current_event, "ou_uncertain", "uncertain-chat")); settle()
+                self.assertEqual(len(setup_calls), 2)
+                self.assertEqual(business_calls, ["first-contact", "followup"])
+                self.assertEqual(delivered[:2], [("first-contact", "精确回复 ✅"),
+                                                  ("followup", "精确回复 ✅")])
+                self.assertEqual([item[0] for item in delivered[2:]], ["uncertain", "uncertain-followup"])
+                self.assertTrue(all("不会重复新建" in item[1] for item in delivered[2:]))
+                self.assertEqual([method for method, _ in native_reads],
+                                 ["thread/list", "thread/read"])
+                self.assertEqual(UserTaskStore(config.runtime_dir).get(setup_calls[0])["state"], "ready")
+                self.assertEqual(UserTaskStore(config.runtime_dir).get(setup_calls[1])["state"], "uncertain")
+                self.assertFalse(runtime.sessions.get("p2p:uncertain-chat").get("thread_id"))
+                self.assertEqual(runtime.relay.pending_count(), 0)
+            finally:
+                with patch.object(runtime, "write_health"):
+                    runtime.shutdown()
 
     def test_new_user_quota_gate_precedes_registration_and_failed_refresh_allows_new_event(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -508,6 +622,296 @@ class PerformanceTests(unittest.TestCase):
                     cleanup.assert_not_called()
                 finally:
                     inbox.close()
+
+    def test_a_new_download_keeps_the_previous_failed_output_unchanged(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch.dict(os.environ, {"CODEX_OPERATOR_PROJECT_ROOT": str(root)}, clear=True):
+                config = replace(load_config(), download_resources=True)
+            calls = 0
+            outputs = []
+
+            def command(_cli, args, **_kwargs):
+                nonlocal calls
+                calls += 1
+                destination = (root / args[args.index("--output") + 1]).with_suffix(".png")
+                outputs.append(destination)
+                destination.write_bytes(b"old-file" if calls == 1 else b"new-file")
+                if calls == 1:
+                    old = time.time_ns() - 10_000_000_000
+                    os.utime(destination, ns=(old, old))
+                return SimpleNamespace(returncode=1 if calls == 1 else 0)
+
+            event = {"event_id": "event", "message_id": "message"}
+            with patch.object(lark, "_resource_refs", return_value=[("img_first", "image")]), \
+                 patch.object(lark, "run_command", side_effect=command):
+                inbox = lark.AttachmentInbox(config)
+                try:
+                    self.assertEqual([], lark.download_message_resources("fake", event, "scope", config, inbox=inbox))
+                    self.assertEqual(b"old-file", outputs[0].read_bytes())
+                    resources = lark.download_message_resources("fake", event, "scope", config, inbox=inbox)
+                    self.assertEqual(2, len(outputs))
+                    self.assertNotEqual(outputs[0], outputs[1])
+                    self.assertEqual(b"old-file", outputs[0].read_bytes())
+                    self.assertEqual([b"new-file"], [resource.path.read_bytes() for resource in resources])
+                    self.assertTrue(resources[0].path.is_relative_to(config.inbox_dir))
+                finally:
+                    inbox.close()
+
+    def test_exit_zero_without_a_new_attachment_does_not_reuse_a_failed_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch.dict(os.environ, {"CODEX_OPERATOR_PROJECT_ROOT": str(root)}, clear=True):
+                config = replace(load_config(), download_resources=True)
+            calls = 0
+            outputs = []
+
+            def command(_cli, args, **_kwargs):
+                nonlocal calls
+                calls += 1
+                destination = root / args[args.index("--output") + 1]
+                outputs.append(destination)
+                if calls == 1:
+                    destination.write_bytes(b"partial")
+                return SimpleNamespace(returncode=1 if calls == 1 else 0)
+
+            event = {"event_id": "event", "message_id": "message"}
+            with patch.object(lark, "_resource_refs", return_value=[("file_first", "file")]), \
+                 patch.object(lark, "run_command", side_effect=command):
+                inbox = lark.AttachmentInbox(config)
+                try:
+                    self.assertEqual([], lark.download_message_resources("fake", event, "scope", config, inbox=inbox))
+                    self.assertEqual([], lark.download_message_resources("fake", event, "scope", config, inbox=inbox))
+                    self.assertEqual(2, len(outputs))
+                    self.assertNotEqual(outputs[0], outputs[1])
+                    self.assertEqual(b"partial", outputs[0].read_bytes())
+                finally:
+                    inbox.close()
+
+    def test_attachment_download_rejects_a_day_directory_redirect_before_cli_write(self):
+        workspace = _OPERATOR_PLUGIN_ROOT.parents[1].resolve()
+        scratch = workspace / ".tmp"
+        scratch.mkdir(exist_ok=True)
+        if not scratch.resolve().is_relative_to(workspace):
+            self.fail("test scratch directory leaves the workspace")
+        with tempfile.TemporaryDirectory(dir=scratch, prefix="channel-link-test-") as temporary:
+            base = Path(temporary).resolve()
+            if not base.is_relative_to(workspace):
+                self.fail("test directory leaves the workspace")
+            project = base / "project"
+            outside = base / "outside"
+            project.mkdir()
+            outside.mkdir()
+            with patch.dict(os.environ, {"CODEX_OPERATOR_PROJECT_ROOT": str(project)}, clear=True):
+                config = replace(load_config(), download_resources=True)
+            scope = "scope"
+            day_parent = config.inbox_dir / lark.hashlib.sha256(scope.encode()).hexdigest()[:16]
+            day_parent.mkdir(parents=True)
+            day_link = day_parent / lark.datetime.now(lark.timezone.utc).strftime("%Y-%m-%d")
+            try:
+                day_link.symlink_to(outside, target_is_directory=True)
+            except OSError:
+                if os.name != "nt" or not (pwsh := shutil.which("pwsh")):
+                    self.skipTest("directory links are unavailable")
+                env = dict(os.environ, OPERATOR_TEST_LINK=str(day_link), OPERATOR_TEST_TARGET=str(outside))
+                created = subprocess.run(
+                    [pwsh, "-NoProfile", "-Command",
+                     "New-Item -ItemType Junction -Path $env:OPERATOR_TEST_LINK -Target $env:OPERATOR_TEST_TARGET | Out-Null"],
+                    env=env, capture_output=True, timeout=10, check=False,
+                )
+                if created.returncode != 0:
+                    self.skipTest("directory junctions are unavailable")
+
+            try:
+                calls = []
+
+                def command(_cli, args, **_kwargs):
+                    calls.append(args)
+                    (project / args[args.index("--output") + 1]).write_bytes(b"outside")
+                    return SimpleNamespace(returncode=0)
+
+                event = {"event_id": "event", "message_id": "message"}
+                with patch.object(lark, "_resource_refs", return_value=[("file_first", "file")]), \
+                     patch.object(lark, "run_command", side_effect=command):
+                    resources = lark.download_message_resources("fake", event, scope, config)
+                self.assertEqual([], resources)
+                self.assertEqual([], calls)
+                self.assertEqual([], list(outside.iterdir()))
+            finally:
+                day_link.rmdir()
+
+    def test_rejected_attachment_redirect_never_deletes_its_external_target(self):
+        workspace = _OPERATOR_PLUGIN_ROOT.parents[1].resolve()
+        scratch = workspace / ".tmp"
+        scratch.mkdir(exist_ok=True)
+        if not scratch.resolve().is_relative_to(workspace):
+            self.fail("test scratch directory leaves the workspace")
+        with tempfile.TemporaryDirectory(dir=scratch, prefix="channel-file-link-test-") as temporary:
+            base = Path(temporary).resolve()
+            project = base / "project"
+            project.mkdir()
+            outside = base / "outside.txt"
+            outside.write_bytes(b"must remain")
+            with patch.dict(os.environ, {"CODEX_OPERATOR_PROJECT_ROOT": str(project)}, clear=True):
+                config = replace(load_config(), download_resources=True)
+            outputs = []
+
+            def command(_cli, args, **_kwargs):
+                destination = project / args[args.index("--output") + 1]
+                outputs.append(destination)
+                destination.write_bytes(b"candidate entry")
+                return SimpleNamespace(returncode=0)
+
+            event = {"event_id": "event", "message_id": "message"}
+            original_resolve = Path.resolve
+
+            def redirected_resolve(path, *args, **kwargs):
+                # Reproduce a file symlink even on hosts without symlink rights.
+                if outputs and path == outputs[0]:
+                    return outside
+                return original_resolve(path, *args, **kwargs)
+
+            with patch.object(lark, "_resource_refs", return_value=[("file_first", "file")]), \
+                 patch.object(lark, "run_command", side_effect=command), \
+                 patch.object(Path, "resolve", redirected_resolve):
+                resources = lark.download_message_resources("fake", event, "scope", config)
+            self.assertEqual([], resources)
+            self.assertEqual(b"must remain", outside.read_bytes())
+            self.assertFalse(outputs[0].exists())
+
+    def test_attachment_download_does_not_overwrite_a_preexisting_external_hardlink(self):
+        workspace = _OPERATOR_PLUGIN_ROOT.parents[1].resolve()
+        scratch = workspace / ".tmp"
+        scratch.mkdir(exist_ok=True)
+        if not scratch.resolve().is_relative_to(workspace):
+            self.fail("test scratch directory leaves the workspace")
+        with tempfile.TemporaryDirectory(dir=scratch, prefix="channel-hardlink-test-") as temporary:
+            base = Path(temporary).resolve()
+            project = base / "project"
+            project.mkdir()
+            outside = base / "outside.txt"
+            outside.write_bytes(b"must remain")
+            with patch.dict(os.environ, {"CODEX_OPERATOR_PROJECT_ROOT": str(project)}, clear=True):
+                config = replace(load_config(), download_resources=True)
+            day = lark.datetime.now(lark.timezone.utc).strftime("%Y-%m-%d")
+            attachment_dir = config.inbox_dir / lark.hashlib.sha256(b"scope").hexdigest()[:16] / day
+            attachment_dir.mkdir(parents=True)
+            predictable_output = attachment_dir / (
+                "message-0-" + lark.hashlib.sha256(b"file_first").hexdigest()[:12]
+            )
+            try:
+                os.link(outside, predictable_output)
+            except OSError:
+                self.skipTest("file hardlinks are unavailable")
+            outputs = []
+
+            def command(_cli, args, **_kwargs):
+                destination = project / args[args.index("--output") + 1]
+                outputs.append(destination)
+                destination.write_bytes(b"downloaded")
+                return SimpleNamespace(returncode=0)
+
+            event = {"event_id": "event", "message_id": "message"}
+            with patch.object(lark, "_resource_refs", return_value=[("file_first", "file")]), \
+                 patch.object(lark, "run_command", side_effect=command):
+                resources = lark.download_message_resources("fake", event, "scope", config)
+            self.assertEqual(b"must remain", outside.read_bytes())
+            self.assertEqual([b"downloaded"], [resource.path.read_bytes() for resource in resources])
+            self.assertNotIn(predictable_output, outputs)
+
+            collision = attachment_dir / "message-0-collision"
+            os.link(outside, collision)
+            with patch.object(lark.secrets, "token_hex", return_value="collision"), \
+                 patch.object(lark, "_resource_refs", return_value=[("file_first", "file")]), \
+                 patch.object(lark, "run_command", side_effect=AssertionError("CLI must not write")):
+                self.assertEqual([], lark.download_message_resources("fake", event, "scope", config))
+            self.assertEqual(b"must remain", outside.read_bytes())
+
+            def linked_output(_cli, args, **_kwargs):
+                os.link(outside, project / args[args.index("--output") + 1])
+                return SimpleNamespace(returncode=0)
+
+            with patch.object(lark, "_resource_refs", return_value=[("file_first", "file")]), \
+                 patch.object(lark, "run_command", side_effect=linked_output):
+                self.assertEqual([], lark.download_message_resources("fake", event, "scope", config))
+            self.assertEqual(b"must remain", outside.read_bytes())
+
+    def test_existing_retained_attachment_cannot_substitute_different_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            with patch.dict(os.environ, {"CODEX_OPERATOR_PROJECT_ROOT": str(project)}, clear=True):
+                config = replace(load_config(), download_resources=True)
+            day = lark.datetime.now(lark.timezone.utc).strftime("%Y-%m-%d")
+            attachment_dir = config.inbox_dir / lark.hashlib.sha256(b"scope").hexdigest()[:16] / day
+            attachment_dir.mkdir(parents=True)
+            payload = b"downloaded"
+            retained = attachment_dir / lark.hashlib.sha256(payload).hexdigest()[:24]
+            retained.write_bytes(b"different!")
+
+            def command(_cli, args, **_kwargs):
+                (project / args[args.index("--output") + 1]).write_bytes(payload)
+                return SimpleNamespace(returncode=0)
+
+            event = {"event_id": "event", "message_id": "message"}
+            with patch.object(lark, "_resource_refs", return_value=[("file_first", "file")]), \
+                 patch.object(lark, "run_command", side_effect=command):
+                self.assertEqual([], lark.download_message_resources("fake", event, "scope", config))
+            self.assertEqual(b"different!", retained.read_bytes())
+
+            retained.unlink()
+            outside = project / "outside.txt"
+            outside.write_bytes(payload)
+            try:
+                os.link(outside, retained)
+            except OSError:
+                self.skipTest("file hardlinks are unavailable")
+            with patch.object(lark, "_resource_refs", return_value=[("file_first", "file")]), \
+                 patch.object(lark, "run_command", side_effect=command):
+                self.assertEqual([], lark.download_message_resources("fake", event, "scope", config))
+            self.assertEqual(payload, outside.read_bytes())
+
+    def test_inbox_maintenance_does_not_delete_redirected_files(self):
+        workspace = _OPERATOR_PLUGIN_ROOT.parents[1].resolve()
+        scratch = workspace / ".tmp"
+        scratch.mkdir(exist_ok=True)
+        if not scratch.resolve().is_relative_to(workspace):
+            self.fail("test scratch directory leaves the workspace")
+        with tempfile.TemporaryDirectory(dir=scratch, prefix="channel-cleanup-link-test-") as temporary:
+            base = Path(temporary).resolve()
+            project = base / "project"
+            outside = base / "outside"
+            project.mkdir()
+            outside.mkdir()
+            survivor = outside / "keep.txt"
+            survivor.write_bytes(b"must remain")
+            old = time.time() - 2 * 24 * 3600
+            os.utime(survivor, (old, old))
+            with patch.dict(os.environ, {"CODEX_OPERATOR_PROJECT_ROOT": str(project)}, clear=True):
+                config = replace(load_config(), resource_ttl_hours=1)
+            root = config.inbox_dir
+            root.parent.mkdir(parents=True)
+            try:
+                root.symlink_to(outside, target_is_directory=True)
+            except OSError:
+                if os.name != "nt" or not (pwsh := shutil.which("pwsh")):
+                    self.skipTest("directory links are unavailable")
+                env = dict(os.environ, OPERATOR_TEST_LINK=str(root), OPERATOR_TEST_TARGET=str(outside))
+                created = subprocess.run(
+                    [pwsh, "-NoProfile", "-Command",
+                     "New-Item -ItemType Junction -Path $env:OPERATOR_TEST_LINK -Target $env:OPERATOR_TEST_TARGET | Out-Null"],
+                    env=env, capture_output=True, timeout=10, check=False,
+                )
+                if created.returncode != 0:
+                    self.skipTest("directory junctions are unavailable")
+            try:
+                self.assertEqual(0, lark._inbox_bytes(config))
+                lark.cleanup_inbox(config)
+                self.assertEqual(b"must remain", survivor.read_bytes())
+            finally:
+                if root.is_symlink():
+                    root.unlink()
+                else:
+                    root.rmdir()
 
     def test_telemetry_contains_only_durations_and_outcome(self):
         with self.assertLogs("feishu-codex-operator", level="INFO") as logs:

@@ -21,14 +21,15 @@ ENUM_ENV_SPECS = {
     # byte-for-character at the Operator -> lark-cli argument boundary.
     # Markdown remains an explicit opt-in presentation transform.
     "CODEX_OPERATOR_REPLY_FORMAT": ("text", frozenset({"text", "markdown"})),
-    # Empty resolves to Luna/low. Spark, Luna, and the deterministic local
-    # Beeper remain explicit choices and never change Responder settings.
+    # Empty resolves to Luna/low. Onboarding offers Luna or the deterministic
+    # local Beeper; an explicit Spark setting is retained for old installations.
+    # Beeper selection never changes Responder settings.
     "CODEX_OPERATOR_BEEPER_MODEL": (
         "gpt-5.6-luna",
         frozenset({"", "beeper", "gpt-5.3-codex-spark", "gpt-5.6-luna"}),
     ),
-    # Low and high are bounded Spark-only diagnostics. Empty keeps the closed
-    # normal policy: Spark/medium or Luna/low.
+    # Low and high remain only for legacy Spark diagnostics. Empty keeps the
+    # selected model's policy (Luna/low or historical Spark/medium).
     "CODEX_OPERATOR_BEEPER_REASONING_EFFORT": (
         "",
         frozenset({"", "low", "high"}),

@@ -125,6 +125,46 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(self.ps('Restore-OperatorManagedFiles $p | Out-Null').returncode,0)
         self.assertFalse(self.target.exists())
 
+    @unittest.skipUnless(Path(r'C:\Windows\py.exe').is_file(), 'Windows Python launcher required')
+    def test_maintenance_entries_use_discovered_python_without_python_command(self):
+        env = {**os.environ, 'LOCALAPPDATA': str(self.project/'local-appdata'),
+               'CODEX_HOME': str(self.project/'user-config')}
+        (self.project/'user-config').mkdir()
+        config = self.project/'user-config/config.toml'
+        config.write_text('model="native-fixture"\n', encoding='utf-8')
+        installed = subprocess.run([PWSH, '-NoProfile', '-File',
+            str(ROOT/'scripts/install-feishu-codex-operator.ps1'), '-ProjectRoot',
+            str(self.project), '-SkipDesktopEntry'], env=env, capture_output=True,
+            text=True, encoding='utf-8', timeout=60)
+        self.assertEqual(installed.returncode, 0, installed.stdout+installed.stderr)
+        before = {p.relative_to(self.project): p.read_bytes()
+                  for p in self.project.rglob('*') if p.is_file()}
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1', 0))
+            port = listener.getsockname()[1]
+        env['PATH'] = r'C:\Windows\System32;C:\Windows'
+        self.assertIsNone(shutil.which('python', path=env['PATH']))
+        preview = subprocess.run([PWSH, '-NoProfile', '-File',
+            str(ROOT/'scripts/uninstall-feishu-codex-operator.ps1'), '-ProjectRoot',
+            str(self.project), '-CodexConfig', str(config), '-RouterPort', str(port)],
+            env=env, capture_output=True, text=True, encoding='utf-8', timeout=30)
+        self.assertEqual(preview.returncode, 0, preview.stdout+preview.stderr)
+        self.assertTrue(json.loads(preview.stdout)['ready'])
+        callback = subprocess.run([PWSH, '-NoProfile', '-File',
+            str(ROOT/'scripts/feishu-codex-operator.ps1'), 'operator',
+            'final-callback-status', '-ProjectRoot', str(self.project)],
+            env=env, capture_output=True, text=True, encoding='utf-8', timeout=30)
+        self.assertEqual(callback.returncode, 0, callback.stdout+callback.stderr)
+        self.assertTrue(json.loads(callback.stdout)['ok'])
+        user_tasks = subprocess.run([PWSH, '-NoProfile', '-File',
+            str(ROOT/'scripts/codex-operator.ps1'), 'channels',
+            'user-tasks-status', '-ProjectRoot', str(self.project)],
+            env=env, capture_output=True, text=True, encoding='utf-8', timeout=30)
+        self.assertEqual(user_tasks.returncode, 0, user_tasks.stdout+user_tasks.stderr)
+        self.assertEqual(json.loads(user_tasks.stdout), {'ok': True, 'enabled': False})
+        self.assertEqual(before, {p.relative_to(self.project): p.read_bytes()
+                                  for p in self.project.rglob('*') if p.is_file()})
+
     def test_user_edit_blocks_entire_restore(self):
         self.target.write_bytes(b'original'); self.assertEqual(self.write('managed').returncode,0)
         second=self.project/'.codex/hooks.json'
@@ -185,6 +225,8 @@ class OwnershipTests(unittest.TestCase):
         self.assertTrue(json.loads(preview.stdout)['ready']); self.assertTrue(runtime.exists())
         removed=subprocess.run([*command,'-Apply'],env=env,capture_output=True,text=True,encoding='utf-8',timeout=30)
         self.assertEqual(removed.returncode,0,removed.stdout+removed.stderr)
+        self.assertEqual(json.loads(removed.stdout)['tasks_replayed'], 0,
+                         'Safe uninstall must emit one machine-readable receipt')
         self.assertEqual(self.target.read_bytes(),b'User rules\r\n'); self.assertEqual(hooks.read_bytes(),existing)
         self.assertFalse(runtime.exists())
         archives=list((self.project/'.codex/operator-uninstalled').iterdir()); self.assertEqual(len(archives),1)

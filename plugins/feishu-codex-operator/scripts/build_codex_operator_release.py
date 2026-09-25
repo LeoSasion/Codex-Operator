@@ -10,13 +10,13 @@ import zipfile
 
 
 PLUGIN = PurePosixPath('plugins/feishu-codex-operator')
-PUBLIC_DOCS = {
-    'README.md': 'README.md',
-    'models/web/docs/native-web-experience.md': 'native-web-experience.md',
-    'models/web/docs/chatgpt-web-integration.md': 'chatgpt-web-integration.md',
-    'development/docs/release-audit.md': 'release-audit.md',
-    'development/docs/testing.md': 'tests-README.md',
-}
+REVIEWED_DOCS = frozenset((
+    'README.md',
+    'models/web/docs/native-web-experience.md',
+    'models/web/docs/chatgpt-web-integration.md',
+    'development/docs/release-audit.md',
+    'development/docs/testing.md',
+))
 EXTENSIONS = {'.md', '.json', '.py', '.ps1', '.psm1', '.cjs', '.cs', '.cmd', '.yaml', '.txt'}
 MAX_FILE = 2 * 1024 * 1024
 MAX_TOTAL = 32 * 1024 * 1024
@@ -83,12 +83,19 @@ def collect(root):
         raise ValueError('generated_inventory_path')
     data, provenance = {}, {}
     for relative in paths:
-        selected = relative
-        plugin_relative = relative.removeprefix(str(PLUGIN) + '/')
-        if relative.startswith(str(PLUGIN) + '/') and plugin_relative in PUBLIC_DOCS:
-            selected = str(PLUGIN / 'assets/public-docs' / PUBLIC_DOCS[plugin_relative])
-            provenance[relative] = selected
-        data[relative] = read_source(root, selected)
+        data[relative] = read_source(root, relative)
+    reviewed = inventory.get('reviewed_document_sha256')
+    if not isinstance(reviewed, dict) or set(reviewed) != REVIEWED_DOCS:
+        raise ValueError('reviewed_document_inventory')
+    for relative in REVIEWED_DOCS:
+        source = str(PLUGIN / relative)
+        if source not in data:
+            raise ValueError('reviewed_document_missing')
+        expected = reviewed[relative]
+        if (not isinstance(expected, str)
+                or not re.fullmatch(r'[0-9a-f]{64}', expected)
+                or hashlib.sha256(data[source].replace(b'\r\n', b'\n')).hexdigest() != expected):
+            raise ValueError('reviewed_document_changed:' + relative)
     # Distribution checks use this exact mirrored policy, never private root history.
     data['AGENTS.md'] = read_source(root, str(PLUGIN / 'assets/AGENTS.feishu-codex-operator.md'))
     provenance['AGENTS.md'] = str(PLUGIN / 'assets/AGENTS.feishu-codex-operator.md')
@@ -136,7 +143,8 @@ def build(root, output):
         stream.write(payload)
     receipt = {'product': 'Codex-Operator', 'version': version, 'files': len(data),
         'zip_sha256': hashlib.sha256(payload).hexdigest(), 'bytes': len(payload),
-        'public_document_overrides': len(PUBLIC_DOCS), 'content_screen': 'passed',
+        'public_document_overrides': 0, 'reviewed_documents': len(REVIEWED_DOCS),
+        'content_screen': 'passed',
         'published': False}
     with output.with_suffix('.receipt.json').open('x', encoding='utf8') as stream:
         json.dump(receipt, stream, ensure_ascii=False, indent=2)

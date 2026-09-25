@@ -295,6 +295,7 @@ function hostHarness(configOverride = {}) {
     }
     async executeJavaScript(source) {
       if (source.includes("function controls(")) return { ok: true, value: { ...fixture.state } };
+      if (source.includes("function startupControlStructure(")) return { ok: true, value: fixture.structure };
       if (source.includes("function composerPrefix(")) return { ok: true, value: fixture.draft };
       if (source.includes("function publicUserBindingShape("))
         return { ok: true, value: { exact: fixture.bindingExact !== false } };
@@ -415,6 +416,43 @@ test("persistent challenge and login redirect request assistance without consumi
       assert.equal(h.outputs.some(x => x.requestId || x.kind === 'dispatch_started'), false);
     } finally { h.cleanup(); }
   }
+});
+
+test("hidden preparation timeout reports only fixed readiness gates before failing", async () => {
+  const h = hostHarness({ startupPrepare: true });
+  h.fixture.state = { ...ready, modelButtonCount: 0, modelButtonLabels: ["PRIVATE PAGE TEXT"] };
+  h.fixture.structure = { readyState: "complete", legacyEditorCount: "one",
+    legacyEditorEditable: "no", legacyEditorRect: "yes", testIdEditorVisible: "one",
+    roleTextboxEditableVisible: "one", editableVisible: "one", textareaVisible: "zero",
+    globalModelTotal: "one", globalModelVisible: "one", editorFormExists: "yes",
+    accessibleModelCount: "one", accessibleModelSource: "aria_label",
+    accessibleModelTag: "button", accessibleModelInEditorForm: "no",
+    accessibleModelHaspopup: "menu", accessibleModelDisabled: "no" };
+  try {
+    await observed(h, () => h.outputs.some(x => x.kind === "worker_ready"));
+    h.advanceTime(65001);
+    await observed(h, () => h.outputs.some(x => x.kind === "failed"));
+    const check = h.outputs.find(x => x.kind === "startup_prepare_state");
+    assert.ok(check);
+    assert.equal(check.stage, "startup_prepare");
+    assert.equal(check.sent, false);
+    assert.equal(check.route, "temporary");
+    assert.equal(check.pageKind, "chatgpt");
+    assert.equal(check.composer, "yes");
+    assert.equal(check.modelControl, "zero");
+    const structure = h.outputs.find(x => x.kind === "startup_control_structure");
+    assert.ok(structure);
+    assert.equal(structure.legacyEditorEditable, "no");
+    assert.equal(structure.roleTextboxEditableVisible, "one");
+    assert.equal(structure.globalModelVisible, "one");
+    assert.equal(structure.accessibleModelCount, "one");
+    assert.equal(structure.accessibleModelInEditorForm, "no");
+    assert.equal(h.outputs.find(x => x.kind === "failed").error,
+      "web_startup_prepare_unavailable");
+    assert.equal(h.outputs.some(x => x.kind === "worker_prepared" || x.kind === "dispatch_started"
+      || x.requestId), false);
+    assert.equal(JSON.stringify(h.outputs).includes("PRIVATE PAGE TEXT"), false);
+  } finally { h.cleanup(); }
 });
 
 test("model network errors seal only tracked generation and preserve cancellation", async () => {
@@ -647,6 +685,33 @@ test("idle assistance uses its id, hides only on verified close, and never admit
     assert.equal(event.visible, false); assert.equal(event.focused, false); assert.equal(event.userClosed, true);
     assert.equal(h.context.__host.surface.webContents, owned);
     assert.equal(h.outputs.some(e => e.requestId || e.kind === "send_started"), false);
+  } finally { h.cleanup(); }
+});
+
+test("ready-looking assistance failure reports only fixed bounded close gates", async () => {
+  const h = hostHarness();
+  try {
+    await observed(h, () => h.outputs.some(e => e.kind === "worker_ready"));
+    h.put("assist.json", { id: "a".repeat(32) });
+    await observed(h, () => h.outputs.some(e => e.kind === "assistance_opened"));
+    h.fixture.state = { ...ready, modelButtonCount: 0,
+      modelButtonLabels: ["PRIVATE PAGE TEXT"], composerShape: [{ text: "PRIVATE DRAFT" }] };
+    h.context.__host.surface.window.emit("close", { preventDefault() {} });
+    await observed(h, () => h.outputs.some(e => e.kind === "assistance_failed"));
+    const check = h.outputs.find(e => e.kind === "assistance_close_state");
+    assert.ok(check);
+    assert.equal(check.assistanceId, "a".repeat(32));
+    assert.equal(check.phase, "before");
+    assert.equal(check.route, "temporary");
+    assert.equal(check.pageKind, "chatgpt");
+    assert.equal(check.modelControl, "zero");
+    assert.equal(check.composer, "yes");
+    assert.equal(check.composerEmpty, "unchecked");
+    assert.equal(h.outputs.find(e => e.kind === "assistance_failed").error,
+      "web_assistance_closed_before_ready");
+    assert.equal(h.outputs.some(e => e.kind === "assistance_hidden" || e.sent || e.requestId), false);
+    assert.equal(JSON.stringify(h.outputs).includes("PRIVATE PAGE TEXT"), false);
+    assert.equal(JSON.stringify(h.outputs).includes("PRIVATE DRAFT"), false);
   } finally { h.cleanup(); }
 });
 

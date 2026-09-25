@@ -1,8 +1,8 @@
 # Terminology
 
-- **Operator**: Feishu Codex Operator（飞书 Codex 接线员 / 自动接线员）, the
-  resident service that receives Feishu events, maintains durable routes, and
-  delivers replies. This is our application role, not a POCSAG protocol entity.
+- **Operator**: Codex-Operator's resident Channels service (currently Feishu),
+  which receives events, maintains durable routes, and delivers replies. This
+  is our application role, not a POCSAG protocol entity.
 - **Scope**: one Feishu private chat, group, or group topic.
 - **Beeper**: one fixed Codex Desktop task instructed to forward a compact relay
   envelope once to the exact Responder. It owns no business execution or result.
@@ -22,13 +22,15 @@
   starts callback grace, and every ambiguity is unknown.
 - **Local Beeper model**: model/provider named `beeper`; a loopback-only
   deterministic Responses API installed with Operator and selected only by config.
-- **Beeper model fallback**: blank defaults to Luna/low. A fresh exhausted Spark
-  bucket selects Luna before any Spark queue attempt. A proven Spark queue quota
-  rejection permits one same-event Luna attempt. Local `beeper` and Luna never
-  fall back.
-- **Beeper reasoning diagnostic**: explicit Spark/low or Spark/high only; normal
-  selection remains local `beeper`/low, Spark/medium, or Luna/low.
-- **Beeper prompt language**: Spark always uses English Operator instructions,
+- **Beeper model selection**: first-time onboarding asks for local `beeper`/low
+  or Luna/low; blank runtime configuration defaults to Luna/low for compatibility,
+  but is not evidence of user choice. Legacy Spark fallback code is retained for
+  old explicit Spark settings: exhausted quota selects Luna before queuing Spark,
+  and a proven Spark queue quota rejection permits one same-event Luna attempt.
+  Local `beeper` and Luna never fall back. New setup does not select Spark.
+- **Beeper reasoning diagnostic**: Spark/low and Spark/high are retained only
+  for legacy compatibility; new setup selects local `beeper`/low or Luna/low.
+- **Beeper prompt language**: legacy Spark always uses English Operator instructions,
   including nested transport/callback guidance; original user text is unchanged.
   The Chinese control template is selectable for Luna only, never a replay mechanism.
 - **Beeper wake-up signal**: an application-layer action from Operator to the
@@ -65,7 +67,8 @@ its wire-level terms are not function or state names in this application.
 
 Use `OperatorRuntime`, `OperatorConfig`, and `operator_core` for core code.
 The launcher is `operator_main.py`, not `operator.py` (Python stdlib collision).
-Plugin/marketplace/skill ID: `feishu-codex-operator`.
+Plugin/marketplace/skill ID: `codex-operator`. The source directory retains
+`feishu-codex-operator` for existing installation paths.
 Commands use `operator`; settings use `CODEX_OPERATOR_*`; process and
 diagnostic files use `operator.*` and `operator_version`.
 
@@ -76,8 +79,8 @@ Its `snapshot_fingerprint` detects a changed selection, not caller identity.
 
 There are no old command aliases, import shims, or parallel runtime layouts in
 the new source. Previous installations require an explicit stopped cutover;
-see [Upgrade](../../upgrade-operator.md). The GitHub repository address is an
-external identity and has not been renamed.
+see [Upgrade](../../upgrade-operator.md). The GitHub repository is
+[`LeoSasion/Codex-Operator`](https://github.com/LeoSasion/Codex-Operator).
 
 Page/claim/capability routing remains retired. Necessary state tombstones
 prevent historical work from replaying; they are not executable routes.

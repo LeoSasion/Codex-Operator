@@ -77,9 +77,25 @@ if (-not (Test-Path -LiteralPath $rootRules -PathType Leaf) -or
 }
 
 # Behavioral policy belongs in the unit suite, not source-wording regexes.
-$python = Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1
-& $python.Source -B -c "import json,pathlib,sys; root=pathlib.Path(sys.argv[1]); sys.path.insert(0,str(root/'scripts')); from build_codex_operator_release import safe_path; inventory=json.loads((root/'assets/release-inventory.json').read_text(encoding='utf-8')); paths=[safe_path(p) for c in inventory['components'] for p in c['paths']]; files=[root/p for p in paths if p.suffix=='.py']; [compile(p.read_text(encoding='utf-8-sig'), str(p), 'exec') for p in files]" $pluginRoot
-if ($LASTEXITCODE -ne 0) { throw 'Python syntax validation failed.' }
+Import-Module (Join-Path $PSScriptRoot 'operator_python.psm1') -Force
+$python = Get-OperatorPython -Required
+$sourceValidation = @'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / 'scripts'))
+from build_codex_operator_release import collect, safe_path
+
+inventory = json.loads((root / 'assets/release-inventory.json').read_text(encoding='utf-8'))
+paths = [safe_path(p) for component in inventory['components'] for p in component['paths']]
+for path in (root / p for p in paths if p.suffix == '.py'):
+    compile(path.read_text(encoding='utf-8-sig'), str(path), 'exec')
+collect(root.parent.parent)
+'@
+& $python.Source @($python.Prefix) -B -c $sourceValidation $pluginRoot
+if ($LASTEXITCODE -ne 0) { throw 'Python syntax or reviewed source validation failed.' }
 
 foreach ($script in Get-ChildItem -LiteralPath (Join-Path $pluginRoot 'scripts') -File | Where-Object Extension -in @('.ps1','.psm1')) {
     $tokens = $null
@@ -99,6 +115,8 @@ Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
     status = 'passed'
     source_version = [string]$inventory.source_version
     inventory_files = $listed.Count
+    reviewed_documents = @($inventory.reviewed_document_sha256.PSObject.Properties).Count
+    content_screen = $true
     python_syntax = $true
     powershell_syntax = $true
 }))

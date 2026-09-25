@@ -46,6 +46,36 @@ function effortDiagnostic(state) {
       ? rawHeader : "unrecognized",
   };
 }
+function boundedEffortRange(state, shape, generation) {
+  const count = value => ['zero', 'one', 'multiple', 'unknown'].includes(value) ? value : 'unknown';
+  const number = value => Number.isInteger(value) && value >= 0 && value <= 9
+    ? value : ['absent', 'other', 'unknown'].includes(value) ? value : 'unknown';
+  const flag = value => ['yes', 'no', 'unknown'].includes(value) ? value : 'unknown';
+  return {containerCount: count(shape?.containerCount),
+    newContainerTotal: count(shape?.newContainerTotal),
+    newContainerVisible: count(shape?.newContainerVisible),
+    sliderCount: count(shape?.sliderCount),
+    statePresent: state && typeof state === 'object' ? 'yes' : 'no',
+    min: number(shape?.min), max: number(shape?.max), now: number(shape?.now),
+    locked: flag(shape?.locked),
+    globalSliderTotal: count(shape?.globalSliderTotal),
+    globalSliderVisible: count(shape?.globalSliderVisible),
+    globalMin: number(shape?.globalMin), globalMax: number(shape?.globalMax),
+    globalNow: number(shape?.globalNow),
+    globalSliderRect: flag(shape?.globalSliderRect),
+    globalSliderHidden: flag(shape?.globalSliderHidden),
+    globalSliderInert: flag(shape?.globalSliderInert),
+    globalSliderAriaHidden: flag(shape?.globalSliderAriaHidden),
+    globalSliderClosedMenu: flag(shape?.globalSliderClosedMenu),
+    globalSliderInNewContainer: flag(shape?.globalSliderInNewContainer),
+    ownerMenuitem: flag(shape?.ownerMenuitem), ownerMenu: flag(shape?.ownerMenu),
+    sameMenuAsChooser: flag(shape?.sameMenuAsChooser),
+    generationMatches: !state ? 'unknown' : state.announcedGeneration === null ? 'unannounced'
+      : state.announcedGeneration === generation ? 'yes' : 'no',
+    proLabel: !state || state.label === null ? 'unknown' : state.label === 'Pro' ? 'yes' : 'no',
+    proHeader: !state || typeof state.generationLabel !== 'string' ? 'unknown'
+      : /Pro\s*$/.test(state.generationLabel) ? 'yes' : 'no'};
+}
 const networkRequests = new Map();
 let networkEventCount = 0;
 function record(kind, value = {}) {
@@ -144,6 +174,23 @@ function observeModelNetwork(phase, details) {
 function safeError(error) {
   const value = error?.message;
   return typeof value === "string" && /^web_[a-z_]+$/.test(value) ? value : "web_browser_operation_failed";
+}
+function boundedControlState(state) {
+  const flag = value => value === true ? "yes" : value === false ? "no" : "unknown";
+  const rows = value => Number.isSafeInteger(value) && value >= 0
+    ? value === 0 ? "zero" : "nonzero" : "unknown";
+  const modelControl = Number.isSafeInteger(state?.modelButtonCount) && state.modelButtonCount >= 0
+    ? state.modelButtonCount === 0 ? "zero" : state.modelButtonCount === 1 ? "one" : "multiple" : "unknown";
+  return { pageKind: ["chatgpt", "challenge", "other"].includes(state?.pageKind)
+      ? state.pageKind : "unknown", composer: flag(state?.composer), modelControl,
+    loginVisible: flag(state?.loginVisible), userRows: rows(state?.userCount),
+    assistantRows: rows(state?.assistantCount) };
+}
+function assistanceCloseState(destination, state, composerEmpty, phase) {
+  return { phase, route: isEmptyTemporaryChatUrl(destination) ? "temporary"
+    : isEmptyChatHomeUrl(destination) ? "home" : "other",
+    ...boundedControlState(state), composerEmpty: composerEmpty === null ? "unchecked"
+      : composerEmpty ? "yes" : "no" };
 }
 try {
   requireValue(typeof configPath === "string" && path.isAbsolute(configPath), "web_absolute_config_required");
@@ -338,6 +385,9 @@ async function inPage(fn, ...args) {
   requireValue(current.origin === "https://chatgpt.com", "web_expected_origin_required");
   const result = await surface.webContents.executeJavaScript(`(() => {
     const currentPublicFiber = (${page.currentPublicFiber.toString()});
+    const uniqueComposer = (${page.uniqueComposer.toString()});
+    const eligibleModelButtons = (${page.eligibleModelButtons.toString()});
+    const eligibleEffortContainer = (${page.eligibleEffortContainer.toString()});
     try { return { ok: true, value: (${fn.toString()})(...${JSON.stringify(args)}) }; }
     catch (error) { return { ok: false, code: /^web_[a-z_]+$/.test(error?.message)
       ? error.message : "web_page_operation_failed" }; }
@@ -468,7 +518,7 @@ async function menu() {
       surface.webContents.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 });
     }
   }
-  record("model_menu_input", { controls: await inPage(page.controls) });
+  record("model_menu_input", { controls: boundedControlState(await inPage(page.controls)) });
   await waitFor(async () => (await inPage(page.controls)).chooser);
 }
 async function selectModel() {
@@ -497,8 +547,22 @@ async function selectModel() {
   stage = "open_effort_menu";
   await menu();
   stage = "select_effort";
-  let slider = await inPage(page.effortState);
-  requireValue(slider && slider.min === 0 && slider.max === 4 && !slider.locked, "web_effort_range_invalid");
+  let slider;
+  try { slider = await inPage(page.effortState); }
+  catch (error) {
+    if (error?.message === 'web_effort_shape_invalid') {
+      let shape = null;
+      try { shape = await inPage(page.effortRangeShape); } catch { /* Keep the original failure. */ }
+      record('effort_range_unavailable', boundedEffortRange(null, shape, requested.generation));
+    }
+    throw error;
+  }
+  if (!slider || slider.min !== 0 || slider.max !== 4 || slider.locked) {
+    let shape = null;
+    try { shape = await inPage(page.effortRangeShape); } catch { /* Keep the original failure. */ }
+    record('effort_range_unavailable', boundedEffortRange(slider, shape, requested.generation));
+    throw new Error('web_effort_range_invalid');
+  }
   record("effort_initial_state", effortDiagnostic(slider));
   const move = async target => { for (let steps = 0; slider.value !== target; steps++) {
     requireValue(steps < 4, "web_effort_step_mismatch");
@@ -670,11 +734,19 @@ async function completeAssistance() {
     await waitFor(async () => assistanceReady(await inPage(page.controls)), 15000);
     destination = surface.webContents.getURL();
   }
-  requireValue(isEmptyTemporaryChatUrl(destination) || isEmptyChatHomeUrl(destination),
-    "web_assistance_closed_before_ready");
-  const state = await inPage(page.controls);
-  requireValue(assistanceReady(state), "web_assistance_closed_before_ready");
-  requireValue(await inPage(page.composerPrefix, null) === "", "web_assistance_closed_before_ready");
+  const routeReady = isEmptyTemporaryChatUrl(destination) || isEmptyChatHomeUrl(destination);
+  const state = routeReady ? await inPage(page.controls) : null;
+  let composerEmpty = null;
+  let composerError = null;
+  if (routeReady && assistanceReady(state)) {
+    try { composerEmpty = await inPage(page.composerPrefix, null) === ""; }
+    catch (error) { composerEmpty = false; composerError = error; }
+  }
+  if (assistanceId) record("assistance_close_state", { assistanceId,
+    ...assistanceCloseState(destination, state, composerEmpty, "before") });
+  requireValue(routeReady && assistanceReady(state), "web_assistance_closed_before_ready");
+  if (composerError) throw composerError;
+  requireValue(composerEmpty === true, "web_assistance_closed_before_ready");
   if (isEmptyChatHomeUrl(destination)) {
     // Login can return to the ordinary empty home page. The same public control
     // already used by fresh-chat navigation may restore temporary mode once;
@@ -683,9 +755,20 @@ async function completeAssistance() {
     await inPage(page.enableTemporaryChat);
     await waitFor(async () => isEmptyTemporaryChatUrl(surface.webContents.getURL()), 5000);
   }
-  requireValue(isEmptyTemporaryChatUrl(surface.webContents.getURL()), "web_assistance_closed_before_ready");
-  requireValue(assistanceReady(await inPage(page.controls)), "web_assistance_closed_before_ready");
-  requireValue(await inPage(page.composerPrefix, null) === "", "web_assistance_closed_before_ready");
+  const finalDestination = surface.webContents.getURL();
+  const finalRouteReady = isEmptyTemporaryChatUrl(finalDestination);
+  const finalState = finalRouteReady ? await inPage(page.controls) : null;
+  let finalComposerEmpty = null;
+  let finalComposerError = null;
+  if (finalRouteReady && assistanceReady(finalState)) {
+    try { finalComposerEmpty = await inPage(page.composerPrefix, null) === ""; }
+    catch (error) { finalComposerEmpty = false; finalComposerError = error; }
+  }
+  if (assistanceId) record("assistance_close_state", { assistanceId,
+    ...assistanceCloseState(finalDestination, finalState, finalComposerEmpty, "after_restore") });
+  requireValue(finalRouteReady && assistanceReady(finalState), "web_assistance_closed_before_ready");
+  if (finalComposerError) throw finalComposerError;
+  requireValue(finalComposerEmpty === true, "web_assistance_closed_before_ready");
   surface.hide();
   await waitFor(async () => !win.isVisible() && !win.isFocused(), 3000);
   requireValue(readWorkerPacket("next.json", 1024 * 1024) === null,
@@ -800,7 +883,7 @@ async function loadFreshPage() {
 }
 async function runCurrentPage() {
   await loadFreshPage();
-  record("document_loaded", { controls: await inPage(page.controls) });
+  record("document_loaded", { controls: boundedControlState(await inPage(page.controls)) });
   try {
     let attentionReason = null, attentionSince = 0;
     await waitFor(async () => {
@@ -818,12 +901,12 @@ async function runCurrentPage() {
       config.mode === "assist" ? config.timeoutMs - 30000 : config.visible ? 65000 : 20000);
     await waitFor(async () => (await inPage(page.controls)).modelButtonCount === 1, 25000);
   } catch (error) {
-    record("page_unavailable", { controls: await inPage(page.controls) });
+    record("page_unavailable", { controls: boundedControlState(await inPage(page.controls)) });
     throw error;
   }
   const fresh = await inPage(page.controls);
   requireValue(fresh.userCount === 0 && fresh.assistantCount === 0, "web_fresh_page_required");
-  record("page_ready", { controls: fresh });
+  record("page_ready", { controls: boundedControlState(fresh) });
   if (config.mode === "assist") {
     // Initial page readiness is bounded; a ready human-assistance window stays
     // open until the user closes it. It never automatically submits a prompt.
@@ -943,7 +1026,7 @@ async function handleFailure(error) {
         record("owned_preparation_draft_cleared");
       } catch { record("owned_preparation_draft_preserved"); }
     }
-    try { record("failure_controls", { controls: await inPage(page.controls) }); } catch {}
+    try { record("failure_controls", { controls: boundedControlState(await inPage(page.controls)) }); } catch {}
     if (sent) {
       try { record("failure_public_shape", { shape: await inPage(page.publicMessageShape) }); } catch {}
     }
@@ -987,6 +1070,14 @@ async function prepareWorkerPage() {
   const reason = controls.pageKind === "challenge"
     ? "web_browser_challenge_required_before_dispatch"
     : controls.loginVisible === true ? "web_browser_login_required_before_dispatch" : null;
+  if (reason === null) {
+    record("startup_prepare_state", {
+      route: isEmptyTemporaryChatUrl(surface.webContents.getURL()) ? "temporary"
+        : isEmptyChatHomeUrl(surface.webContents.getURL()) ? "home" : "other",
+      ...boundedControlState(controls) });
+    try { record("startup_control_structure", await inPage(page.startupControlStructure)); }
+    catch { /* Keep the original preparation failure and the existing fail-closed admission. */ }
+  }
   requireValue(reason !== null, "web_startup_prepare_unavailable");
   assistanceRequired = true;
   record("worker_attention_required", { reason });

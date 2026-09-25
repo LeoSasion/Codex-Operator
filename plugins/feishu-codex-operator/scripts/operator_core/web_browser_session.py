@@ -15,11 +15,55 @@ import re
 import secrets
 import subprocess
 
-from .web_browser_driver import (child_environment, desktop_session_state, safe_effort_diagnostic, safe_generation_progress, safe_model_network, safe_user_binding_diagnostic,
+from .web_browser_driver import (child_environment, desktop_session_state, safe_effort_diagnostic, safe_effort_range_diagnostic, safe_generation_progress, safe_model_network, safe_user_binding_diagnostic,
     rejected_http_status, rejected_network_error, safe_public_interruption, public_interruption_code, rejected_ui_code, public_final_timeout)
 from .web_mcp_transport import WebRequestCapacityError, WebBrowserAssistanceRequired, WebDesktopUnavailable, WebBrowserHttpError, WebBrowserNetworkError, WebBrowserUiError, WebBrowserFinalTimeout, require
 from .responses_tool_adapter import loads
 from .web_model_catalog import matches_selection
+
+
+ASSISTANCE_CLOSE_FIELDS = {
+    'phase': {'before', 'after_restore'},
+    'route': {'temporary', 'home', 'other'},
+    'pageKind': {'chatgpt', 'challenge', 'other', 'unknown'},
+    'composer': {'yes', 'no', 'unknown'},
+    'modelControl': {'zero', 'one', 'multiple', 'unknown'},
+    'loginVisible': {'yes', 'no', 'unknown'},
+    'userRows': {'zero', 'nonzero', 'unknown'},
+    'assistantRows': {'zero', 'nonzero', 'unknown'},
+    'composerEmpty': {'yes', 'no', 'unchecked'},
+}
+STARTUP_PREPARE_FIELDS = {key: ASSISTANCE_CLOSE_FIELDS[key] for key in (
+    'route', 'pageKind', 'composer', 'modelControl', 'loginVisible',
+    'userRows', 'assistantRows')}
+STARTUP_STRUCTURE_FIELDS = {
+    'readyState': {'loading', 'interactive', 'complete', 'unknown'},
+    'legacyEditorCount': {'zero', 'one', 'multiple'},
+    'legacyEditorEditable': {'yes', 'no', 'unknown'},
+    'legacyEditorRect': {'yes', 'no', 'unknown'},
+    'testIdEditorVisible': {'zero', 'one', 'multiple'},
+    'roleTextboxEditableVisible': {'zero', 'one', 'multiple'},
+    'editableVisible': {'zero', 'one', 'multiple'},
+    'textareaVisible': {'zero', 'one', 'multiple'},
+    'globalModelTotal': {'zero', 'one', 'multiple'},
+    'globalModelVisible': {'zero', 'one', 'multiple'},
+    'editorFormExists': {'yes', 'no', 'unknown'},
+    'accessibleModelCount': {'zero', 'one', 'multiple', 'unknown'},
+    'accessibleModelSource': {'aria_label', 'title', 'exact_text', 'multiple', 'unknown'},
+    'accessibleModelTag': {'button', 'other', 'unknown'},
+    'accessibleModelInEditorForm': {'yes', 'no', 'unknown'},
+    'accessibleModelHaspopup': {'menu', 'absent', 'other', 'unknown'},
+    'accessibleModelDisabled': {'yes', 'no', 'unknown'},
+}
+ASSISTANCE_FAILURE_CODES = {
+    'web_assistance_closed_before_ready', 'web_worker_assistance_identity_invalid',
+    'web_worker_request_during_assistance', 'web_page_state_timeout',
+    'web_expected_origin_required', 'web_browser_operation_failed',
+    'web_assistance_timeout', 'web_cancelled_no_retry',
+    'web_new_chat_previous_page_changed', 'web_inspection_page_changed',
+    'web_assistance_navigation_not_allowed', 'web_empty_composer_required',
+    'web_composer_missing',
+}
 
 
 async def wait_owned_future(future, timeout):
@@ -49,6 +93,9 @@ class WebBrowserSession:
         self.launches = 0
         self.startup_assistance = startup_assistance
         self.startup_prepare = startup_prepare
+        self.startup_failure_recorded = False
+        self.startup_prepare_state_recorded = False
+        self.startup_structure_recorded = False
         self.assistance_state = 'pending' if startup_assistance else 'preparing' if startup_prepare else 'not_requested'
         self.assistance = None
         self.assistance_reason = None
@@ -89,7 +136,25 @@ class WebBrowserSession:
             stream.write(raw)
         os.replace(pending, target)
 
+    def record_startup_failure(self, value=None, *, fallback_stage='unknown'):
+        if (not self.startup_prepare or self.prepared is None or self.prepared.done()
+                or self.current is not None or self.startup_failure_recorded):
+            return
+        stage, code = fallback_stage, 'web_session_worker_failed_no_retry'
+        if (isinstance(value, dict)
+                and set(value) == {'operator_web', 'kind', 'stage', 'sent', 'error'}
+                and value.get('stage') in ('configuration', 'startup_prepare')
+                and value.get('sent') is False):
+            stage = value['stage']
+            error = value.get('error')
+            if isinstance(error, str) and error in self.base.codes:
+                code = error
+        self.base.events.append({'kind': 'startup_failed', 'stage': stage, 'code': code})
+        self.startup_failure_recorded = True
+
     def fail(self, code='web_session_worker_failed_no_retry'):
+        if not self.closed:
+            self.record_startup_failure()
         self.closed = True
         if self.assistance is not None or self.assistance_state in ('opening', 'awaiting_user'):
             self.assistance_state = 'failed'
@@ -127,7 +192,10 @@ class WebBrowserSession:
         try:
             await self.start()
             await wait_owned_future(self.prepared, 80)
-        except BaseException:
+        except BaseException as error:
+            if isinstance(error, Exception) and not self.closed:
+                self.record_startup_failure(fallback_stage='launch' if self.child is None
+                    else 'startup_wait')
             await self.close()
             raise
 
@@ -148,7 +216,8 @@ class WebBrowserSession:
             'web_inspection_completed_page_required')
         self.check_environment()
         future = asyncio.get_running_loop().create_future()
-        self.assistance = {'id': assistance_id, 'future': future, 'inspect_completed': inspect_completed}
+        self.assistance = {'id': assistance_id, 'future': future,
+            'inspect_completed': inspect_completed, 'close_checks': 0}
         self.assistance_state = 'opening'
         try:
             await self.start()
@@ -193,7 +262,8 @@ class WebBrowserSession:
         if kind not in ('model_verified', 'dispatch_started', 'public_user_binding', 'window_state', 'generation_state', 'public_interruption_state', 'fresh_chat_navigation', 'model_network_state',
                 'completed', 'failed', 'cancel_requested', 'cancel_click_attempted', 'cancel_click_unavailable',
                 'cancel_idle_unverified', 'effort_initial_state', 'effort_step_verified',
-                'effort_step_unavailable', 'effort_pro_unavailable', 'effort_pro_verified', 'effort_target_verified'):
+                'effort_step_unavailable', 'effort_pro_unavailable', 'effort_pro_verified', 'effort_target_verified',
+                'effort_range_unavailable'):
             return
         event = {'attempt': self.base.attempts, 'kind': kind,
             'stage': value.get('stage') if value.get('stage') in self.base.stages else 'other',
@@ -201,6 +271,8 @@ class WebBrowserSession:
         if kind == 'model_verified':
             require(matches_selection(value, current['selection']), 'web_browser_selection_identity_invalid')
             event.update(**current['selection'], effortIndex=value['effortIndex'])
+        elif kind == 'effort_range_unavailable':
+            event.update(safe_effort_range_diagnostic(value))
         elif kind.startswith('effort_'):
             event.update(safe_effort_diagnostic(value))
         elif kind == 'window_state':
@@ -253,10 +325,18 @@ class WebBrowserSession:
                 if request_id is None:
                     if kind in ('assistance_opened', 'assistance_hidden', 'assistance_failed'):
                         self.assistance_event(value)
+                    elif kind == 'assistance_close_state':
+                        self.assistance_close_event(value)
                     elif kind == 'worker_ready':
                         require(not self.ready.done() and (not self.startup_assistance
                             or self.assistance_state == 'background'), 'web_session_duplicate_ready')
+                        if self.startup_prepare:
+                            self.base.events.append({'kind': 'startup_worker_ready'})
                         self.ready.set_result(True)
+                    elif kind == 'startup_prepare_state':
+                        self.startup_prepare_state_event(value)
+                    elif kind == 'startup_control_structure':
+                        self.startup_control_structure_event(value)
                     elif kind in ('worker_prepared', 'worker_attention_required'):
                         require(self.startup_prepare and self.ready is not None and self.ready.done()
                             and self.prepared is not None and not self.prepared.done()
@@ -276,6 +356,7 @@ class WebBrowserSession:
                             self.assistance_reason = reason
                             self.prepared.set_result(False)
                     elif kind == 'failed':
+                        self.record_startup_failure(value)
                         self.fail()
                     continue
                 current = self.current
@@ -372,7 +453,59 @@ class WebBrowserSession:
         else:
             require(self.assistance_state in ('opening', 'awaiting_user'), 'web_assistance_sequence_invalid')
             self.fail('web_assistance_failed_no_retry')
-        self.base.events.append({'kind': kind, 'assistance_state': self.assistance_state})
+        event = {'kind': kind, 'assistance_state': self.assistance_state}
+        if kind == 'assistance_failed':
+            code = value.get('error')
+            event['code'] = code if isinstance(code, str) and code in ASSISTANCE_FAILURE_CODES else 'other'
+        self.base.events.append(event)
+
+    def startup_prepare_state_event(self, value):
+        require(self.startup_prepare and self.ready is not None and self.ready.done()
+            and self.prepared is not None and not self.prepared.done()
+            and self.current is None and not self.closed and not self.startup_prepare_state_recorded
+            and value.get('stage') == 'startup_prepare' and value.get('sent') is False,
+            'web_startup_prepare_diagnostic_unbound')
+        expected = {'operator_web', 'kind', 'stage', 'sent', *STARTUP_PREPARE_FIELDS}
+        require(set(value) == expected and all(value.get(key) in allowed
+            for key, allowed in STARTUP_PREPARE_FIELDS.items()),
+            'web_startup_prepare_diagnostic_invalid')
+        self.startup_prepare_state_recorded = True
+        self.base.events.append({'kind': 'startup_prepare_state',
+            **{key: value[key] for key in STARTUP_PREPARE_FIELDS}})
+
+    def startup_control_structure_event(self, value):
+        require(self.startup_prepare_state_recorded and not self.startup_structure_recorded
+            and self.prepared is not None and not self.prepared.done()
+            and self.current is None and not self.closed
+            and value.get('stage') == 'startup_prepare' and value.get('sent') is False,
+            'web_startup_structure_diagnostic_unbound')
+        expected = {'operator_web', 'kind', 'stage', 'sent', *STARTUP_STRUCTURE_FIELDS}
+        require(set(value) == expected and all(value.get(key) in allowed
+            for key, allowed in STARTUP_STRUCTURE_FIELDS.items()),
+            'web_startup_structure_diagnostic_invalid')
+        self.startup_structure_recorded = True
+        self.base.events.append({'kind': 'startup_control_structure',
+            **{key: value[key] for key in STARTUP_STRUCTURE_FIELDS}})
+
+    def assistance_close_event(self, value):
+        pending = self.assistance
+        require(pending is not None and self.assistance_state == 'awaiting_user'
+            and self.current is None and value.get('assistanceId') == pending['id']
+            and pending.get('inspect_completed') is False
+            and value.get('stage') == 'worker_assistance' and value.get('sent') is False,
+            'web_assistance_diagnostic_unbound')
+        expected = {'operator_web', 'kind', 'stage', 'sent', 'assistanceId',
+            *ASSISTANCE_CLOSE_FIELDS}
+        require(set(value) == expected and all(value.get(key) in allowed
+            for key, allowed in ASSISTANCE_CLOSE_FIELDS.items()),
+            'web_assistance_diagnostic_invalid')
+        phase = value['phase']
+        require((phase == 'before' and pending['close_checks'] == 0)
+            or (phase == 'after_restore' and pending['close_checks'] == 1),
+            'web_assistance_diagnostic_sequence_invalid')
+        pending['close_checks'] += 1
+        self.base.events.append({'kind': 'assistance_close_state',
+            **{key: value[key] for key in ASSISTANCE_CLOSE_FIELDS}})
 
     @staticmethod
     def recoverable_assistance(current):

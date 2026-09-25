@@ -12,8 +12,6 @@ import re
 import secrets
 import time
 
-from aiohttp import web
-
 from .responses_capabilities import RouterError
 from .responses_tool_adapter import MAX_ARGUMENT_BYTES, dumps, loads
 from .web_model_protocol import WebModelProtocol, PUBLIC_CITATION_ERRORS
@@ -693,6 +691,26 @@ MCP_TOOLS[0]['outputSchema']['oneOf'].extend([
     _INDEX_V3_SCHEMA, _INDEX_V3_CATALOG_SCHEMA, _INDEX_V3_CONTEXT_SCHEMA])
 
 
+def mcp_tool_declarations(begin_result_mode, call_result_mode):
+    """Exact declarations for the endpoint's selected result representations."""
+    require(begin_result_mode in ('text_v1', 'structured_begin_v1')
+        and call_result_mode in ('text_v1', 'structured_call_v1'), 'web_mcp_result_mode_invalid')
+    result = deepcopy(MCP_TOOLS)
+    if begin_result_mode == 'text_v1':
+        result[0].pop('outputSchema')
+        result[0]['description'] = "Read the active Codex request. Each key is single-use: begin with the current turn_key, then use exact read keys returned in an indexed response. Read every context page before answering; discover and read exact tool schemas before operator_call. No execution or retry."
+    if call_result_mode == 'structured_call_v1':
+        result[1]['outputSchema'] = {
+            'type': 'object', 'properties': {'codex_function_result': {
+                'type': 'object', 'properties': {'call_id': {'type': 'string'}},
+                'required': ['call_id'], 'additionalProperties': True}},
+            'required': ['codex_function_result'], 'additionalProperties': False}
+        result[1]['description'] += (
+            ' structuredContent.codex_function_result preserves the entire original native result, '
+            'including text part boundaries and any failure or denial. A returned result does not imply success.')
+    return result
+
+
 class WebRequestCapacityError(RouterError):
     """Local indexed-data preflight exceeded its unchanged section bound."""
     def __init__(self):
@@ -1026,6 +1044,9 @@ class WebMcpEndpoint:
         require(len(self.sessions) < 64, 'web_mcp_session_limit')
 
     async def start(self, *, port=0):
+        # Read-only service and uninstall checks import this module without aiohttp.
+        from aiohttp import web
+
         require(type(port) is int and 0 <= port <= 65535, "web_mcp_port_invalid")
         application = web.Application(client_max_size=2 * 1024 * 1024)
         application.router.add_route("*", "/{tail:.*}", self.handle)
@@ -1045,6 +1066,8 @@ class WebMcpEndpoint:
         self.sessions.clear()
 
     async def handle(self, request):
+        from aiohttp import web
+
         if (self.unsupported_oauth_metadata and request.method == 'GET'
                 and request.host == self.host and not request.query_string
                 and request.headers.get('Origin') in (None, 'http://' + self.host)
@@ -1108,9 +1131,11 @@ class WebMcpEndpoint:
             stage = 'rpc'
             if "id" not in value:
                 require(method in ("notifications/initialized", "notifications/cancelled"), "web_mcp_notification_rejected")
-                if method == "notifications/cancelled" and self.turn is not None:
-                    cancelled_id = value.get("params", {}).get("requestId")
-                    pending = self.turn.pending
+                if method == "notifications/cancelled":
+                    params = value.get("params", {})
+                    require(isinstance(params, dict), "web_mcp_invalid_request")
+                    cancelled_id = params.get("requestId")
+                    pending = self.turn.pending if self.turn is not None else None
                     if type(cancelled_id) in (str, int) and pending is not None and pending["rpc_identity"] == (
                             session_id, type(cancelled_id).__name__, cancelled_id):
                         self.turn.close()
@@ -1125,7 +1150,9 @@ class WebMcpEndpoint:
                 session["seen"].add(rpc_identity)
             if method == "initialize":
                 require(session_id is None, "web_mcp_initialize_session_invalid")
-                version = value.get("params", {}).get("protocolVersion")
+                params = value.get("params", {})
+                require(isinstance(params, dict), "web_mcp_invalid_request")
+                version = params.get("protocolVersion")
                 require(version in ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"), "web_mcp_version_unsupported")
                 now = time.monotonic()
                 self._reserve_session_slot(now)
@@ -1139,19 +1166,7 @@ class WebMcpEndpoint:
             elif method == "ping":
                 result = {}
             elif method == "tools/list":
-                result = {"tools": deepcopy(MCP_TOOLS)}
-                if self.begin_result_mode == 'text_v1':
-                    result['tools'][0].pop('outputSchema')
-                    result['tools'][0]['description'] = "Read the active Codex request. Each key is single-use: begin with the current turn_key, then use exact read keys returned in an indexed response. Read every context page before answering; discover and read exact tool schemas before operator_call. No execution or retry."
-                if self.call_result_mode == 'structured_call_v1':
-                    result['tools'][1]['outputSchema'] = {
-                        'type': 'object', 'properties': {'codex_function_result': {
-                            'type': 'object', 'properties': {'call_id': {'type': 'string'}},
-                            'required': ['call_id'], 'additionalProperties': True}},
-                        'required': ['codex_function_result'], 'additionalProperties': False}
-                    result['tools'][1]['description'] += (
-                        ' structuredContent.codex_function_result preserves the entire original native result, '
-                        'including text part boundaries and any failure or denial. A returned result does not imply success.')
+                result = {"tools": mcp_tool_declarations(self.begin_result_mode, self.call_result_mode)}
             elif method == "tools/call":
                 stage = 'tool_arguments'
                 params = value.get("params")

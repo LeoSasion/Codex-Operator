@@ -1,5 +1,10 @@
 # Upgrade and naming cutover
 
+This file retains dated upgrade decisions. For a new installation use the
+[quick start](QUICKSTART.md); for current stopped-upgrade and safe-removal steps
+use [installation and removal](shared/docs/installation-and-removal.md). A
+version note below does not describe the current installed state by itself.
+
 Alpha.134 explicitly lists active tasks across model providers for `/init` and
 registered-user task verification. It preserves the existing task/source filters,
 limits and exact identity checks; a catalog miss never creates a replacement.
@@ -351,8 +356,10 @@ LiteLLM SDK, Web backend or Chat Completions adapter.
    Offline checks do not establish real Feishu E2E delivery.
 
 An existing blank `CODEX_OPERATOR_BEEPER_MODEL=` is intentionally preserved and
-now resolves to Luna/low. Set it explicitly to `beeper`, Spark, or Luna only after
-reviewing the corresponding queue policy; no global Codex model entry is added.
+resolves to Luna/low. Current first-time setup offers only local `beeper` or
+Luna/low; an old explicit Spark selection remains a historical compatibility
+case, not a new choice or a reason for a live Spark probe. No global Codex model
+entry is added.
 Alpha.88 installs the approved protocol-external identity response and a
 `visibility: list` catalog entry. This is not proof of Desktop registration or
 provider selection; those remain pending supported integration. Keep the current

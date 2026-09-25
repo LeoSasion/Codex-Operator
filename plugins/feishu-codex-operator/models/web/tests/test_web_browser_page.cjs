@@ -20,8 +20,117 @@ const operatorTestScript = name => operatorTestPath.join(operatorTestRoot, "scri
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
-const { publicFinal, clickModelChooser, focusModelMenu, connectorMenuChoice, selectedConnector, composerPrefix, composerMatches } = require(operatorTestScript("web_browser_page.cjs"));
+const { publicFinal, clickModelChooser, focusModelMenu, connectorMenuChoice, selectedConnector, composerPrefix, composerMatches,
+  uniqueComposer, eligibleModelButtons, eligibleEffortContainer } = require(operatorTestScript("web_browser_page.cjs"));
 const prompt = "Synthetic fixture 中文";
+
+test('startup control structure exposes only bounded selector counts and flags', () => {
+  const { startupControlStructure } = require(operatorTestScript('web_browser_page.cjs'));
+  const form = {contains: element => element === model};
+  const element = (editable, rects, attributes = {}) => ({tagName: attributes.tagName || 'DIV',
+    disabled: attributes.disabled, textContent: attributes.text || 'PRIVATE PAGE TEXT',
+    getClientRects: () => Array(rects).fill({}),
+    getAttribute: name => name === 'contenteditable' ? editable : attributes[name] || null,
+    closest: selector => selector === 'form' ? attributes.form || null : null});
+  const editor = element('false', 1), alternative = element('true', 1, {form});
+  const hidden = element('true', 0), model = element(null, 1,
+    {tagName: 'BUTTON', disabled: false, 'aria-label': '选择 ChatGPT 模型',
+      'aria-haspopup': 'menu', form});
+  const otherButton = element(null, 1);
+  const selectors = new Map([
+    ['#prompt-textarea', [editor]],
+    ['[data-testid="prompt-textarea"]', [alternative]],
+    ['[role="textbox"][contenteditable="true"]', [alternative]],
+    ['[contenteditable="true"]', [alternative, hidden]],
+    ['textarea', []],
+    ['button[aria-haspopup="menu"][data-tone="neutral"],button[data-testid="model-switcher-dropdown-button"]', [model, hidden]],
+    ['button,[role="button"]', [model, otherButton]],
+  ]);
+  const document = {readyState: 'complete', querySelectorAll: selector => selectors.get(selector) || []};
+  const result = vm.runInNewContext('(' + startupControlStructure.toString() + ')()', {document});
+  assert.equal(JSON.stringify(result), JSON.stringify({readyState: 'complete',
+    legacyEditorCount: 'one', legacyEditorEditable: 'no', legacyEditorRect: 'yes',
+    testIdEditorVisible: 'one', roleTextboxEditableVisible: 'one',
+    editableVisible: 'one', textareaVisible: 'zero',
+    globalModelTotal: 'multiple', globalModelVisible: 'one',
+    editorFormExists: 'yes', accessibleModelCount: 'one',
+    accessibleModelSource: 'aria_label', accessibleModelTag: 'button',
+    accessibleModelInEditorForm: 'yes', accessibleModelHaspopup: 'menu',
+    accessibleModelDisabled: 'no'}));
+  assert.equal(JSON.stringify(result).includes('PRIVATE PAGE TEXT'), false);
+  selectors.set('button,[role="button"]', [model,
+    element(null, 1, {tagName: 'BUTTON', text: 'Choose ChatGPT model'})]);
+  const duplicate = vm.runInNewContext('(' + startupControlStructure.toString() + ')()', {document});
+  assert.equal(duplicate.accessibleModelCount, 'multiple');
+  assert.equal(duplicate.accessibleModelSource, 'unknown');
+});
+
+test('composer and model compatibility uses only one observed control per page and fails closed on conflicts', () => {
+  const {focusModelMenu, composerFocused, sendOnce} = require(operatorTestScript('web_browser_page.cjs'));
+  let oldEditors = [], roleEditors = [], editables = [], oldButtons = [], namedButtons = [];
+  let sendClicks = 0;
+  const document = {activeElement: null, querySelectorAll: selector => ({
+    '#prompt-textarea': oldEditors,
+    '[role="textbox"][contenteditable="true"]': roleEditors,
+    '[contenteditable="true"]': editables,
+    'button[aria-haspopup="menu"][data-tone="neutral"],button[data-testid="model-switcher-dropdown-button"]': oldButtons,
+    'button[aria-label="选择 ChatGPT 模型"],button[aria-label="Choose ChatGPT model"]': namedButtons,
+  })[selector] || []};
+  const sendButton = {disabled: false, getAttribute: () => null, getClientRects: () => [{}],
+    click: () => sendClicks++};
+  const form = {contains: element => element === namedButton || element === oldButton,
+    querySelectorAll: selector => selector === '[data-testid="send-button"]' ? [sendButton] : []};
+  const editor = {textContent: '', getAttribute: name => name === 'contenteditable' ? 'true' : null,
+    getClientRects: () => [{}], closest: selector => selector === 'form' ? form : null};
+  const oldButton = {disabled: false, getClientRects: () => [{}],
+    getAttribute: name => name === 'aria-expanded' ? 'false' : null,
+    focus: () => {document.activeElement = oldButton;}};
+  const namedButton = {disabled: false, getClientRects: () => [{}],
+    getAttribute: name => name === 'aria-haspopup' ? 'menu'
+      : name === 'aria-label' ? '选择 ChatGPT 模型' : null,
+    closest: () => null,
+    focus: () => {document.activeElement = namedButton;}};
+  const run = source => vm.runInNewContext(`(() => {
+    const uniqueComposer = (${uniqueComposer.toString()});
+    const eligibleModelButtons = (${eligibleModelButtons.toString()});
+    return ${source};
+  })()`, {document});
+  const read = () => run('({editor: uniqueComposer(), buttons: eligibleModelButtons(uniqueComposer())})');
+  roleEditors = editables = [editor]; namedButtons = [namedButton];
+  assert.equal(read().editor, editor);
+  assert.equal(read().buttons[0], namedButton);
+  const hiddenEditor = {...editor, closest: selector => selector === 'form' ? form
+    : selector.includes('aria-hidden') ? {} : null};
+  roleEditors = editables = [hiddenEditor];
+  assert.equal(read().editor, null); // Layout rect alone is insufficient.
+  roleEditors = editables = [editor];
+  namedButtons = [{...namedButton, closest: selector => selector.includes('aria-hidden') ? {} : null}];
+  assert.equal(read().buttons.length, 0);
+  namedButtons = [namedButton];
+  assert.equal(run(`(${focusModelMenu.toString()})()`), true);
+  assert.equal(run(`(${composerFocused.toString()})()`), false);
+  run(`(${sendOnce.toString()})()`);
+  assert.equal(sendClicks, 1);
+  oldEditors = [editor]; oldButtons = [oldButton];
+  assert.equal(read().buttons[0], oldButton);
+  assert.equal(run(`(${focusModelMenu.toString()})()`), true);
+  oldEditors = [{...editor, getClientRects: () => []}];
+  assert.equal(read().editor, null); // Present but unusable old editor cannot fall back.
+  oldEditors = []; oldButtons = [{...oldButton, getClientRects: () => []}];
+  assert.equal(read().buttons.length, 0); // Hidden old button cannot activate new fallback.
+  oldButtons = []; editables = [editor, {...editor}];
+  assert.equal(read().editor, null);
+  editables = [editor]; namedButtons = [namedButton, {...namedButton}];
+  assert.equal(read().buttons.length, 0);
+  namedButtons = [{...namedButton, getAttribute: name => name === 'aria-haspopup' ? 'dialog' : '选择 ChatGPT 模型'}];
+  assert.equal(read().buttons.length, 0);
+  namedButtons = [{...namedButton, getAttribute: name => name === 'aria-disabled' ? 'true'
+    : name === 'aria-haspopup' ? 'menu' : '选择 ChatGPT 模型'}];
+  assert.equal(read().buttons.length, 0);
+  namedButtons = [namedButton];
+  form.contains = () => false;
+  assert.equal(read().buttons.length, 0);
+});
 
 test('plugin close readiness excludes drafts, forms, permissions, auth and pending refresh', () => {
   const {pluginMaintenanceReady}=require(operatorTestScript("web_browser_page.cjs"));
@@ -92,6 +201,7 @@ function hiddenHostFixture(overrides = {}) {
     exit: code => exits.push(code), whenReady: () => new Promise(() => {}) };
   const page = { backgroundModelInput: function () { return true; }, composerFocused: function () { return true; },
     composerPrefix: function () { return ''; },
+    uniqueComposer, eligibleModelButtons, eligibleEffortContainer,
     publicFinal: function () {}, startFreshChat: function () {}, enableTemporaryChat: function () {},
     currentPublicFiber: require(operatorTestScript("web_browser_page.cjs")).currentPublicFiber,
     backgroundMenuKey: require(operatorTestScript("web_browser_page.cjs")).backgroundMenuKey,
@@ -223,7 +333,7 @@ test('fresh chat clicks only equivalent public home links on the idle owned page
     getClientRects: () => [{}], getAttribute: key => key === 'href' ? href : null,
     click: () => actions.push(href) });
   let choices = [link(), link('新聊天CtrlShiftO')], users = [{}], assistants = [{}], stops = [];
-  const invoke = () => vm.runInNewContext(`(${startFreshChat.toString()})()`, { document: {
+  const invoke = () => vm.runInNewContext(`(${startFreshChat.toString()})()`, { uniqueComposer: () => composer, document: {
     querySelector: () => composer, querySelectorAll: selector => selector.includes('author-role="user"') ? users
       : selector.includes('author-role="assistant"') ? assistants : selector.includes('stop-button') ? stops : choices } });
   invoke();
@@ -279,7 +389,7 @@ test('temporary chat requires one enabled public control and an empty page', () 
   const button = { getClientRects: () => [{}], disabled: false,
     getAttribute: key => key === 'aria-label' ? '临时聊天' : null, click: () => clicks++ };
   let buttons = [button];
-  const invoke = () => vm.runInNewContext(`(${enableTemporaryChat.toString()})()`, { document: {
+  const invoke = () => vm.runInNewContext(`(${enableTemporaryChat.toString()})()`, { uniqueComposer: () => ({textContent: draft}), document: {
     querySelector: () => ({ textContent: draft }), querySelectorAll: selector => selector === 'button' ? buttons : rows } });
   invoke();
   buttons = [button, button];
@@ -300,7 +410,8 @@ test('background model pointer input binds the focused enabled public control an
     dispatchEvent: event => events.push(plain(event)) };
   const doc = { activeElement: button, querySelector: () => ({ closest: () => ({ querySelectorAll: () => [button] }) }) };
   const invoke = point => vm.runInNewContext(`(${backgroundModelInput.toString()})(point)`, {
-    document: doc, point, PointerEvent: class { constructor(type, options) { this.type = type; Object.assign(this, options); this.isTrusted = false; } } });
+    document: doc, point, uniqueComposer: () => ({}), eligibleModelButtons: () => [button],
+    PointerEvent: class { constructor(type, options) { this.type = type; Object.assign(this, options); this.isTrusted = false; } } });
   invoke({ x: 20, y: 40 });
   assert.deepEqual(events.map(e => e.type), ['pointerdown', 'pointerup']);
   assert.equal(events.every(e => !e.isTrusted && e.button === 0 && e.pointerType === 'mouse'), true);
@@ -341,14 +452,14 @@ test('connector labels preserve Chinese names across startup, worker and public 
       connectorMention: mention, autoSelectConnector: true })}, new Set())`);
     const f = connectorFixture({ name });
     assert.deepEqual(plain(vm.runInNewContext(`(${selectedConnector.toString()})(name)`,
-      { document: f.document, name })), { id: f.id, name });
+      { document: f.document, name, uniqueComposer: () => f.composer })), { id: f.id, name });
     let clicks = 0;
     const query = '@' + name.split(' ')[0], composer = { textContent: query };
     const row = { textContent: name, getClientRects: () => [{}], getAttribute: () => null,
       closest: selector => selector === '[data-composer-plugin-impression-id]' ? { getAttribute: () => id.slice(7) } : null,
       click: () => clicks++ };
     const picked = vm.runInNewContext(`(${connectorMenuChoice.toString()})(name, query, true, id)`,
-      { name, query, id, document: { activeElement: composer, querySelector: () => composer,
+      { name, query, id, uniqueComposer: () => composer, document: { activeElement: composer, querySelector: () => composer,
         querySelectorAll: () => [row] } });
     assert.equal(picked.name, name);
     assert.equal(clicks, 1);
@@ -726,7 +837,7 @@ test("automatic selection binds the exact public plugin identity before activati
     querySelectorAll: () => [{ textContent: label }], click: () => { clicked++; } });
   const invoke = (rows, activate = false) => vm.runInNewContext(
     `(${connectorMenuChoice.toString()})(name, query, activate, id)`,
-    { name, query, activate, id, document: { activeElement: composer,
+    { name, query, activate, id, uniqueComposer: () => composer, document: { activeElement: composer,
       querySelector: () => composer, querySelectorAll: selector => {
         assert.equal(selector, '[data-composer-plugin-impression-id] .__menu-item[tabindex="0"]');
         return rows;
@@ -780,7 +891,8 @@ function connectorFixture(options = {}) {
 
 test("selected app identity comes from one exact visible pill and stays bound before send", () => {
   const f = connectorFixture();
-  const invoke = (fn, args) => vm.runInNewContext(`(${fn.toString()})(...args)`, { document: f.document, args });
+  const invoke = (fn, args) => vm.runInNewContext(`(${fn.toString()})(...args)`,
+    { document: f.document, args, uniqueComposer: () => f.composer });
   const mention = plain(invoke(selectedConnector, [f.name]));
   assert.deepEqual(mention, { name: f.name, id: f.id });
   const prefix = invoke(composerPrefix, [mention]);
@@ -806,7 +918,7 @@ test("connector prompt comparison retains paragraph breaks and rejects collapsed
   Object.defineProperty(f.composer, 'childNodes', { writable: true,
     value: (prefix + text).split('\n').map(paragraph) });
   const invoke = () => vm.runInNewContext(`(${composerMatches.toString()})(text, prefix, mention)`,
-    { document: f.document, text, prefix, mention });
+    { document: f.document, text, prefix, mention, uniqueComposer: () => f.composer });
   assert.equal(invoke(), true);
   const original = f.composer.childNodes;
   f.composer.childNodes = [paragraph(f.composer.textContent)];
@@ -832,7 +944,8 @@ test("plain multiline prompt accepts exact editor paragraphs without normalizing
     childNodes: text.split('\n').map(paragraph),
     querySelectorAll: () => [] };
   const document = { querySelector: () => composer, activeElement: composer };
-  const invoke = () => vm.runInNewContext(`(${composerMatches.toString()})(text)`, { document, text });
+  const invoke = () => vm.runInNewContext(`(${composerMatches.toString()})(text)`,
+    { document, text, uniqueComposer: () => composer });
   assert.equal(invoke(), true);
   composer.childNodes[1] = paragraph('unexpected');
   assert.equal(invoke(), false);
@@ -847,7 +960,8 @@ test("plain multiline prompt accepts exact editor paragraphs without normalizing
 test("selection waits only for an absent pill and rejects ambiguity or altered app metadata", () => {
   const invoke = options => {
     const f = connectorFixture(options);
-    return vm.runInNewContext(`(${selectedConnector.toString()})(name)`, { document: f.document, name: f.name });
+    return vm.runInNewContext(`(${selectedConnector.toString()})(name)`,
+      { document: f.document, name: f.name, uniqueComposer: () => f.composer });
   };
   assert.equal(invoke({ pills: 0 }), null);
   for (const options of [{ pills: 2 }, { cursors: 0 }, { label: "Other app" },
@@ -954,7 +1068,9 @@ test('model selection ignores retained inert panels and closing menu animations'
       if (selector === '[data-model-reasoning-effort-slider]') return [panel];
       return [];
     } };
-  const invoke = name => vm.runInNewContext(`(${page[name].toString()})(["GPT-5.6 Sol"])`, { document });
+  const invoke = name => vm.runInNewContext(`(${page[name].toString()})(["GPT-5.6 Sol"])`,
+    { document, uniqueComposer: () => null, eligibleModelButtons: () => [],
+      eligibleEffortContainer: () => hiddenAncestor ? null : panel });
   for (const attribute of ['[inert]', '[aria-hidden="true"]', '[hidden]', '[role="menu"][data-state="closed"]']) {
     hiddenAncestor = attribute;
     const state = invoke('controls');
@@ -992,7 +1108,8 @@ test('effort control reads generation-prefixed public slider announcements', () 
   const document = { getElementById: () => ({ textContent: described }),
     querySelectorAll: selector => selector === '[data-model-reasoning-effort-slider]' ? [panel]
       : selector === '[role="menuitem"]' ? [chooser] : [] };
-  const read = () => plain(vm.runInNewContext(`(${effortState.toString()})()`, { document }));
+  const read = () => plain(vm.runInNewContext(`(${effortState.toString()})()`,
+    { document, eligibleEffortContainer: () => panel }));
   assert.deepEqual(read(), { min:0, max:4, value:3, label:'极高', announcedGeneration:'5.6',
     generationLabel:'5.6 SolPro', locked:false });
   described = '5.6 Pro，第 5 项，共 5 项。'; value = '4';
@@ -1004,13 +1121,201 @@ test('effort control reads generation-prefixed public slider announcements', () 
   assert.equal(read().label, null);
 });
 
+test('new effort container fallback stays inside the unique active model menu', () => {
+  const page = require(operatorTestScript('web_browser_page.cjs'));
+  const menu = {}, otherMenu = {};
+  const document = {activeElement: null, getElementById: () => ({textContent: '中，第 2 项，共 5 项。'}),
+    querySelectorAll: selector => selector === '[data-model-reasoning-effort-slider]' ? oldContainers
+      : selector === '[data-model-picker-power-slider]' ? newContainers
+        : selector === '[role="menuitem"]' ? choosers : []};
+  const menuitem = {getAttribute: name => name === 'aria-describedby' ? 'effort-help' : null,
+    focus: () => {document.activeElement = menuitem;}};
+  const slider = {getClientRects: () => [{}],
+    getAttribute: name => ({'aria-valuemin': '0', 'aria-valuemax': '4', 'aria-valuenow': '1'})[name] ?? null,
+    closest: selector => selector === '[role="menuitem"]' ? menuitem
+      : selector === '[role="menu"]' ? menu : null};
+  const chooser = {textContent: '最新', getClientRects: () => [{}],
+    getAttribute: name => name === 'aria-label' ? '选择模型' : null,
+    closest: selector => selector === '[role="menu"]' ? menu : null};
+  let sliders = [slider], oldContainers = [], newContainers = [], choosers = [chooser];
+  const panel = {getClientRects: () => [{}], closest: () => null,
+    querySelectorAll: () => sliders, querySelector: selector => selector === '[role="slider"]' ? slider : null};
+  newContainers = [panel];
+  const run = source => vm.runInNewContext(`(() => {
+    const eligibleEffortContainer = (${page.eligibleEffortContainer.toString()});
+    return ${source};
+  })()`, {document});
+  assert.equal(run('eligibleEffortContainer()'), panel);
+  assert.deepEqual(plain(run(`(${page.effortState.toString()})()`)),
+    {min: 0, max: 4, value: 1, label: '中', announcedGeneration: null,
+      generationLabel: '最新', locked: false});
+  run(`(${page.focusEffort.toString()})()`);
+  assert.equal(document.activeElement, menuitem);
+  oldContainers = [panel]; newContainers = [panel, panel];
+  assert.equal(run('eligibleEffortContainer()'), panel); // Preserve the legacy path.
+  oldContainers = [{...panel, getClientRects: () => []}]; newContainers = [panel];
+  assert.equal(run('eligibleEffortContainer()'), null); // No fallback from an unusable old path.
+  oldContainers = []; newContainers = [panel, panel];
+  assert.equal(run('eligibleEffortContainer()'), null);
+  newContainers = [panel]; sliders = [slider, slider];
+  assert.equal(run('eligibleEffortContainer()'), null);
+  sliders = [slider]; choosers = [{...chooser, closest: selector => selector === '[role="menu"]' ? otherMenu : null}];
+  assert.equal(run('eligibleEffortContainer()'), null);
+  choosers = [chooser, chooser];
+  assert.equal(run('eligibleEffortContainer()'), null);
+});
+
+test('failed effort range probe exposes only bounded slider shape', () => {
+  const {effortRangeShape} = require(operatorTestScript('web_browser_page.cjs'));
+  const attrs = {'aria-valuemin': '0', 'aria-valuemax': '4', 'aria-valuenow': '4'};
+  const menu = {}, menuitem = {};
+  let sliderHidden = false;
+  const slider = {getClientRects: () => [{}], getAttribute: name => attrs[name] ?? null,
+    closest: selector => selector === '[role="menuitem"]' ? menuitem
+      : selector === '[role="menu"]' ? menu
+        : selector === '[data-model-picker-power-slider]' ? panel
+          : sliderHidden && selector.includes('[aria-hidden="true"]') ? {} : null};
+  const chooser = {getClientRects: () => [{}], getAttribute: name => name === 'aria-label' ? '选择模型' : null,
+    closest: selector => selector === '[role="menu"]' ? menu : null};
+  let sliders = [slider], containers = [], newContainers = [], globalSliders = [];
+  const panel = {getClientRects: () => [{}], closest: () => null,
+    querySelectorAll: () => sliders, querySelector: () => null};
+  const document = {querySelectorAll: selector => selector === '[data-model-reasoning-effort-slider]'
+    ? containers : selector === '[data-model-picker-power-slider]' ? newContainers
+      : selector === '[role="slider"]' ? globalSliders
+        : selector === '[role="menuitem"]' ? [chooser] : []};
+  const read = () => plain(vm.runInNewContext(`(${effortRangeShape.toString()})()`, {document}));
+  assert.deepEqual(read(), {containerCount: 'zero', newContainerTotal: 'zero',
+    newContainerVisible: 'zero', sliderCount: 'unknown', min: 'unknown', max: 'unknown',
+    now: 'unknown', locked: 'unknown', globalSliderTotal: 'zero', globalSliderVisible: 'zero',
+    globalMin: 'unknown', globalMax: 'unknown', globalNow: 'unknown',
+    globalSliderRect: 'unknown', globalSliderHidden: 'unknown', globalSliderInert: 'unknown',
+    globalSliderAriaHidden: 'unknown', globalSliderClosedMenu: 'unknown',
+    globalSliderInNewContainer: 'unknown',
+    ownerMenuitem: 'unknown', ownerMenu: 'unknown', sameMenuAsChooser: 'unknown'});
+  newContainers = [panel]; globalSliders = [slider];
+  assert.equal(read().newContainerVisible, 'one');
+  assert.equal(read().globalSliderVisible, 'one');
+  assert.equal(read().globalMax, 4);
+  assert.equal(read().globalSliderInNewContainer, 'yes');
+  assert.equal(read().sameMenuAsChooser, 'yes');
+  sliderHidden = true;
+  assert.equal(read().globalSliderVisible, 'zero');
+  assert.equal(read().globalSliderRect, 'yes');
+  assert.equal(read().globalSliderAriaHidden, 'yes');
+  assert.equal(read().globalSliderInNewContainer, 'yes');
+  sliderHidden = false;
+  containers = [panel];
+  assert.equal(read().sliderCount, 'one');
+  assert.equal(read().max, 4);
+  attrs['aria-valuemax'] = '5';
+  panel.querySelector = () => ({});
+  assert.equal(read().max, 5);
+  assert.equal(read().globalMax, 5);
+  assert.equal(read().locked, 'yes');
+  attrs['aria-valuemax'] = 'PRIVATE PAGE TEXT';
+  assert.equal(read().max, 'other');
+  assert.equal(read().globalMax, 'other');
+  sliders = [slider, slider];
+  assert.equal(read().sliderCount, 'multiple');
+  assert.equal(read().max, 'unknown');
+  containers = [panel, panel];
+  assert.equal(read().containerCount, 'multiple');
+  globalSliders = [slider, slider];
+  assert.equal(read().globalSliderVisible, 'multiple');
+  assert.equal(read().sameMenuAsChooser, 'unknown');
+  assert.equal(JSON.stringify(read()).includes('PRIVATE PAGE TEXT'), false);
+});
+
+test('failed effort range host classification never retains generation header text', () => {
+  const host = hiddenHostFixture();
+  const diagnostic = host.invoke(`boundedEffortRange({label: 'Pro', announcedGeneration: '6',
+    generationLabel: 'PRIVATE PAGE TEXT 6 Pro'}, {containerCount: 'one', sliderCount: 'one',
+    newContainerTotal: 'one', newContainerVisible: 'one',
+    min: 0, max: 5, now: 4, locked: 'yes', globalSliderTotal: 'one',
+    globalSliderVisible: 'one', globalMin: 0, globalMax: 5, globalNow: 4,
+    globalSliderRect: 'yes', globalSliderHidden: 'no', globalSliderInert: 'no',
+    globalSliderAriaHidden: 'no', globalSliderClosedMenu: 'no',
+    globalSliderInNewContainer: 'yes',
+    ownerMenuitem: 'yes', ownerMenu: 'yes', sameMenuAsChooser: 'yes'}, '6')`);
+  assert.equal(diagnostic.generationMatches, 'yes');
+  assert.equal(diagnostic.proLabel, 'yes');
+  assert.equal(diagnostic.proHeader, 'yes');
+  assert.equal(diagnostic.max, 5);
+  assert.equal(diagnostic.globalMax, 5);
+  assert.equal(diagnostic.globalSliderInNewContainer, 'yes');
+  assert.equal(diagnostic.sameMenuAsChooser, 'yes');
+  assert.equal(JSON.stringify(diagnostic).includes('PRIVATE PAGE TEXT'), false);
+});
+
+test('effort range failure records fixed shape before dispatch without changing rejection', async () => {
+  const host = hiddenHostFixture({model: 'gpt-6-pro', effort: 'max'});
+  host.invoke(`let menuClosed = false;
+    menu = async () => {};
+    key = async () => { menuClosed = true; };
+    waitFor = async fn => { const value = await fn(); if (!value) throw Error('unexpected wait'); return value; };
+    page.effortState = function effortState() {};
+    page.effortRangeShape = function effortRangeShape() {};
+    inPage = async fn => fn === page.controls
+      ? {modelOption: !menuClosed, chooser: true, modelChecked: 'true'}
+      : fn === page.effortState
+        ? {min: 0, max: 5, value: 4, locked: true, label: 'Pro',
+          announcedGeneration: '6', generationLabel: 'PRIVATE PAGE TEXT 6 Pro'}
+        : fn === page.effortRangeShape
+          ? {containerCount: 'one', newContainerTotal: 'one', newContainerVisible: 'one',
+            sliderCount: 'one', min: 0, max: 5, now: 4, locked: 'yes',
+            globalSliderTotal: 'one', globalSliderVisible: 'one',
+            globalMin: 0, globalMax: 5, globalNow: 4,
+            globalSliderRect: 'yes', globalSliderHidden: 'no', globalSliderInert: 'no',
+            globalSliderAriaHidden: 'no', globalSliderClosedMenu: 'no',
+            globalSliderInNewContainer: 'yes',
+            ownerMenuitem: 'yes', ownerMenu: 'yes', sameMenuAsChooser: 'yes'}
+          : null;`);
+  await assert.rejects(host.invoke('selectModel()'), /web_effort_range_invalid/);
+  const result = host.events.find(event => event.kind === 'effort_range_unavailable');
+  assert.equal(result.stage, 'select_effort');
+  assert.equal(result.max, 5);
+  assert.equal(result.proLabel, 'yes');
+  assert.equal(JSON.stringify(result).includes('PRIVATE PAGE TEXT'), false);
+  assert.equal(host.events.some(event => event.kind === 'dispatch_started'), false);
+});
+
+test('effort shape exception retains its original rejection and bounded geometry', async () => {
+  const host = hiddenHostFixture({model: 'gpt-6-pro', effort: 'max'});
+  host.invoke(`let menuClosed = false;
+    menu = async () => {};
+    key = async () => { menuClosed = true; };
+    waitFor = async fn => { const value = await fn(); if (!value) throw Error('unexpected wait'); return value; };
+    page.effortState = function effortState() {};
+    page.effortRangeShape = function effortRangeShape() {};
+    inPage = async fn => fn === page.controls
+      ? {modelOption: !menuClosed, chooser: true, modelChecked: 'true'}
+      : fn === page.effortState ? (() => { throw Error('web_effort_shape_invalid'); })()
+        : fn === page.effortRangeShape
+          ? {containerCount: 'zero', newContainerTotal: 'one', newContainerVisible: 'one',
+            sliderCount: 'unknown', min: 'unknown', max: 'unknown', now: 'unknown',
+            locked: 'unknown', globalSliderTotal: 'one', globalSliderVisible: 'one',
+            globalMin: 0, globalMax: 5, globalNow: 4,
+            globalSliderRect: 'yes', globalSliderHidden: 'no', globalSliderInert: 'no',
+            globalSliderAriaHidden: 'no', globalSliderClosedMenu: 'no',
+            globalSliderInNewContainer: 'yes',
+            ownerMenuitem: 'yes', ownerMenu: 'yes', sameMenuAsChooser: 'yes'}
+          : null;`);
+  await assert.rejects(host.invoke('selectModel()'), /web_effort_shape_invalid/);
+  const record = host.events.find(event => event.kind === 'effort_range_unavailable');
+  assert.equal(record.globalMax, 5);
+  assert.equal(record.statePresent, 'no');
+  assert.equal(host.events.some(event => event.kind === 'dispatch_started'), false);
+});
+
 test("menu input requires the unique enabled model control to own focus", () => {
   let rows, focused = 0;
   const document = { activeElement: null,
     querySelector: () => ({ closest: () => ({ querySelectorAll: () => rows }) }) };
   const button = { getClientRects: () => [{}], getAttribute: () => "false",
     focus: () => { focused++; document.activeElement = button; } };
-  const invoke = () => vm.runInNewContext(`(${focusModelMenu.toString()})()`, { document });
+  const invoke = () => vm.runInNewContext(`(${focusModelMenu.toString()})()`,
+    { document, uniqueComposer: () => ({}), eligibleModelButtons: () => rows });
   rows = [button];
   assert.equal(invoke(), true);
   assert.equal(focused, 1);

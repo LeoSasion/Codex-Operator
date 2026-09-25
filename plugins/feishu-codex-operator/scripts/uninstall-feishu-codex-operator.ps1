@@ -4,6 +4,7 @@ param([Parameter(Mandatory=$true)][string]$ProjectRoot, [switch]$Apply,
       [string]$CodexConfig, [int]$RouterPort = 4317)
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'operator_installation.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot 'operator_python.psm1') -Force
 $project = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $ProjectRoot).Path).TrimEnd('\')
 $entryMutex = $null
 $ownsEntryMutex = $false
@@ -28,9 +29,9 @@ $processes = @(Get-CimInstance Win32_Process)
 $operatorPath = Join-Path $runtime 'operator_main.py'
 $running = @($processes | Where-Object { $_.Name -match '^python' -and $_.CommandLine -and
     $_.CommandLine.Replace('/','\').IndexOf($operatorPath,[StringComparison]::OrdinalIgnoreCase) -ge 0 })
-$python = (Get-Command python -ErrorAction Stop).Source
+$python = Get-OperatorPython -Required
 $helper = Join-Path $PSScriptRoot 'operator_uninstall.py'
-$observed = & $python -B $helper inspect --project-root $project --codex-config $CodexConfig --port $RouterPort
+$observed = & $python.Source @($python.Prefix) -B $helper inspect --project-root $project --codex-config $CodexConfig --port $RouterPort
 if ($LASTEXITCODE -ne 0) { throw 'Uninstall routing preflight failed; nothing was restored.' }
 $routing = $observed | ConvertFrom-Json
 $blocks = @()
@@ -78,7 +79,7 @@ $preview = [ordered]@{mode='preview'; ready=($blocks.Count -eq 0); blockers=$blo
     routing=$routing; data_retained=$true; taskbar_native_launcher_retained=$true; desktop_plugin_removal='separate_user_action'}
 if (-not $Apply) { $preview | ConvertTo-Json -Depth 10; exit 0 }
 if ($blocks.Count) { $preview | ConvertTo-Json -Depth 10; throw 'Uninstall stopped at preflight; no restore was attempted.' }
-& $python -B $helper detach --project-root $project --codex-config $CodexConfig --port $RouterPort
+$null = & $python.Source @($python.Prefix) -B $helper detach --project-root $project --codex-config $CodexConfig --port $RouterPort
 if ($LASTEXITCODE -ne 0) { throw 'Routing detachment stopped; no files were restored or requests replayed.' }
 if ($launchers.Count -eq 1) {
     Write-OperatorAtomicBytes (Join-Path $bundle 'native-only') ([Text.Encoding]::ASCII.GetBytes('native-only'))

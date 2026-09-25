@@ -196,6 +196,43 @@ def safe_effort_diagnostic(value):
     return result
 
 
+def safe_effort_range_diagnostic(value):
+    """A fixed, failure-only slider shape; never preserve page or request text."""
+    enums = {
+        'containerCount': {'zero', 'one', 'multiple', 'unknown'},
+        'newContainerTotal': {'zero', 'one', 'multiple', 'unknown'},
+        'newContainerVisible': {'zero', 'one', 'multiple', 'unknown'},
+        'sliderCount': {'zero', 'one', 'multiple', 'unknown'},
+        'globalSliderTotal': {'zero', 'one', 'multiple', 'unknown'},
+        'globalSliderVisible': {'zero', 'one', 'multiple', 'unknown'},
+        'statePresent': {'yes', 'no'},
+        'locked': {'yes', 'no', 'unknown'},
+        'ownerMenuitem': {'yes', 'no', 'unknown'},
+        'ownerMenu': {'yes', 'no', 'unknown'},
+        'sameMenuAsChooser': {'yes', 'no', 'unknown'},
+        'globalSliderRect': {'yes', 'no', 'unknown'},
+        'globalSliderHidden': {'yes', 'no', 'unknown'},
+        'globalSliderInert': {'yes', 'no', 'unknown'},
+        'globalSliderAriaHidden': {'yes', 'no', 'unknown'},
+        'globalSliderClosedMenu': {'yes', 'no', 'unknown'},
+        'globalSliderInNewContainer': {'yes', 'no', 'unknown'},
+        'generationMatches': {'yes', 'no', 'unannounced', 'unknown'},
+        'proLabel': {'yes', 'no', 'unknown'},
+        'proHeader': {'yes', 'no', 'unknown'},
+    }
+    result = {}
+    for name, allowed in enums.items():
+        require(value.get(name) in allowed, 'web_effort_range_diagnostic_invalid')
+        result[name] = value[name]
+    for name in ('min', 'max', 'now', 'globalMin', 'globalMax', 'globalNow'):
+        item = value.get(name)
+        require(type(item) is int and 0 <= item <= 9
+            or isinstance(item, str) and item in ('absent', 'other', 'unknown'),
+            'web_effort_range_diagnostic_invalid')
+        result[name] = item
+    return result
+
+
 def safe_model_network(value):
     require(value.get('phase') in ('sent', 'response_started', 'completed', 'error')
         and (value.get('status') is None or type(value['status']) is int and 100 <= value['status'] <= 599)
@@ -412,7 +449,8 @@ class WebTextBrowserDriver:
                         finals.append(value['publicMessage'])
                     if kind in ('dispatch_started', 'model_verified', 'public_user_binding', 'generation_state', 'completed', 'failed', 'exit_requested', 'cancel_requested',
                                 'cancel_click_attempted', 'cancel_click_unavailable', 'effort_initial_state', 'effort_step_verified',
-                                'effort_step_unavailable', 'effort_pro_unavailable', 'effort_pro_verified', 'effort_target_verified'):
+                                'effort_step_unavailable', 'effort_pro_unavailable', 'effort_pro_verified', 'effort_target_verified',
+                                'effort_range_unavailable'):
                         event = {'attempt': self.attempts, 'kind': kind,
                             'stage': value.get('stage') if value.get('stage') in self.stages else 'other',
                             'code': value.get('error') if isinstance(value.get('error'), str)
@@ -423,7 +461,9 @@ class WebTextBrowserDriver:
                             require(matches_selection(value, request_config), 'web_browser_selection_identity_invalid')
                             event.update(model=request_config['model'], effort=request_config['effort'],
                                 effortIndex=value['effortIndex'])
-                        if kind.startswith('effort_'):
+                        if kind == 'effort_range_unavailable':
+                            event.update(safe_effort_range_diagnostic(value))
+                        elif kind.startswith('effort_'):
                             event.update(safe_effort_diagnostic(value))
                         if kind == 'public_user_binding' and isinstance(value.get('shape'), dict):
                             event['shape'] = safe_user_binding_diagnostic(value['shape'])

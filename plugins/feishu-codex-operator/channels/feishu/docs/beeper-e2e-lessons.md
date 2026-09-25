@@ -180,14 +180,15 @@ two-sample smoke check rather than a statistical reliability claim.
 
 The English prompt correlated with better results in these samples, including
 Spark/low, but language, model effort, host load, Desktop state, and time were
-not independently controlled. Current policy requires English for all
-Operator-authored Spark input, not only the outer Beeper instructions. Preserve
+not independently controlled. The retained Spark compatibility path used English
+for all Operator-authored input, not only the outer Beeper instructions. Preserve
 the original user text and losslessly encode attachment metadata. Keep the
 Chinese control template for explicit Luna diagnostics, not Spark. Earlier
 Chinese Spark samples above remain historical evidence, not a current option.
-Do not turn a language choice into an automatic retry. Keep Spark/medium as the normal policy until a
-larger paired comparison justifies changing it; Spark/low remains a bounded
-explicit diagnostic.
+Do not turn a language choice into an automatic retry. The former recommendation
+to keep Spark/medium as the normal policy was superseded by the owner's
+2026-09-21 Luna/low choice; these Spark samples are retained as historical evidence,
+not a current selection or a reason to run new diagnostics.
 
 ## What success means
 

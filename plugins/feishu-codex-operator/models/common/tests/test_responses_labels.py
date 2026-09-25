@@ -26,7 +26,8 @@ from unittest.mock import patch
 
 import test_responses_verification as fixtures
 from operator_core.model_registry import RouterError
-from operator_core.responses_labels import PROCESS_CHECK, label_update, assert_stopped
+from operator_core.responses_labels import (PROCESS_CHECK, label_update, assert_stopped,
+                                            assert_registry_edit_stopped)
 
 
 class LabelTests(unittest.TestCase):
@@ -160,6 +161,30 @@ class LabelTests(unittest.TestCase):
             db.commit()
         with self.assertRaisesRegex(RouterError, 'callbacks_must_be_empty'):
             check(good)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows lifecycle observation')
+    def test_registry_guard_binds_runtime_and_requires_empty_callbacks(self):
+        runtime = self.state.parent
+        (runtime / 'operator_main.py').write_text('# isolated fixture')
+        observed = dict(desktop_running=1, operator_running=0, router_running=0,
+                        desktop_version='any installed version')
+        response = SimpleNamespace(returncode=0, stdout=json.dumps(observed).encode())
+        with patch('operator_core.responses_labels.subprocess.run', return_value=response):
+            with self.assertRaisesRegex(RouterError, 'registry_edit_callback_state_unavailable'):
+                assert_registry_edit_stopped(self.state)
+            with closing(sqlite3.connect(runtime / 'callbacks.sqlite3')) as db:
+                db.execute('create table final_callback_requests (state text)')
+                db.commit()
+            assert_registry_edit_stopped(self.state)
+            with closing(sqlite3.connect(runtime / 'callbacks.sqlite3')) as db:
+                db.execute("insert into final_callback_requests values ('captured')")
+                db.commit()
+            with self.assertRaisesRegex(RouterError, 'callbacks_must_be_empty_for_registry_edit'):
+                assert_registry_edit_stopped(self.state)
+        with patch('operator_core.responses_labels.subprocess.run', return_value=SimpleNamespace(
+                returncode=0, stdout=json.dumps(observed | {'router_running': 1}).encode())):
+            with self.assertRaisesRegex(RouterError, 'must_be_stopped_for_registry_edit'):
+                assert_registry_edit_stopped(self.state)
 
     def test_missing_cli_profile_keeps_label_unverified(self):
         result = label_update(self.state, self.row['slug'], self.fixture.path, None, self.fixture.versions)

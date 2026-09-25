@@ -11,6 +11,7 @@
 5. **功能边界不能用验收摘要抹平。** 独立 Web provider 的 CLI 读写、测试、搜索、历史与取消复用，不等于主窗口菜单或同任务模型切换已验收。Channels 新用户自动建任务也须独立验证，不能用既有账号闭环替代。
 6. **运行路径比目录名可靠。** 临时目录可能实际保存正在使用的 Electron、Python 或浏览器资料；源码、设置及程序还可能绑定准确路径与摘要。卸载预检须覆盖独立 Web 服务，不能只检查旧路由端口或某一个启动计划。
 7. **保留失败与原件，去掉重复载荷。** 失败日志、回执、夹具、版本和摘要是经验依据；缓存和重复解压内容不是。保留精确 ZIP 后可按逐文件摘要删除相同解压副本；相同测试程序可保留一份并记录其余路径的对应关系。恢复事务的原件不能用“另一份看起来一样的文件”替代。
+8. **维护入口复用同一解释器选择。** Windows 只有 `py.exe` 而没有 `python.exe` 时，用户任务管理、卸载预览和发布审计原先会在调用前失败；这些入口现在使用只读、有界的 `Get-OperatorPython`，而 MCP 的 `python.exe` 就绪要求仍单独核验。隔离回归见 `test_user_task_status_reaches_helper_without_python_on_path`、`test_maintenance_entries_use_discovered_python_without_python_command` 和 `test_release_audit_works_with_only_python_launcher_on_path`。
 
 截至 2026-09-23，既有飞书账号的消息闭环和官方模型切换已重新验证；第二个账号的新用户闭环、当前主窗口 Web 入口仍单列待验。清理不把它们改判为通过。具体证据范围见[核心验收](core-recovery-20260921.md)和[原生对话改进计划](../../models/web/docs/native-conversation-plan.md)。
 
@@ -43,9 +44,9 @@
 
 ## 发布时避免把开发现场带出去
 
-公开源文件按 `assets/release-inventory.json` 收集。`build_codex_operator_release.py` 的 `PUBLIC_DOCS` 会把指定开发文档替换为公开摘要，但普通 Git 暂存不会自动执行这一步。
+公开源文件按 `assets/release-inventory.json` 收集。五份常用公开文档只在原位维护；发布构建核对其中的 `reviewed_document_sha256`（仅计算摘要时统一 CRLF/LF），并再次检查敏感内容，打包仍保留原字节。修改这些文档后须审阅完整新内容，再更新对应摘要；摘要通过不代替人工检查。
 
-工作区里的同名文档可能仍是更完整的私有版本。不得直接 `git add -A` 后假定隔离规则会去掉其中的本机路径、身份或运行记录；先审阅准确 staged 字节及所有不在 `PUBLIC_DOCS` 中的文档。保留已经审阅的公开摘要与私有原件，不能用文档同名推断二者相同。
+更完整的旧开发记录只在 `_quarantine/private-docs-*` 作为私有历史保留，不参与发布。普通 Git 暂存不会执行发布筛查；不得直接 `git add -A` 后假定本机路径、身份或运行记录会被排除。先审阅准确 staged 字节及发布清单中的所有其他文档，不把历史记录中带日期的“当前”当作新状态。
 
 整理这类旧工作区时，先将长记录完整归入所属功能的 `_quarantine/private-docs-YYYYMMDD/`，留下原路径、原件摘要和公开版本的准确 Git 提交，再把主文档统一为已审阅摘要。调查历史问题时按归档清单回查原记录；原文中带日期的“当前”“未发布”等表述属于当时状态。
 

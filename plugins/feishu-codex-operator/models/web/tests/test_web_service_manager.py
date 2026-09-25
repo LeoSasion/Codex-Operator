@@ -770,5 +770,34 @@ class WebServiceRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'marker_invalid'): manager.recover(self.profile)
 
 
+class WebReadOnlyUninstallDependencyTests(unittest.TestCase):
+    def test_configured_web_profile_can_be_checked_without_aiohttp(self):
+        with tempfile.TemporaryDirectory(prefix='operator-web-read-only-') as directory:
+            project = Path(directory).resolve()
+            home = project / 'home'; home.mkdir()
+            config = home / 'config.toml'; config.write_bytes(b'')
+            browser = project / 'browser'; browser.mkdir()
+            settings = project / 'settings.json'
+            settings.write_text(json.dumps({'electron': str(Path(sys.executable).resolve()),
+                'profile_directory': str(browser), 'session_partition': 'persist:fixture'}))
+            profile = project / '.codex/operator-web-service'
+            profile.parent.mkdir()
+            manager.configure(profile, settings)
+            original = {str(path): path.read_bytes() for path in project.rglob('*') if path.is_file()}
+            child = ('import importlib.util, pathlib, sys; '
+                'assert importlib.util.find_spec("aiohttp") is None; '
+                'sys.path.insert(0, sys.argv[1]); import operator_uninstall; '
+                'operator_uninstall.inspect_web_startup(pathlib.Path(sys.argv[2]), '
+                'pathlib.Path(sys.argv[3]))')
+            environment = os.environ.copy()
+            environment.pop('PYTHONPATH', None)
+            result = subprocess.run([sys.executable, '-S', '-c', child,
+                str(ROOT / 'scripts'), str(project), str(config)],
+                capture_output=True, text=True, timeout=15, env=environment)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual({str(path): path.read_bytes() for path in project.rglob('*') if path.is_file()},
+                original)
+
+
 if __name__ == '__main__':
     unittest.main()

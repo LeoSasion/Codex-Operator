@@ -89,13 +89,15 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
         self.status = 200
         self.json_response = False
         self.negotiate_compression = False
+        self.account_catalogs = {}
         self.http_release = None
         self.http_entered = asyncio.Queue()
         self.stream_body = b'data: {"type":"response.completed"}\n\ndata: [DONE]\n\n'
 
         async def upstream(request):
             if request.path.endswith("/models"):
-                return web.json_response(CATALOG)
+                return web.json_response(self.account_catalogs.get(
+                    request.headers.get("ChatGPT-Account-Id"), CATALOG))
             if request.method == "GET":
                 self.handshakes.append(request.path)
                 if self.redirect_ws:
@@ -218,6 +220,22 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
             changed = await self.client.get(self.prefix + "/models", headers=self.headers)
             self.assertNotEqual(changed.headers["ETag"], etag)
             await changed.read()
+
+    async def test_native_catalog_cache_is_scoped_to_chatgpt_account(self):
+        second = deepcopy(CATALOG)
+        second["models"][0]["slug"] = "native-second-account"
+        self.account_catalogs = {"native-account": CATALOG, "second-account": second}
+        first = await self.client.post(self.prefix + "/responses", headers=self.headers,
+            json={"model": "native-test", "input": "first"})
+        self.assertEqual(first.status, 200)
+        await first.read()
+        second_headers = {**self.headers, "ChatGPT-Account-Id": "second-account"}
+        later = await self.client.post(self.prefix + "/responses", headers=second_headers,
+            json={"model": "native-second-account", "input": "second"})
+        self.assertEqual(later.status, 200)
+        await later.read()
+        self.assertEqual([json.loads(body)["model"] for body, _ in self.received],
+                         ["native-test", "native-second-account"])
 
     async def test_catalog_and_native_http_are_lossless(self):
         response = await self.client.get(self.prefix + "/models?client_version=0.1.0", headers=self.headers)

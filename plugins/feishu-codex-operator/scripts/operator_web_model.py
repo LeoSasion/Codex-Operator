@@ -35,14 +35,14 @@ from operator_core.responses_tool_adapter import loads
 from operator_core.web_browser_driver import WebTextBrowserDriver, WebMcpBrowserDriver, private_directory
 from operator_core.web_browser_session import WebBrowserSession
 from operator_core.web_connection import WebMcpConnection
-from operator_core.web_openai_tunnel import WebOpenAITunnel
-from operator_core.web_mcp_transport import MCP_TOOLS, WebMcpEndpoint, WebResponsesBridge, require
-from operator_core.web_responses_provider import WebResponsesProvider
+from operator_core.web_mcp_transport import WebMcpEndpoint, WebResponsesBridge, mcp_tool_declarations, require
 
 
 SLUG = 'api/chatgpt-web/gpt-5.6-sol'
 DEFAULT_SERVICE_LIFETIME = 0
 MAX_SERVICE_LIFETIME = 72 * 60 * 60
+MCP_BEGIN_RESULT_MODE = 'structured_begin_v1'
+MCP_CALL_RESULT_MODE = 'structured_call_v1'
 
 
 def text_route(*, tools=False, model='gpt-5.6-sol'):
@@ -220,7 +220,8 @@ def check_connection(state, session, health):
                         'web_connection_probe_session_invalid')
                     headers['Mcp-Session-Id'] = sid
                 else:
-                    require(value.get('result') == {'tools': MCP_TOOLS},
+                    require(value.get('result') == {'tools': mcp_tool_declarations(
+                        MCP_BEGIN_RESULT_MODE, MCP_CALL_RESULT_MODE)},
                         'web_connection_probe_tools_changed')
         current, current_health = live_status(state)
         require(current == session and current_health.get('active') is False
@@ -369,6 +370,10 @@ def assistance_error(error):
 
 
 async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME, *, prepare_hidden=False):
+    # Saved status and uninstall checks need no HTTP runtime until actual serving.
+    from operator_core.web_openai_tunnel import WebOpenAITunnel
+    from operator_core.web_responses_provider import WebResponsesProvider
+
     require(type(lifetime) is int and (lifetime == 0 or 60 <= lifetime <= MAX_SERVICE_LIFETIME),
         'web_service_lifetime_invalid')
     config = read_json(settings)
@@ -384,8 +389,8 @@ async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME, *, prepare_h
         or lifecycle == 'session_v1' and not assistance), 'web_startup_prepare_invalid')
     startup_prepare = prepare_hidden
     private_directory(state)
-    endpoint = WebMcpEndpoint(begin_result_mode='structured_begin_v1' if mode == 'mcp_v1' else 'text_v1',
-        call_result_mode='structured_call_v1' if mode == 'mcp_v1' else 'text_v1',
+    endpoint = WebMcpEndpoint(begin_result_mode=MCP_BEGIN_RESULT_MODE if mode == 'mcp_v1' else 'text_v1',
+        call_result_mode=MCP_CALL_RESULT_MODE if mode == 'mcp_v1' else 'text_v1',
         indexed_protocol='mcp_context_records_v3' if mode == 'mcp_v1' else 'mcp_indexed_request_v1')
     connection = None
     if mode == 'mcp_v1':

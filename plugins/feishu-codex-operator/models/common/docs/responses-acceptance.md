@@ -35,8 +35,8 @@ The endpoint's explicit standard-function configuration passed a bounded CLI
 search without a prescribed calling program, then a fresh guided search after
 the active registry reload. The exec description-only candidate failed and was
 withdrawn. Desktop refresh, new-task acceptance and long-history compaction remain
-separate unpassed gates. See [the diagnosis](model-router.md#local-exec-call-level-diagnosis-20260914)
-and [validation record](../../../development/docs/release-audit.md#alpha132-local-qwen-follow-up-2026-09-14-unpublished).
+separate unpassed gates. See [the public diagnosis](model-router.md#local-exec-call-level-diagnosis-2026-09-14);
+the detailed validation receipt remains in the private historical archive.
 
 ## CLI prerelease identity, 2026-09-13
 

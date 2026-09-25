@@ -1,19 +1,3 @@
-# Codex-Operator 使用说明
+# Codex-Operator 中文导航
 
-这是保留的中文导航页，不另维护一份运行策略。
-
-- [安装与日常操作](README.md)：Windows 命令、飞书 `/init` 与只读诊断。
-- [操作与开发 skill](skills/feishu-codex-operator/SKILL.md)：对话中的逐步配置引导、源码权威与按任务加载的参考资料。
-- [Channels 首次接入](channels/feishu/docs/automatic-task-provisioning.md)：选择本地 Beeper 或 Luna/low，授权后由助手创建通道项目、Beeper 与默认用户任务，按需持续创建/续用。
-- [ChatGPT Web 固定连接](models/web/docs/web-fixed-tunnel.md)：助手打开网页，逐步引导保存连接编号与运行密钥。
-- [原生 Web 体验方案](models/web/docs/native-web-experience.md)：最新参考优先级、一次配置与统一后台管理。
-- [原生对话改进计划](models/web/docs/native-conversation-plan.md)：重点研究 Chat On Steroids，减少 Codex 原生对话中的点击、配置和中断；大方向改动先汇报。
-- [架构](shared/docs/architecture.md)：投递、回调、额度缓存与等待策略。
-- [命名](shared/docs/terminology.md)：Operator、Beeper、Responder、wake-up signal 与 wake lease。
-- [文件复盘与清理](development/docs/workspace-maintenance.md)：区分运行依赖、历史证据与可重建产物，按清单清理并保留经验。
-- [升级](upgrade-operator.md)：新命名切换与数据保留。
-- [初始化和安全卸载](shared/docs/installation-and-removal.md)：首次说明、入口备份、恢复冲突和卸载顺序。
-
-Beeper 只中继，Responder 执行业务，Operator 负责接收、路由和回传。
-
-Web 模型目录维护先读 [版本与推理档位契约](models/web/docs/web-model-catalog.md)。网页档位以当前可见菜单为准；Pro 单列，“最新”须核对明确代际标签。普通与 Pro 请求共享串行执行和已消费任务记录，不能通过换模型重试。目录准备、CLI 执行、Desktop 菜单与路由分别验收，不为增加菜单项自动恢复全局路由。
+本页保留旧文件链接，不另维护操作规则。开始使用请读[快速开始](QUICKSTART.md)；配置、开发及按任务选择资料请读[插件 Skill](skills/feishu-codex-operator/SKILL.md)。

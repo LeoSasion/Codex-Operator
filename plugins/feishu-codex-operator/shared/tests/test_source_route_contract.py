@@ -14,6 +14,7 @@ _prepare_test_imports(_OPERATOR_PLUGIN_ROOT)
 from contextlib import redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -43,6 +44,20 @@ class SourceRouteContractTests(unittest.TestCase):
             check=True,
         )
         self.assertEqual("passed", json.loads(result.stdout)["status"])
+
+    @unittest.skipUnless(os.name == 'nt' and Path(r'C:\Windows\py.exe').is_file()
+                         and shutil.which('pwsh'), 'Windows Python launcher and PowerShell required')
+    def test_release_audit_works_with_only_python_launcher_on_path(self) -> None:
+        env = {**os.environ, 'PATH': r'C:\Windows\System32;C:\Windows'}
+        self.assertIsNone(shutil.which('python', path=env['PATH']))
+        result = subprocess.run(
+            [shutil.which('pwsh'), '-NoProfile', '-File',
+             str(PLUGIN_ROOT / 'scripts/audit-feishu-codex-release.ps1')],
+            env=env, capture_output=True, text=True, encoding='utf-8',
+            errors='replace', timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual('passed', json.loads(result.stdout)['status'])
 
     def _write_json(self, path: Path, value: object) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

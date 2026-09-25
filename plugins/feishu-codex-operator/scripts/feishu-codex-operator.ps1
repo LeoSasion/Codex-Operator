@@ -248,6 +248,11 @@ function Get-OperatorPaths {
     }
 }
 
+function Get-OperatorRuntimePython {
+    Import-Module (Join-Path $PSScriptRoot 'operator_python.psm1') -Force
+    return Get-OperatorPython -Required
+}
+
 function Set-OperatorEnvValue {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -1773,16 +1778,8 @@ function Invoke-OperatorValidate {
             throw 'Stop the exact Operator before running focused tests.'
         }
         Update-ProcessPathFromEnvironment
-        $python = Get-ExecutablePreflightResult 'python.exe'
-        $pythonPrefix = @()
-        if (-not $python.Available) {
-            $python = Get-ExecutablePreflightResult 'py.exe' @('-3', '--version')
-            $pythonPrefix = @('-3')
-        }
-        if (-not $python.Available) {
-            throw 'Python 3.10+ is required for Operator tests.'
-        }
-        & $python.Source @pythonPrefix -B (Join-Path $pluginRoot 'development\run_tests.py') -v
+        $python = Get-OperatorRuntimePython
+        & $python.Source @($python.Prefix) -B (Join-Path $pluginRoot 'development\run_tests.py') -v
         if ($LASTEXITCODE -ne 0) {
             throw "Operator unit tests failed with exit code $LASTEXITCODE."
         }
@@ -2178,17 +2175,8 @@ function Invoke-FinalCallbackRegistryHelper {
     }
 
     Update-ProcessPathFromEnvironment
-    $python = Get-ExecutablePreflightResult 'python.exe'
-    $pythonPrefix = @()
-    if (-not $python.Available) {
-        $python = Get-ExecutablePreflightResult 'py.exe' @('-3', '--version')
-        $pythonPrefix = @('-3')
-    }
-    if (-not $python.Available) {
-        throw 'Python 3.10+ is required for final-callback registry management.'
-    }
-
-    & $python.Source @pythonPrefix -S -B $helper --runtime-dir $paths.Runtime $Command
+    $python = Get-OperatorRuntimePython
+    & $python.Source @($python.Prefix) -S -B $helper --runtime-dir $paths.Runtime $Command
     if ($LASTEXITCODE -ne 0) {
         throw "Final Callback registry helper failed with exit code $LASTEXITCODE."
     }
@@ -2273,17 +2261,20 @@ switch ($scopeName) {
                 Assert-OperatorStopped
                 if ([string]::IsNullOrWhiteSpace($GrantFile)) { throw 'An explicit saved owner grant is required.' }
                 $paths = Get-OperatorPaths
-                & python -B (Join-Path $PSScriptRoot 'routing_cli.py') --runtime-dir $paths.Runtime user-tasks-configure --grant-file $GrantFile
+                $taskPython = Get-OperatorRuntimePython
+                & $taskPython.Source @($taskPython.Prefix) -B (Join-Path $PSScriptRoot 'routing_cli.py') --runtime-dir $paths.Runtime user-tasks-configure --grant-file $GrantFile
                 if ($LASTEXITCODE -ne 0) { throw 'User task configuration was not completed; retained records require review.' }
             }
             'user-tasks-status' {
                 $paths = Get-OperatorPaths
-                & python -B (Join-Path $PSScriptRoot 'routing_cli.py') --runtime-dir $paths.Runtime user-tasks-status
+                $taskPython = Get-OperatorRuntimePython
+                & $taskPython.Source @($taskPython.Prefix) -B (Join-Path $PSScriptRoot 'routing_cli.py') --runtime-dir $paths.Runtime user-tasks-status
                 if ($LASTEXITCODE -ne 0) { throw 'User task status is unavailable.' }
             }
             'user-tasks-revoke' {
                 $paths = Get-OperatorPaths
-                & python -B (Join-Path $PSScriptRoot 'routing_cli.py') --runtime-dir $paths.Runtime user-tasks-revoke
+                $taskPython = Get-OperatorRuntimePython
+                & $taskPython.Source @($taskPython.Prefix) -B (Join-Path $PSScriptRoot 'routing_cli.py') --runtime-dir $paths.Runtime user-tasks-revoke
                 if ($LASTEXITCODE -ne 0) { throw 'User task revocation was not completed.' }
             }
             'start' { Invoke-OperatorStart }

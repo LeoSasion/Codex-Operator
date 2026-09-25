@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from queue import Empty, Queue
 import re
+import secrets
 import shutil
 import subprocess
 import threading
@@ -444,7 +445,7 @@ def extract_message_text(event: dict[str, Any], bot_open_id: str = "") -> str:
                 collect(value[key])
 
     collect(raw_content)
-    return "\n".join(dict.fromkeys(parts)).strip()
+    return "\n".join(parts).strip()
 
 
 def conversation_scope(event: dict[str, Any]) -> str:
@@ -500,12 +501,18 @@ def resolve_session_metadata(
             if isinstance(messages, list) and messages and isinstance(messages[0], dict):
                 sender = messages[0].get("sender")
                 if isinstance(sender, dict):
-                    sender_id = _first_text(sender, ("id", "open_id", "openId")) or sender_id
-                    name = _first_text(sender, ("name", "display_name", "sender_name"))
-                    if not name:
-                        name = _first_text(
-                            sender.get("sender_i18n_names"), ("zh_cn", "en_us", "ja_jp")
-                        )
+                    fetched_id = _first_text(sender, ("id", "open_id", "openId"))
+                    if sender_id and fetched_id and fetched_id != sender_id:
+                        # Admission used the event sender. A secondary name
+                        # lookup must not switch the user/task identity.
+                        logger.warning("Feishu sender metadata disagreed with admitted event")
+                    else:
+                        sender_id = sender_id or fetched_id
+                        name = _first_text(sender, ("name", "display_name", "sender_name"))
+                        if not name:
+                            name = _first_text(
+                                sender.get("sender_i18n_names"), ("zh_cn", "en_us", "ja_jp")
+                            )
         return SessionMetadata(name or sender_id or "飞书用户", chat_type, chat_id, sender_id)
 
     group_name = _first_text(event, ("chat_name", "group_name"))
@@ -554,11 +561,50 @@ def _within(path: Path, root: Path) -> bool:
         return False
 
 
-def _inbox_bytes(root: Path) -> int:
+def _linked_path(path: Path) -> bool:
+    is_junction = getattr(path, "is_junction", None)
+    return path.is_symlink() or (is_junction is not None and is_junction())
+
+
+def _unlinked_within(path: Path, root: Path) -> bool:
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        return False
+    if not _within(path, root) or _linked_path(root):
+        return False
+    current = root
+    for part in parts:
+        current = current / part
+        if _linked_path(current):
+            return False
+    return True
+
+
+def _inbox_entries(config: OperatorConfig):
+    root = config.inbox_dir
+    if not root.exists() or not _unlinked_within(root, config.project_root):
+        return
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        if not _unlinked_within(directory, root):
+            continue
+        try:
+            children = list(directory.iterdir())
+        except OSError:
+            continue
+        for path in children:
+            if not _unlinked_within(path, root):
+                continue
+            if path.is_dir():
+                pending.append(path)
+            yield path
+
+
+def _inbox_bytes(config: OperatorConfig) -> int:
     total = 0
-    if not root.exists():
-        return 0
-    for path in root.rglob("*"):
+    for path in _inbox_entries(config):
         try:
             if path.is_file():
                 total += path.stat().st_size
@@ -570,10 +616,10 @@ def _inbox_bytes(root: Path) -> int:
 def cleanup_inbox(config: OperatorConfig) -> None:
     cutoff = time.time() - config.resource_ttl_hours * 3600
     root = config.inbox_dir
-    if not root.exists():
-        return
-    for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+    for path in sorted(_inbox_entries(config), key=lambda item: len(item.parts), reverse=True):
         try:
+            if not _unlinked_within(path, root):
+                continue
             if path.is_file() and path.stat().st_mtime < cutoff:
                 path.unlink()
             elif path.is_dir() and not any(path.iterdir()):
@@ -598,6 +644,14 @@ def _allowed_resource(path: Path, kind: str, size: int, config: OperatorConfig) 
     return True
 
 
+def _resource_digest(path: Path) -> str:
+    digest_builder = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest_builder.update(block)
+    return digest_builder.hexdigest()[:24]
+
+
 class AttachmentInbox:
     """Shared two-download lane, incremental retained size, periodic reconciliation."""
 
@@ -605,7 +659,7 @@ class AttachmentInbox:
         self.config = config
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="attachment")
         self._lock = threading.Lock()
-        self._bytes = _inbox_bytes(config.inbox_dir)
+        self._bytes = _inbox_bytes(config)
         self._active = 0
         self._generation = 0
         self._next_maintenance = 0.0
@@ -622,7 +676,7 @@ class AttachmentInbox:
 
         def reconcile() -> None:
             cleanup_inbox(self.config)
-            total = _inbox_bytes(self.config.inbox_dir)
+            total = _inbox_bytes(self.config)
             with self._lock:
                 # Never overwrite incremental accounting with a moving scan.
                 if self._generation == generation and not self._active:
@@ -633,7 +687,13 @@ class AttachmentInbox:
 
     def retain(self, path: Path, final_path: Path, size: int) -> Path | None:
         with self._lock:
-            if final_path.exists() and final_path != path:
+            if final_path != path and (final_path.exists() or final_path.is_symlink()):
+                if final_path.is_symlink() or not final_path.is_file():
+                    raise OSError("retained_resource_conflict")
+                existing_stat = final_path.stat()
+                if (existing_stat.st_nlink > 1 or existing_stat.st_size != size
+                        or _resource_digest(final_path) != final_path.stem):
+                    raise OSError("retained_resource_conflict")
                 path.unlink()
                 return final_path
             if self._bytes + size > self.config.max_total_resource_bytes:
@@ -667,20 +727,30 @@ def download_message_resources(
     if not refs:
         return []
     inbox_root = config.inbox_dir
-    if not _within(inbox_root, config.project_root):
+    if not _unlinked_within(inbox_root, config.project_root):
         logger.error("resource inbox must be inside the project root")
         return []
     scope_hash = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:16]
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     attachment_dir = inbox_root / scope_hash / day
+    if not _unlinked_within(attachment_dir, inbox_root):
+        logger.error("resource attachment directory must stay inside the inbox")
+        return []
     attachment_dir.mkdir(parents=True, exist_ok=True)
+    if not _unlinked_within(attachment_dir, inbox_root):
+        logger.error("resource attachment directory must stay inside the inbox")
+        return []
     owned_inbox = inbox is None
     inbox = inbox or AttachmentInbox(config)
 
     def download(ref: tuple[int, tuple[str, str]]) -> MessageResource | None:
         index, (file_key, kind) = ref
-        stem = attachment_dir / f"{_safe_component(message_id)}-{index}-{hashlib.sha256(file_key.encode()).hexdigest()[:12]}"
-        before = set(attachment_dir.glob(stem.name + "*"))
+        stem = attachment_dir / f"{_safe_component(message_id)}-{index}-{secrets.token_hex(12)}"
+        # Never hand the CLI a predictable or preexisting path: it may overwrite
+        # a symlink or hardlink before the downloaded file can be inspected.
+        if any(attachment_dir.glob(stem.name + "*")):
+            logger.warning("Feishu resource output path already exists")
+            return None
         try:
             relative_output = stem.relative_to(config.project_root).as_posix()
         except ValueError:
@@ -711,10 +781,8 @@ def download_message_resources(
         candidates = [
             path
             for path in attachment_dir.glob(stem.name + "*")
-            if path not in before and path.is_file()
+            if path.is_file()
         ]
-        if not candidates and stem.exists():
-            candidates = [stem]
         if not candidates:
             logger.warning("Feishu resource download returned no local file")
             return None
@@ -725,21 +793,23 @@ def download_message_resources(
             return None
         try:
             resolved = candidate.resolve(strict=True)
-            size = resolved.stat().st_size
+            file_stat = resolved.stat()
+            size = file_stat.st_size
         except OSError:
             return None
-        if not _within(resolved, attachment_dir) or not _allowed_resource(resolved, kind, size, config):
+        if (candidate.is_symlink() or file_stat.st_nlink > 1
+                or not _within(resolved, attachment_dir)
+                or not _allowed_resource(resolved, kind, size, config)):
             try:
-                resolved.unlink()
+                candidate.unlink()
             except OSError:
                 pass
             logger.warning("discarded unsafe or oversized Feishu resource")
             return None
-        digest_builder = hashlib.sha256()
-        with resolved.open("rb") as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b""):
-                digest_builder.update(block)
-        digest = digest_builder.hexdigest()[:24]
+        try:
+            digest = _resource_digest(resolved)
+        except OSError:
+            return None
         extension = resolved.suffix.lower()
         final_path = resolved.with_name(f"{digest}{extension}")
         try:

@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 PLUGIN = next(p for p in Path(__file__).resolve().parents if (p / '.codex-plugin/plugin.json').is_file())
@@ -154,6 +155,25 @@ try { Get-OperatorPython -Required | Out-Null } catch { $failed=$true }
 }; Get-OperatorPython -Required -PreferredExecutable $env:OPERATOR_TEST_PYTHON | Select-Object Source,Prefix | ConvertTo-Json -Compress
 """)
         self.assertEqual(value, dict(Source=sys.executable, Prefix=[]))
+
+    @unittest.skipUnless(os.name == 'nt' and Path(r'C:\Windows\py.exe').is_file(),
+                         'Windows Python launcher required')
+    def test_user_task_status_reaches_helper_without_python_on_path(self):
+        entry = PLUGIN / 'scripts/codex-operator.ps1'
+        with tempfile.TemporaryDirectory(prefix='operator-user-task-py-only-') as project:
+            env = {**os.environ, 'PATH': r'C:\Windows\System32;C:\Windows'}
+            self.assertIsNone(shutil.which('python', path=env['PATH']))
+            result = subprocess.run(
+                [shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-File',
+                 str(entry), 'channels', 'user-tasks-status', '-ProjectRoot', project],
+                env=env, capture_output=True, text=True, encoding='utf-8', errors='replace',
+                timeout=20)
+        # The disposable project has no installed runtime. Reaching its
+        # structured error proves interpreter discovery got past the entry.
+        self.assertEqual(result.returncode, 1)
+        output = json.loads(result.stdout.strip())
+        self.assertIs(output['ok'], False)
+        self.assertIn('runtime directory is unavailable', output['error'])
 
     @unittest.skipUnless(os.name == 'nt', 'Windows command precedence')
     def test_mcp_store_alias_shadowing_real_python_is_reported_unavailable(self):

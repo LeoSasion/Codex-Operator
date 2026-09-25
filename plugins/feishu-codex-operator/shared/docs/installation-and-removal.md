@@ -63,6 +63,15 @@ are retained separately before an intent is published or a target is modified.
 Upgrades retain the first original. Writes are atomic per file, not a claim of
 an atomic transaction across every file. An interrupted operation remains
 recoverable from the journal, without automatically replaying a startup or task.
+Before rewriting an already managed file, the upgrade also verifies that its
+first-original backup still matches the journal; a missing or changed backup
+stops the write. This is covered by `test_install_upgrade.py`.
+The installer checks the runtime destination and each copied file's parent
+chain for links, so a linked runtime or nested directory cannot redirect an
+upgrade outside the selected project. The same isolated test module covers
+both boundaries. Runtime destinations are checked as a batch before runtime
+copying begins; Hook writes earlier in installation remain separately journaled.
+This is not an all-or-nothing installation transaction.
 
 The journal covers the managed project rules file, Hook configuration, two Hook
 scripts and selected current-user shortcuts. It does not own arbitrary files,
@@ -72,6 +81,29 @@ changed target files, altered backups, linked paths or unknown targets block the
 operation. It never overwrites a later user edit to force a successful uninstall.
 An existing installation with a missing ownership journal stops both recovery
 and installation. A missing journal is never treated as an empty file set.
+
+### Reviewed legacy runtime-only cutover
+
+For an older installation that has a valid runtime manifest but no ownership
+journal, `scripts/operator_legacy_runtime_upgrade.py` is a separate, explicit
+runtime-code cutover. Run `preview --project-root <absolute project directory>`
+from the canonical plugin source. Review its digest, changed-file count and
+backup size; only then run `apply` with the same project root and
+`--expected-preview-sha256 <reviewed digest>`. It requires the exact old code
+hashes and the installed and source startup inventories to match. The Operator,
+saved Web service and model router must be stopped, the router entry deactivated,
+and inbox/Final Callback work empty apart from the documented held failed row.
+
+The transaction keeps a complete private runtime backup in
+`.codex/operator-channel-maintenance/legacy-runtime-upgrade`, checks the source
+and protected integrations again, and replaces changed runtime code atomically
+per file with the manifest last. A failed or interrupted apply is terminal: do
+not retry it. After reviewing the retained transaction and stopping services,
+`restore --expected-preview-sha256 <same digest>` can restore its exact old
+runtime when no later file edits conflict. The separate journal **does not**
+create first-install ownership for Hooks, rules, shortcuts or runtime data;
+ordinary uninstall remains blocked until its legacy ownership is separately
+resolved. Neither preview nor apply starts services or replays a message.
 
 After a completed uninstall, ordinary `operator init` / `operator install`
 can start another installation. The previous journal and uninstall receipt are

@@ -296,7 +296,9 @@ class ModelRouter:
         auth = headers.get("Authorization", "")
         if not auth.startswith("Bearer ") or not auth[7:]:
             raise RouterError("native_authorization_required")
-        return hashlib.sha256(auth.encode()).hexdigest()
+        # A bearer can select different ChatGPT accounts with different model
+        # catalogs. Match the catalog response's Vary scope without storing either value.
+        return hashlib.sha256(encode([auth, headers.get("ChatGPT-Account-Id")])).hexdigest()
 
     async def catalog(self, headers, query="") -> dict:
         PHASE.set("catalog")

@@ -349,17 +349,20 @@ class ReleaseTests(unittest.TestCase):
         def write(relative, text):
             p = self.repo/relative; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(text, encoding='utf8')
         self.write = write
-        files = ['.codex-plugin/plugin.json','assets/release-inventory.json','LICENSE','README.md',
-            'assets/AGENTS.feishu-codex-operator.md']
-        files += ['assets/public-docs/' + p for p in release.PUBLIC_DOCS.values()]
+        files = ['.codex-plugin/plugin.json','assets/release-inventory.json','LICENSE',
+            'assets/AGENTS.feishu-codex-operator.md', *sorted(release.REVIEWED_DOCS)]
         self.inventory = {'schema_version': 1, 'repository_files': ['LICENSE'],
+            'reviewed_document_sha256': {name: hashlib.sha256(b'public documentation\n').hexdigest()
+                for name in release.REVIEWED_DOCS},
             'components': [{'root_role': 'plugin_root', 'paths': files}]}
         write('LICENSE', 'MIT License')
         write(str(release.PLUGIN/'LICENSE'), 'MIT License')
         write(str(release.PLUGIN/'.codex-plugin/plugin.json'), json.dumps({'name': 'codex-operator', 'version': '1.2.0-preview.1'}))
         write(str(release.PLUGIN/'assets/AGENTS.feishu-codex-operator.md'), 'public rules')
-        write(str(release.PLUGIN/'README.md'), 'Private journal ' + 'sk-' + 'Z'*30)
-        for value in release.PUBLIC_DOCS.values(): write(str(release.PLUGIN/'assets/public-docs'/value), 'public documentation')
+        for name in release.REVIEWED_DOCS:
+            path = self.plugin / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'public documentation\n')
         self.save_inventory()
 
     def save_inventory(self):
@@ -371,11 +374,34 @@ class ReleaseTests(unittest.TestCase):
         output = self.base/'preview.zip'; receipt = release.build(self.repo, output)
         with zipfile.ZipFile(output) as z:
             self.assertNotIn('.codex/runtime.key', z.namelist())
-            self.assertEqual(z.read(str(release.PLUGIN/'README.md')), b'public documentation')
+            self.assertFalse(any('/assets/public-docs/' in name for name in z.namelist()))
+            for relative in release.REVIEWED_DOCS:
+                self.assertEqual(z.read(str(release.PLUGIN/relative)), b'public documentation\n')
             self.assertEqual(z.read('AGENTS.md'), b'public rules')
         self.assertEqual((self.plugin/'README.md').read_bytes(), original)
         self.assertFalse(receipt['published'])
+        self.assertEqual(receipt['reviewed_documents'], len(release.REVIEWED_DOCS))
         with self.assertRaises(ValueError): release.build(self.repo, output)
+
+    def test_review_digest_accepts_checkout_line_endings_without_rewriting_release_bytes(self):
+        source = self.plugin / 'README.md'
+        source.write_bytes(b'public documentation\r\n')
+        data, _, _ = release.collect(self.repo)
+        self.assertEqual(data[str(release.PLUGIN / 'README.md')], source.read_bytes())
+
+    def test_changed_reviewed_doc_requires_new_digest_and_still_passes_content_screen(self):
+        relative = 'README.md'
+        source = str(release.PLUGIN / relative)
+        secret = 'sk-' + 'Z'*30
+        self.write(source, 'private journal ' + secret)
+        with self.assertRaisesRegex(ValueError, 'reviewed_document_changed'):
+            release.collect(self.repo)
+        self.inventory['reviewed_document_sha256'][relative] = hashlib.sha256(
+            (self.plugin / relative).read_bytes()).hexdigest()
+        self.save_inventory()
+        with self.assertRaisesRegex(ValueError, 'release_content_findings') as caught:
+            release.collect(self.repo)
+        self.assertNotIn(secret, str(caught.exception))
 
     def test_credential_finding_does_not_echo_value_or_write_archive(self):
         secret = 'sk-' + 'Q'*31

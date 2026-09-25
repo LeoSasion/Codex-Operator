@@ -11,12 +11,15 @@ from run_tests import prepare_test_imports as _prepare_test_imports
 _prepare_test_imports(_OPERATOR_PLUGIN_ROOT)
 
 from copy import deepcopy
+from contextlib import nullcontext
 import hashlib
 import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+
+import operator_model_router as router_cli
 
 from test_responses_tools import ROUTE
 from operator_core import model_router_config as settings
@@ -181,6 +184,72 @@ class DiscoveryTests(unittest.TestCase):
                 self.assertEqual(synchronize(state, policy())["added"], 0)
                 self.assertEqual((state / "registry.json").read_bytes(), current)
             self.assertFalse((state / "registry-edit.lock").exists())
+
+    def test_direct_cli_writes_refuse_unbound_state_before_metadata_or_registry_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory); settings.initialize(state)
+            before = (state / 'registry.json').read_bytes()
+            registration = state / 'model.json'
+            registration.write_text(json.dumps(ROUTE), encoding='utf-8')
+            discovery = state / 'discovery.json'
+            discovery.write_text(json.dumps(policy()), encoding='utf-8')
+            cases = [
+                ['lmstudio-sync', '--discovery-policy', str(discovery), '--apply'],
+                ['register-model', '--registration', str(registration)],
+                ['lmstudio-register', '--model', 'local-id', '--slug', 'local/fixture',
+                 '--context-window', '4096', '--reasoning-effort', 'low'],
+            ]
+            for action in cases:
+                with self.subTest(action=action[0]):
+                    with (patch.object(router_cli, 'reserve_inactive_port', return_value=nullcontext()),
+                          patch.object(settings, 'lmstudio_json',
+                                       side_effect=AssertionError('must not query LM Studio')),
+                          patch('sys.argv', ['operator_model_router.py', *action, '--state-dir', str(state)])):
+                        with self.assertRaisesRegex(RouterError, 'registry_edit_requires_standard_windows_runtime'):
+                            router_cli.main()
+                self.assertEqual((state / 'registry.json').read_bytes(), before)
+
+    def test_failed_commit_guard_keeps_registry_and_releases_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory); settings.initialize(state)
+            before = (state / 'registry.json').read_bytes()
+            def rejected(exact_state):
+                self.assertEqual(exact_state, state)
+                raise RouterError('callbacks_must_be_empty_for_registry_edit')
+            with patch.object(settings, 'lmstudio_json', return_value=metadata()):
+                with self.assertRaisesRegex(RouterError, 'callbacks_must_be_empty_for_registry_edit'):
+                    synchronize(state, policy(), guard=rejected)
+            self.assertEqual((state / 'registry.json').read_bytes(), before)
+            self.assertFalse((state / 'registry-edit.lock').exists())
+
+    def test_cli_rechecks_lifecycle_after_discovery_or_registration_before_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / '.codex' / 'feishu-codex-operator-runtime' / 'model-router'
+            settings.initialize(state)
+            before = (state / 'registry.json').read_bytes()
+            registration = state / 'model.json'
+            registration.write_text(json.dumps(ROUTE), encoding='utf-8')
+            discovery = state / 'discovery.json'
+            discovery.write_text(json.dumps(policy()), encoding='utf-8')
+            cases = [
+                ['lmstudio-sync', '--discovery-policy', str(discovery), '--apply'],
+                ['register-model', '--registration', str(registration)],
+                ['lmstudio-register', '--model', 'local-id', '--slug', 'local/fixture',
+                 '--context-window', '4096', '--reasoning-effort', 'low'],
+            ]
+            for action in cases:
+                with self.subTest(action=action[0]):
+                    with (patch.object(router_cli, 'reserve_inactive_port', return_value=nullcontext()),
+                          patch('operator_core.responses_labels.assert_registry_edit_stopped',
+                                side_effect=[None, RouterError('operator_started_during_edit')]) as guard,
+                          patch.object(settings, 'lmstudio_json', return_value=metadata()),
+                          patch.object(settings, 'lmstudio_models', return_value=['local-id']),
+                          patch('sys.argv', ['operator_model_router.py', *action, '--state-dir', str(state)])):
+                        with self.assertRaisesRegex(RouterError, 'operator_started_during_edit'):
+                            router_cli.main()
+                    self.assertEqual(guard.call_count, 2)
+                    self.assertEqual((state / 'registry.json').read_bytes(), before)
+                    self.assertFalse((state / 'registry-edit.lock').exists())
 
     def test_batch_conflict_or_changed_registry_never_partially_commits(self):
         with tempfile.TemporaryDirectory() as directory:

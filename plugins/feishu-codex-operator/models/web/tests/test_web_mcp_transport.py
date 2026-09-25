@@ -72,6 +72,27 @@ class WebMcpSessionRecyclingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('result', body)
         return headers['Mcp-Session-Id']
 
+    async def test_non_object_parameters_fail_as_rpc_errors_without_cancelling_a_turn(self):
+        for params in (None, [], 'invalid'):
+            with self.subTest(method='initialize', params=params):
+                status, body, _ = await self.rpc(None, {'jsonrpc': '2.0', 'id': 0,
+                    'method': 'initialize', 'params': params})
+                self.assertEqual(status, 200)
+                self.assertEqual(body['error']['message'], 'web_mcp_invalid_request')
+                self.assertEqual(self.endpoint.sessions, {})
+        session = await self.initialize()
+        turn = self.endpoint.turn = WebMcpTurn(protocol())
+        try:
+            for params in (None, [], 'invalid'):
+                with self.subTest(method='notifications/cancelled', params=params):
+                    status, body, _ = await self.rpc(session, {'jsonrpc': '2.0',
+                        'method': 'notifications/cancelled', 'params': params})
+                    self.assertEqual(status, 200)
+                    self.assertEqual(body['error']['message'], 'web_mcp_invalid_request')
+                    self.assertFalse(turn.closed)
+        finally:
+            turn.close()
+
     async def ping(self, session, number=1):
         status, body, _ = await self.rpc(session, {'jsonrpc': '2.0', 'id': number, 'method': 'ping'})
         self.assertEqual((status, body), (200, {'jsonrpc': '2.0', 'id': number, 'result': {}}))

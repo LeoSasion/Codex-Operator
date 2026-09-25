@@ -47,9 +47,9 @@ Channels 的插件工具仍要求可用的 `python` 命令，
 
 ## Models / Web：在原生任务中使用 ChatGPT Web
 
-告诉助手“配置 ChatGPT Web”。首次接入需要你的 ChatGPT 登录、固定 Tunnel、运行密钥及准确的 app 绑定。助手按 [首次连接流程](models/web/docs/web-fixed-tunnel.md) 准备本机表单并逐步引导。密钥直接填到本机遮蔽输入框，后续复用保存配置。
+告诉助手“配置 ChatGPT Web”。首次接入要核对当前 ChatGPT 登录状态、固定 Tunnel、运行密钥及准确的 app 绑定；已有有效登录直接复用。助手按 [首次连接流程](models/web/docs/web-fixed-tunnel.md) 准备本机表单并逐步引导。密钥直接填到本机遮蔽输入框，后续复用保存配置。
 
-配置完成后，用 `models web start` 启动保存的后台，`models web status` 检查状态。只有状态要求协助时才用 `models web assist` 打开辅助窗口；处理完关闭窗口即可。失败的请求不会自动重发。
+配置完成后，用 `models web start` 启动保存的后台，`models web status` 检查状态。出现协助提示时，先用 `models web inspect` 核对当前页面；只有页面实际显示待处理的登录或验证控件，才请你在辅助窗口完成该步骤。已登录且输入框可用时直接复用会话。失败的请求不会自动重发。
 
 已有保存入口时，再次要求助手配置会直接复用原设置和运行程序，无需重填位置、连接编号或密钥。不带新设置的 `models web configure` 只核验并确认复用，不更新登记或启动后台；首次配置和明确升级仍由助手提供必要参数。访问受限、登记不符、运行程序变化和检查结果不可用会分别说明，由助手按具体原因继续处理。
 

@@ -2,15 +2,48 @@
 
 // These fixed page operations accept data only. No caller-supplied JavaScript,
 // authentication material, private reasoning or general DOM dump crosses out.
+function uniqueComposer() {
+  const legacy = [...document.querySelectorAll('#prompt-textarea')];
+  if (legacy.length) {
+    return legacy.length === 1 && legacy[0].getAttribute('contenteditable') === 'true'
+      && legacy[0].getClientRects().length > 0 ? legacy[0] : null;
+  }
+  const visible = element => element.getClientRects().length > 0
+    && !element.closest('[hidden],[inert],[aria-hidden="true"],[role="menu"][data-state="closed"]');
+  const role = [...document.querySelectorAll('[role="textbox"][contenteditable="true"]')]
+    .filter(visible);
+  const editable = [...document.querySelectorAll('[contenteditable="true"]')]
+    .filter(visible);
+  return role.length === 1 && editable.length === 1 && role[0] === editable[0]
+    ? role[0] : null;
+}
+function eligibleModelButtons(composer) {
+  const form = composer?.closest('form');
+  if (!form) return [];
+  const legacy = [...document.querySelectorAll('button[aria-haspopup="menu"][data-tone="neutral"],button[data-testid="model-switcher-dropdown-button"]')];
+  if (legacy.length) {
+    const visible = legacy.filter(element => element.getClientRects().length > 0);
+    return visible.length === 1 && form.contains(visible[0]) ? visible : [];
+  }
+  const accessible = [...document.querySelectorAll('button[aria-label="选择 ChatGPT 模型"],button[aria-label="Choose ChatGPT model"]')]
+    .filter(element => element.getClientRects().length > 0
+      && !element.closest('[hidden],[inert],[aria-hidden="true"],[role="menu"][data-state="closed"]'));
+  if (accessible.length !== 1) return [];
+  const button = accessible[0];
+  const ariaDisabled = button.getAttribute('aria-disabled');
+  return form.contains(button) && button.getAttribute('aria-haspopup') === 'menu'
+    && !button.disabled && (ariaDisabled === null || ariaDisabled === 'false')
+    ? accessible : [];
+}
 function controls(modelLabels = ["GPT-5.6 Sol"]) {
   const visible = e => !!e && e.getClientRects().length > 0;
   // The picker retains both panels and closing animations with layout boxes.
   // Inert/hidden panels are not usable controls, even when their bounds remain.
   const menuVisible = e => visible(e)
     && !e.closest('[hidden],[inert],[aria-hidden="true"],[role="menu"][data-state="closed"]');
-  const composer = document.querySelector('#prompt-textarea[contenteditable="true"]');
+  const composer = uniqueComposer();
   const form = composer?.closest("form");
-  const modelButtons = [...(form?.querySelectorAll('button[aria-haspopup="menu"][data-tone="neutral"],button[data-testid="model-switcher-dropdown-button"]') || [])].filter(visible);
+  const modelButtons = eligibleModelButtons(composer);
   const chooser = [...document.querySelectorAll('[role="menuitem"]')].filter(e => menuVisible(e) && ["选择模型", "Choose model"].includes(e.getAttribute("aria-label")));
   const options = [...document.querySelectorAll('[role="menuitemradio"]')].filter(e => menuVisible(e) && modelLabels.includes(e.textContent.trim()));
   const send = form?.querySelector('[data-testid="send-button"]');
@@ -46,6 +79,71 @@ function controls(modelLabels = ["GPT-5.6 Sol"]) {
     assistantCount: document.querySelectorAll('[data-message-author-role="assistant"]').length,
     sendReady: visible(send) && !send.disabled && send.getAttribute("aria-disabled") !== "true" };
 }
+function startupControlStructure() {
+  // Failed hidden preparation only: fixed selector shape, no DOM text or attributes
+  // beyond the old editor's editability. This never chooses or clicks a control.
+  const bucket = count => count === 0 ? "zero" : count === 1 ? "one" : "multiple";
+  const visibleCount = elements => {
+    let count = 0;
+    for (const element of elements) {
+      if (element.getClientRects().length > 0 && ++count > 1) break;
+    }
+    return bucket(count);
+  };
+  const legacy = document.querySelectorAll('#prompt-textarea');
+  const model = document.querySelectorAll('button[aria-haspopup="menu"][data-tone="neutral"],button[data-testid="model-switcher-dropdown-button"]');
+  const roleEditors = [...document.querySelectorAll('[role="textbox"][contenteditable="true"]')]
+    .filter(element => element.getClientRects().length > 0);
+  const editorForm = roleEditors.length === 1 ? roleEditors[0].closest('form') : null;
+  const buttonCandidates = document.querySelectorAll('button,[role="button"]');
+  const exactNames = ['选择 ChatGPT 模型', 'Choose ChatGPT model'];
+  const matched = [];
+  if (buttonCandidates.length <= 256) {
+    for (const element of buttonCandidates) {
+      if (element.getClientRects().length === 0) continue;
+      const sources = [];
+      if (exactNames.includes(element.getAttribute('aria-label'))) sources.push('aria_label');
+      if (exactNames.includes(element.getAttribute('title'))) sources.push('title');
+      const text = element.textContent;
+      if (typeof text === 'string' && text.length <= 64 && exactNames.includes(text.trim()))
+        sources.push('exact_text');
+      if (sources.length > 0) matched.push({element, sources});
+      if (matched.length > 1) break;
+    }
+  }
+  const selected = buttonCandidates.length <= 256 && matched.length === 1 ? matched[0] : null;
+  const selectedHaspopup = selected?.element.getAttribute('aria-haspopup');
+  const selectedDisabled = selected?.element.disabled;
+  return {
+    readyState: ["loading", "interactive", "complete"].includes(document.readyState)
+      ? document.readyState : "unknown",
+    legacyEditorCount: bucket(legacy.length),
+    legacyEditorEditable: legacy.length === 1
+      ? legacy[0].getAttribute('contenteditable') === 'true' ? "yes" : "no" : "unknown",
+    legacyEditorRect: legacy.length === 1
+      ? legacy[0].getClientRects().length > 0 ? "yes" : "no" : "unknown",
+    testIdEditorVisible: visibleCount(document.querySelectorAll('[data-testid="prompt-textarea"]')),
+    roleTextboxEditableVisible: visibleCount(document.querySelectorAll('[role="textbox"][contenteditable="true"]')),
+    editableVisible: visibleCount(document.querySelectorAll('[contenteditable="true"]')),
+    textareaVisible: visibleCount(document.querySelectorAll('textarea')),
+    globalModelTotal: bucket(model.length),
+    globalModelVisible: visibleCount(model),
+    editorFormExists: roleEditors.length === 1 ? editorForm ? 'yes' : 'no' : 'unknown',
+    accessibleModelCount: buttonCandidates.length > 256 ? 'unknown' : bucket(matched.length),
+    accessibleModelSource: selected ? selected.sources.length === 1 ? selected.sources[0]
+      : 'multiple' : 'unknown',
+    accessibleModelTag: selected ? selected.element.tagName === 'BUTTON' ? 'button' : 'other'
+      : 'unknown',
+    accessibleModelInEditorForm: selected && roleEditors.length === 1
+      ? editorForm && editorForm.contains(selected.element) ? 'yes' : 'no' : 'unknown',
+    accessibleModelHaspopup: selected ? selectedHaspopup === 'menu' ? 'menu'
+      : selectedHaspopup === null ? 'absent' : 'other' : 'unknown',
+    accessibleModelDisabled: selected ? selectedDisabled === true
+      || selected.element.getAttribute('aria-disabled') === 'true' ? 'yes'
+      : selectedDisabled === false || selected.element.getAttribute('aria-disabled') === 'false'
+        ? 'no' : 'unknown' : 'unknown',
+  };
+}
 function freshChatControls() {
   const visible = e => !!e && e.getClientRects().length > 0;
   // Only the fixed public home controls, never sidebar conversation links.
@@ -79,7 +177,7 @@ function pluginMaintenanceReady() {
   return true;
 }
 function startFreshChat() {
-  const composer = document.querySelector('#prompt-textarea[contenteditable="true"]');
+  const composer = uniqueComposer();
   if (!composer || composer.textContent !== ''
       || document.querySelectorAll('[data-message-author-role="user"]').length !== 1
       || document.querySelectorAll('[data-message-author-role="assistant"]').length !== 1
@@ -96,7 +194,7 @@ function startFreshChat() {
   choices[0].click();
 }
 function enableTemporaryChat() {
-  const composer = document.querySelector('#prompt-textarea[contenteditable="true"]');
+  const composer = uniqueComposer();
   if (!composer || composer.textContent !== ''
       || document.querySelectorAll('[data-message-author-role="user"],[data-message-author-role="assistant"]').length !== 0)
     throw new Error('web_empty_composer_required');
@@ -107,8 +205,7 @@ function enableTemporaryChat() {
   choices[0].click();
 }
 function focusModelMenu() {
-  const form = document.querySelector('#prompt-textarea[contenteditable="true"]')?.closest("form");
-  const found = [...(form?.querySelectorAll('button[aria-haspopup="menu"][data-tone="neutral"],button[data-testid="model-switcher-dropdown-button"]') || [])].filter(e => e.getClientRects().length);
+  const found = eligibleModelButtons(uniqueComposer());
   if (found.length !== 1) throw new Error("web_model_control_ambiguous");
   const button = found[0];
   if (button.getAttribute("aria-expanded") === "true") return false;
@@ -119,8 +216,7 @@ function focusModelMenu() {
   return true;
 }
 function backgroundModelInput(point) {
-  const form = document.querySelector('#prompt-textarea[contenteditable="true"]')?.closest("form");
-  const found = [...(form?.querySelectorAll('button[aria-haspopup="menu"][data-tone="neutral"],button[data-testid="model-switcher-dropdown-button"]') || [])].filter(e => e.getClientRects().length);
+  const found = eligibleModelButtons(uniqueComposer());
   if (found.length !== 1 || document.activeElement !== found[0]) throw new Error("web_model_control_ambiguous");
   const button = found[0], rect = button.getBoundingClientRect();
   if (button.disabled || button.getAttribute("aria-disabled") === "true"
@@ -143,7 +239,7 @@ function backgroundMenuKey(key) {
   target.dispatchEvent(new KeyboardEvent("keyup", options));
 }
 function composerFocused() {
-  const composer = document.querySelector('#prompt-textarea[contenteditable="true"]');
+  const composer = uniqueComposer();
   return !!composer && document.activeElement === composer;
 }
 function clickModelChooser() {
@@ -160,11 +256,31 @@ function chooseModel(modelLabels) {
   if (found.length !== 1) throw new Error("web_model_option_ambiguous");
   found[0].click();
 }
+function eligibleEffortContainer() {
+  const visible = element => element.getClientRects().length > 0
+    && !element.closest('[hidden],[inert],[aria-hidden="true"],[role="menu"][data-state="closed"]');
+  const legacy = [...document.querySelectorAll('[data-model-reasoning-effort-slider]')];
+  if (legacy.length) {
+    const candidates = legacy.filter(visible);
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+  // The observed current menu wraps its slider in this exact named control.
+  // An unrelated page slider must never become the model-effort target.
+  const candidates = [...document.querySelectorAll('[data-model-picker-power-slider]')].filter(visible);
+  if (candidates.length !== 1) return null;
+  const sliders = [...candidates[0].querySelectorAll('[role="slider"]')].filter(visible);
+  const choosers = [...document.querySelectorAll('[role="menuitem"]')]
+    .filter(element => visible(element)
+      && ['选择模型', 'Choose model'].includes(element.getAttribute('aria-label')));
+  const menu = sliders.length === 1 ? sliders[0].closest('[role="menu"]') : null;
+  return sliders.length === 1 && sliders[0].closest('[role="menuitem"]') && menu
+    && choosers.length === 1 && choosers[0].closest('[role="menu"]') === menu
+    ? candidates[0] : null;
+}
 function effortState() {
-  const containers = [...document.querySelectorAll('[data-model-reasoning-effort-slider]')].filter(e => e.getClientRects().length
-    && !e.closest('[hidden],[inert],[aria-hidden="true"],[role="menu"][data-state="closed"]'));
-  if (containers.length !== 1) return null;
-  const sliders = containers[0].querySelectorAll('[role="slider"]');
+  const container = eligibleEffortContainer();
+  if (!container) return null;
+  const sliders = container.querySelectorAll('[role="slider"]');
   if (sliders.length !== 1) return null;
   const values = ["aria-valuemin", "aria-valuemax", "aria-valuenow"].map(k => sliders[0].getAttribute(k));
   if (values.some(v => !/^[0-4]$/.test(v || ""))) throw new Error("web_effort_shape_invalid");
@@ -182,13 +298,68 @@ function effortState() {
     label: labels.length === 1 ? labels[0][2] : null,
     announcedGeneration: labels.length === 1 ? labels[0][1] || null : null,
     generationLabel: chooser.length === 1 ? chooser[0].textContent.trim().slice(0, 64) : null,
-    locked: !!containers[0].querySelector('[data-locked="true"],[aria-disabled="true"]') };
+    locked: !!container.querySelector('[data-locked="true"],[aria-disabled="true"]') };
+}
+function effortRangeShape() {
+  // Failure-only, fixed shape probe. Never return labels, DOM, or request text.
+  const bucket = count => count === 0 ? 'zero' : count === 1 ? 'one' : 'multiple';
+  const visible = element => element.getClientRects().length > 0
+    && !element.closest('[hidden],[inert],[aria-hidden="true"],[role="menu"][data-state="closed"]');
+  const containers = [...document.querySelectorAll('[data-model-reasoning-effort-slider]')]
+    .filter(visible);
+  const newContainers = document.querySelectorAll('[data-model-picker-power-slider]');
+  const newVisible = [...newContainers].filter(visible);
+  const container = containers.length === 1 ? containers[0] : null;
+  const sliders = container ? [...container.querySelectorAll('[role="slider"]')] : [];
+  const slider = sliders.length === 1 ? sliders[0] : null;
+  const globalSliders = document.querySelectorAll('[role="slider"]');
+  const onlyGlobalSlider = globalSliders.length === 1 ? globalSliders[0] : null;
+  const visibleSliders = [];
+  for (const element of globalSliders) {
+    if (visible(element)) visibleSliders.push(element);
+    if (visibleSliders.length > 1) break;
+  }
+  const globalSlider = visibleSliders.length === 1 ? visibleSliders[0] : null;
+  const ownerMenuitem = globalSlider?.closest('[role="menuitem"]');
+  const ownerMenu = globalSlider?.closest('[role="menu"]');
+  const choosers = [];
+  for (const element of document.querySelectorAll('[role="menuitem"]')) {
+    if (visible(element) && ['选择模型', 'Choose model'].includes(element.getAttribute('aria-label')))
+      choosers.push(element);
+    if (choosers.length > 1) break;
+  }
+  const chooserMenu = choosers.length === 1 ? choosers[0].closest('[role="menu"]') : null;
+  const digit = (element, name) => {
+    if (!element) return 'unknown';
+    const value = element.getAttribute(name);
+    return value === null ? 'absent' : /^[0-9]$/.test(value) ? Number(value) : 'other';
+  };
+  return {containerCount: bucket(containers.length),
+    newContainerTotal: bucket(newContainers.length), newContainerVisible: bucket(newVisible.length),
+    sliderCount: container ? bucket(sliders.length) : 'unknown',
+    min: digit(slider, 'aria-valuemin'), max: digit(slider, 'aria-valuemax'),
+    now: digit(slider, 'aria-valuenow'),
+    locked: container ? container.querySelector('[data-locked="true"],[aria-disabled="true"]')
+      ? 'yes' : 'no' : 'unknown',
+    globalSliderTotal: bucket(globalSliders.length), globalSliderVisible: bucket(visibleSliders.length),
+    globalMin: digit(globalSlider, 'aria-valuemin'), globalMax: digit(globalSlider, 'aria-valuemax'),
+    globalNow: digit(globalSlider, 'aria-valuenow'),
+    globalSliderRect: onlyGlobalSlider ? onlyGlobalSlider.getClientRects().length > 0 ? 'yes' : 'no' : 'unknown',
+    globalSliderHidden: onlyGlobalSlider ? onlyGlobalSlider.closest('[hidden]') ? 'yes' : 'no' : 'unknown',
+    globalSliderInert: onlyGlobalSlider ? onlyGlobalSlider.closest('[inert]') ? 'yes' : 'no' : 'unknown',
+    globalSliderAriaHidden: onlyGlobalSlider ? onlyGlobalSlider.closest('[aria-hidden="true"]') ? 'yes' : 'no' : 'unknown',
+    globalSliderClosedMenu: onlyGlobalSlider ? onlyGlobalSlider.closest('[role="menu"][data-state="closed"]') ? 'yes' : 'no' : 'unknown',
+    globalSliderInNewContainer: onlyGlobalSlider && newVisible.length === 1
+      ? onlyGlobalSlider.closest('[data-model-picker-power-slider]') === newVisible[0] ? 'yes' : 'no' : 'unknown',
+    ownerMenuitem: globalSlider ? ownerMenuitem ? 'yes' : 'no' : 'unknown',
+    ownerMenu: globalSlider ? ownerMenu ? 'yes' : 'no' : 'unknown',
+    sameMenuAsChooser: globalSlider && ownerMenu && chooserMenu
+      ? ownerMenu === chooserMenu ? 'yes' : 'no' : 'unknown'};
 }
 function focusEffort() {
-  const container = [...document.querySelectorAll('[data-model-reasoning-effort-slider]')].filter(e => e.getClientRects().length
-    && !e.closest('[hidden],[inert],[aria-hidden="true"],[role="menu"][data-state="closed"]'));
-  if (container.length !== 1) throw new Error("web_effort_control_ambiguous");
-  const control = container[0].querySelector('[role="slider"]')?.closest('[role="menuitem"]');
+  const container = eligibleEffortContainer();
+  if (!container) throw new Error("web_effort_control_ambiguous");
+  const control = container.querySelector('[role="slider"]')?.closest('[role="menuitem"]');
   if (!control) throw new Error("web_effort_control_missing");
   control.focus();
   if (document.activeElement !== control) throw new Error("web_effort_focus_failed");
@@ -207,7 +378,7 @@ function connectorMenuChoice(name, query, activate = false, expectedId) {
       || query !== '@' + name.split(' ')[0] || typeof activate !== 'boolean'
       || typeof expectedId !== 'string' || !/^plugin:asdk_app_[a-f0-9]{32}$/.test(expectedId))
     throw new Error("web_connector_query_invalid");
-  const composer = document.querySelector('#prompt-textarea[contenteditable="true"]');
+  const composer = uniqueComposer();
   if (!composer || document.activeElement !== composer || composer.textContent !== query)
     throw new Error("web_connector_query_changed");
   const rows = [...document.querySelectorAll('[data-composer-plugin-impression-id] .__menu-item[tabindex="0"]')]
@@ -225,10 +396,8 @@ function connectorMenuChoice(name, query, activate = false, expectedId) {
 function selectedConnector(expectedName) {
   if (typeof expectedName !== 'string' || !/^[A-Za-z0-9\u3400-\u4dbf\u4e00-\u9fff][A-Za-z0-9\u3400-\u4dbf\u4e00-\u9fff -]{0,63}(?![\s\S])/.test(expectedName))
     throw new Error("web_connector_name_invalid");
-  const composers = [...document.querySelectorAll('#prompt-textarea[contenteditable="true"]')]
-    .filter(e => e.getClientRects().length);
-  if (composers.length !== 1) throw new Error("web_composer_missing");
-  const composer = composers[0];
+  const composer = uniqueComposer();
+  if (!composer) throw new Error("web_composer_missing");
   const pills = composer.querySelectorAll('[data-inline-selection-pill]');
   if (pills.length === 0) return null;
   const cursors = composer.querySelectorAll('[data-inline-selection-pill-cursor-target]');
@@ -245,7 +414,7 @@ function selectedConnector(expectedName) {
   return { id, name: expectedName };
 }
 function composerPrefix(mention) {
-  const composer = document.querySelector('#prompt-textarea[contenteditable="true"]');
+  const composer = uniqueComposer();
   if (!composer) throw new Error("web_composer_missing");
   if (mention == null) {
     if (composer.textContent !== "") throw new Error("web_empty_composer_required");
@@ -268,19 +437,19 @@ function composerPrefix(mention) {
   return prefix;
 }
 function focusComposer(prefix = "") {
-  const inputs = [...document.querySelectorAll('#prompt-textarea[contenteditable="true"]')].filter(e => e.getClientRects().length);
-  if (inputs.length !== 1 || inputs[0].textContent !== prefix) throw new Error("web_empty_composer_required");
-  inputs[0].focus();
-  if (document.activeElement !== inputs[0]) throw new Error("web_composer_focus_failed");
+  const composer = uniqueComposer();
+  if (!composer || composer.textContent !== prefix) throw new Error("web_empty_composer_required");
+  composer.focus();
+  if (document.activeElement !== composer) throw new Error("web_composer_focus_failed");
   const range = document.createRange();
-  range.selectNodeContents(inputs[0]);
+  range.selectNodeContents(composer);
   range.collapse(false);
   const selection = window.getSelection();
   selection.removeAllRanges();
   selection.addRange(range);
 }
 function composerMatches(text, prefix = "", mention = null) {
-  const composer = document.querySelector('#prompt-textarea[contenteditable="true"]');
+  const composer = uniqueComposer();
   if (!composer || document.activeElement !== composer) return false;
   const pills = composer.querySelectorAll('[data-inline-selection-pill]');
   const cursors = composer.querySelectorAll('[data-inline-selection-pill-cursor-target]');
@@ -310,7 +479,7 @@ function composerMatches(text, prefix = "", mention = null) {
     && pills[0].textContent === mention.name && exactParagraphs;
 }
 function sendOnce() {
-  const form = document.querySelector('#prompt-textarea[contenteditable="true"]')?.closest("form");
+  const form = uniqueComposer()?.closest("form");
   const buttons = [...(form?.querySelectorAll('[data-testid="send-button"]') || [])].filter(e => e.getClientRects().length && !e.disabled && e.getAttribute("aria-disabled") !== "true");
   if (buttons.length !== 1) throw new Error("web_send_control_ambiguous");
   buttons[0].click();
@@ -738,6 +907,6 @@ function publicCitationShape(committedView = false) {
   return { observations };
 }
 
-module.exports = { controls, freshChatControls, pluginMaintenanceReady, startFreshChat, enableTemporaryChat, currentPublicFiber, publicGenerationState, publicInterruptionState, inspectionSnapshot, focusModelMenu, clickModelChooser, chooseModel, effortState,
+module.exports = { uniqueComposer, eligibleModelButtons, eligibleEffortContainer, controls, startupControlStructure, freshChatControls, pluginMaintenanceReady, startFreshChat, enableTemporaryChat, currentPublicFiber, publicGenerationState, publicInterruptionState, inspectionSnapshot, focusModelMenu, clickModelChooser, chooseModel, effortState, effortRangeShape,
   backgroundModelInput, backgroundMenuKey, composerFocused,
   focusEffort, connectorAccessState, connectorMenuChoice, selectedConnector, composerPrefix, focusComposer, composerMatches, sendOnce, cancelGeneration, publicFinal, publicMessageShape, publicUserBindingShape, publicCitationShape };

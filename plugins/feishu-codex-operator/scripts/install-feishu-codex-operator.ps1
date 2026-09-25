@@ -14,6 +14,9 @@ $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 Import-Module (Join-Path $PSScriptRoot 'operator_installation.psm1') -Force -DisableNameChecking
 $source = Split-Path -Parent $PSScriptRoot
 $runtime = Join-Path $project '.codex\feishu-codex-operator-runtime'
+# Runtime files are copied outside the ownership journal, so reject a linked
+# destination before any install or upgrade writes can follow it.
+Assert-OperatorPlainPath $runtime
 $hooksRoot = Join-Path $project '.codex\hooks'
 $startHook = Join-Path $hooksRoot 'start-feishu-codex-operator.ps1'
 $stopHook = Join-Path $hooksRoot 'stop-feishu-codex-operator.ps1'
@@ -72,6 +75,7 @@ function Install-File([string]$From, [string]$To) {
     if (-not (Test-Path -LiteralPath $From -PathType Leaf)) {
         throw "Source file is missing: $From"
     }
+    Assert-OperatorPlainPath $To
     $parent = Split-Path -Parent $To
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
     if (Test-Path -LiteralPath $To -PathType Leaf) {
@@ -467,6 +471,9 @@ if ($HooksOnly) {
     'operator_core\state.py'
 )
 foreach ($relative in $runtimeFiles) {
+    Assert-OperatorPlainPath (Join-Path $runtime $relative)
+}
+foreach ($relative in $runtimeFiles) {
     $from = Join-Path (Join-Path $source 'scripts') $relative
     # Source ownership follows Models/Web; installed license paths stay stable.
     if ($relative -in @('licenses\codex-chatgpt-web-MIT.txt','licenses\webcodex-Apache-2.0.txt')) {
@@ -488,6 +495,6 @@ if (Test-Path -LiteralPath $health -PathType Leaf) {
     Remove-Item -LiteralPath $health -Force
 }
 
-Write-Output "Installed Feishu Codex Operator 4.2.0-alpha.138 into $runtime"
+Write-Output "Installed Codex-Operator runtime 4.2.0-alpha.138 into $runtime"
 Write-Output 'The Operator remains stopped. Configure the minimal Beeper UUID, register Final Callback routing, review Hooks in Desktop settings, then start it.'
 if (-not $SkipDesktopEntry) { Install-OperatorDesktopEntry -ProjectRoot $project | ConvertTo-Json }

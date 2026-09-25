@@ -73,9 +73,32 @@ assert 'startupAssistance' not in c and 'text' not in c
 def emit(kind,**values):print(json.dumps({'operator_web':1,'kind':kind,**values}),flush=True)
 def trace(kind,ident):
  with open(TRACE,'a',encoding='utf8') as stream:stream.write(json.dumps([kind,ident])+'\\n')
+if VARIANT=='exit_before_ready':raise SystemExit(1)
 emit('worker_ready');count=0;seen=set()
 if VARIANT=='exit':raise SystemExit(1)
 if c.get('startupPrepare') is True:
+ if VARIANT in ('prepare_gate_failed','prepare_gate_extra','prepare_structure_extra','prepare_structure_duplicate'):
+  fields=dict(stage='startup_prepare',sent=False,route='temporary',pageKind='chatgpt',
+   composer='yes',modelControl='zero',loginVisible='no',userRows='zero',assistantRows='zero')
+  if VARIANT=='prepare_gate_extra':fields['rawUrl']='PRIVATE URL'
+  emit('startup_prepare_state',**fields)
+  structure=dict(stage='startup_prepare',sent=False,readyState='complete',
+   legacyEditorCount='one',legacyEditorEditable='no',legacyEditorRect='yes',
+   testIdEditorVisible='one',roleTextboxEditableVisible='one',editableVisible='one',
+   textareaVisible='zero',globalModelTotal='one',globalModelVisible='one',
+   editorFormExists='yes',accessibleModelCount='one',accessibleModelSource='aria_label',
+   accessibleModelTag='button',accessibleModelInEditorForm='no',
+   accessibleModelHaspopup='menu',accessibleModelDisabled='no')
+  if VARIANT=='prepare_structure_extra':structure['rawUrl']='PRIVATE URL'
+  emit('startup_control_structure',**structure)
+  if VARIANT=='prepare_structure_duplicate':emit('startup_control_structure',**structure)
+  emit('failed',stage='startup_prepare',sent=False,error='web_startup_prepare_unavailable')
+  raise SystemExit(1)
+ if VARIANT in ('prepare_failed','prepare_failed_extra'):
+  fields=dict(stage='startup_prepare',sent=False,error='web_page_state_timeout')
+  if VARIANT=='prepare_failed_extra':fields['rawUrl']='PRIVATE URL'
+  emit('failed',**fields)
+  raise SystemExit(1)
  if VARIANT=='prepare_hold':
   while not Path(RELEASE).exists() and not (root/'shutdown.json').exists():time.sleep(.01)
   if (root/'shutdown.json').exists():raise SystemExit(0)
@@ -92,6 +115,15 @@ while not (root/'shutdown.json').exists():
   while not Path(RELEASE).exists() and not (root/'shutdown.json').exists():time.sleep(.01)
   if (root/'shutdown.json').exists():break
   Path(RELEASE).unlink()
+  if VARIANT in ('assistance_close_diagnostic','assistance_close_extra'):
+   fields=dict(assistanceId=ident,stage='worker_assistance',sent=False,
+    phase='before',route='temporary',pageKind='chatgpt',composer='yes',
+    modelControl='zero',loginVisible='no',userRows='zero',assistantRows='zero',
+    composerEmpty='unchecked')
+   if VARIANT=='assistance_close_extra':fields['rawUrl']='PRIVATE URL'
+   emit('assistance_close_state',**fields)
+   emit('assistance_failed',assistanceId=ident,error='web_assistance_closed_before_ready')
+   raise SystemExit(1)
   emit('assistance_hidden',assistanceId=ident,visible=VARIANT=='unhidden',focused=False,userClosed=True,
    inspectCompleted=inspecting,pagePreserved=inspecting and VARIANT!='lost_page')
   (root/'assisting.json').unlink();continue
@@ -139,8 +171,9 @@ while not (root/'shutdown.json').exists():
             return await original(sys.executable, '-u', '-c', program, str(config), **kwargs)
         return patch('operator_core.web_browser_session.asyncio.create_subprocess_exec', spawn)
 
-    def session(self, suffix='session'):
-        driver = WebBrowserSession(WebTextBrowserDriver(self.settings, self.root / suffix))
+    def session(self, suffix='session', *, startup_prepare=False):
+        driver = WebBrowserSession(WebTextBrowserDriver(self.settings, self.root / suffix),
+            startup_prepare=startup_prepare)
         self.addAsyncCleanup(driver.close)
         bridge = WebResponsesBridge(service.text_route(), WebMcpEndpoint(), driver)
         self.addAsyncCleanup(bridge.stop)
@@ -234,6 +267,101 @@ while not (root/'shutdown.json').exists():
                     self.assertEqual(len(launches), 1)
                     self.assertEqual(driver.base.dispatches, 0)
                     await driver.close()
+
+    async def test_assistance_close_diagnostic_retains_only_fixed_gates_and_failure_code(self):
+        for variant in ('assistance_close_diagnostic', 'assistance_close_extra'):
+            with self.subTest(variant=variant):
+                driver, _ = self.session(variant)
+                launches = []
+                with self.spawn_fixture(variant, launches):
+                    operation = asyncio.create_task(driver.assist('c' * 32))
+                    await self.until(lambda: driver.assistance_state == 'awaiting_user')
+                    self.release.write_bytes(b'closed')
+                    with self.assertRaisesRegex(ValueError,
+                            'web_assistance_failed_no_retry|web_session_worker_failed_no_retry'):
+                        await asyncio.wait_for(operation, 3)
+                    events = driver.base.status()['events']
+                    checks = [row for row in events if row['kind'] == 'assistance_close_state']
+                    if variant == 'assistance_close_diagnostic':
+                        self.assertEqual(len(checks), 1)
+                        self.assertEqual(checks[0]['modelControl'], 'zero')
+                        self.assertEqual(checks[0]['composerEmpty'], 'unchecked')
+                        failures = [row for row in events if row['kind'] == 'assistance_failed']
+                        self.assertEqual(failures[-1]['code'], 'web_assistance_closed_before_ready')
+                    else:
+                        self.assertEqual(checks, [])
+                    self.assertNotIn('PRIVATE URL', json.dumps(events))
+                    self.assertEqual(driver.base.dispatches, 0)
+
+    async def test_hidden_prepare_failure_retains_only_fixed_phase_and_code(self):
+        for variant in ('prepare_failed', 'prepare_failed_extra', 'exit_before_ready'):
+            with self.subTest(variant=variant):
+                driver, _ = self.session(variant, startup_prepare=True)
+                launches = []
+                with self.spawn_fixture(variant, launches):
+                    with self.assertRaisesRegex(ValueError, 'web_session_worker_failed_no_retry'):
+                        await asyncio.wait_for(driver.prepare_hidden(), 3)
+                    events = driver.base.status()['events']
+                    failures = [row for row in events if row['kind'] == 'startup_failed']
+                    self.assertEqual(len(failures), 1)
+                    self.assertEqual(failures[0]['stage'],
+                        'startup_prepare' if variant == 'prepare_failed' else 'unknown')
+                    self.assertEqual(failures[0]['code'],
+                        'web_page_state_timeout' if variant == 'prepare_failed'
+                        else 'web_session_worker_failed_no_retry')
+                    self.assertEqual(any(row['kind'] == 'startup_worker_ready' for row in events),
+                        variant != 'exit_before_ready')
+                    self.assertNotIn('PRIVATE URL', json.dumps(events))
+                    self.assertEqual(driver.base.dispatches, 0)
+
+    async def test_hidden_prepare_launch_failure_records_no_exception_text(self):
+        driver, _ = self.session('launch-failed', startup_prepare=True)
+        with patch('operator_core.web_browser_session.asyncio.create_subprocess_exec',
+                side_effect=OSError('PRIVATE executable path')):
+            with self.assertRaisesRegex(OSError, 'PRIVATE executable path'):
+                await driver.prepare_hidden()
+        self.assertEqual(driver.base.status()['events'], [{'kind': 'startup_failed',
+            'stage': 'launch', 'code': 'web_session_worker_failed_no_retry'}])
+        self.assertTrue(driver.closed)
+        self.assertEqual(driver.base.dispatches, 0)
+        self.assertEqual(list(driver.base.work.iterdir()), [])
+
+    async def test_hidden_prepare_gate_diagnostic_rejects_extra_page_data(self):
+        for variant in ('prepare_gate_failed', 'prepare_gate_extra',
+                'prepare_structure_extra', 'prepare_structure_duplicate'):
+            with self.subTest(variant=variant):
+                driver, _ = self.session(variant, startup_prepare=True)
+                launches = []
+                with self.spawn_fixture(variant, launches):
+                    with self.assertRaisesRegex(ValueError, 'web_session_worker_failed_no_retry'):
+                        await asyncio.wait_for(driver.prepare_hidden(), 3)
+                    events = driver.base.status()['events']
+                    gates = [row for row in events if row['kind'] == 'startup_prepare_state']
+                    if variant == 'prepare_gate_failed':
+                        self.assertEqual(gates, [{'kind': 'startup_prepare_state',
+                            'route': 'temporary', 'pageKind': 'chatgpt', 'composer': 'yes',
+                            'modelControl': 'zero', 'loginVisible': 'no',
+                            'userRows': 'zero', 'assistantRows': 'zero'}])
+                        failures = [row for row in events if row['kind'] == 'startup_failed']
+                        self.assertEqual(failures[-1]['code'], 'web_startup_prepare_unavailable')
+                    elif variant == 'prepare_gate_extra':
+                        self.assertEqual(gates, [])
+                    structures = [row for row in events if row['kind'] == 'startup_control_structure']
+                    if variant in ('prepare_gate_failed', 'prepare_structure_duplicate'):
+                        self.assertEqual(structures, [{'kind': 'startup_control_structure',
+                            'readyState': 'complete', 'legacyEditorCount': 'one',
+                            'legacyEditorEditable': 'no', 'legacyEditorRect': 'yes',
+                            'testIdEditorVisible': 'one', 'roleTextboxEditableVisible': 'one',
+                            'editableVisible': 'one', 'textareaVisible': 'zero',
+                            'globalModelTotal': 'one', 'globalModelVisible': 'one',
+                            'editorFormExists': 'yes', 'accessibleModelCount': 'one',
+                            'accessibleModelSource': 'aria_label', 'accessibleModelTag': 'button',
+                            'accessibleModelInEditorForm': 'no',
+                            'accessibleModelHaspopup': 'menu', 'accessibleModelDisabled': 'no'}])
+                    else:
+                        self.assertEqual(structures, [])
+                    self.assertNotIn('PRIVATE URL', json.dumps(events))
+                    self.assertEqual(driver.base.dispatches, 0)
 
     async def test_active_request_blocks_assistance_and_concurrent_close_has_one_owner(self):
         driver, bridge = self.session()

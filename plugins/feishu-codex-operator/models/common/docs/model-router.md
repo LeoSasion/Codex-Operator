@@ -46,6 +46,15 @@ including idle sockets. Loading this source requires an explicit request-free
 router restart; registry reload cannot replace running code. Synthetic saturation
 tests prove pool isolation and slot release, not live Desktop acceptance.
 
+## Native catalog scope (2026-09-24)
+
+Native model admission caches a catalog per bearer **and** `ChatGPT-Account-Id`,
+matching the catalog response's `Vary` scope. A bearer reused after switching
+accounts must fetch that account's catalog before deciding whether its model is
+native. `test_native_catalog_cache_is_scoped_to_chatgpt_account` reproduces the
+old false `model_not_registered` rejection with two loopback catalogs; it makes
+no real provider request. The cache stores only a digest of the two header values.
+
 Alpha.123 updates [probe evidence and CLI diagnostics](responses-acceptance.md#alpha123-exact-probe-results-and-bounded-cli-diagnostics)
 without changing production routing. Probe success requires exact final text;
 new receipts bind the combined evaluator revision, and CLI diagnostics separate
@@ -565,8 +574,13 @@ complete model row in a private JSON file and run:
 operator_model_router.py register-model --state-dir <state> --registration <one-model-row.json>
 ```
 
-The generic command performs no upstream request. It requires the router stopped
-and the global entry deactivated, and refuses a conflicting existing alias.
+The generic command performs no upstream request. It requires the router stopped,
+the global entry deactivated, the exact installed Operator stopped and its final
+callback queue empty, and refuses a conflicting existing alias. The same lifecycle
+gate applies to `lmstudio-register` and `lmstudio-sync --apply`. Write commands
+accept only a real `<project>/.codex/feishu-codex-operator-runtime/model-router`
+state with its installed `operator_main.py` and readable callback database; a
+disposable or unbound state can still be used for read-only preview.
 Adding v2 converts old rows to explicit null passthrough atomically. Start the
 stopped router separately to load registrations. These file mutations are
 separate from an explicit in-memory registry reload.
@@ -603,6 +617,16 @@ Operator stopped and callbacks empty. Starting the router and restoring an owned
 global routing entry remain separate operations; editing that entry and refreshing
 Desktop are not authorized by this registry write.
 No task model, approval setting or native catalog row is changed.
+Direct CLI writes now reserve the router port and inspect the installed
+Operator's exact script process identity and callback database before discovery
+or registration, then recheck under the registry lock immediately before a write.
+Unknown lifecycle state, a running Operator or router, and pending or captured
+callbacks fail closed. Desktop may remain open. Low-level Python helpers can be
+called by isolated tests without this guard; programmatic production callers
+must supply the same lifecycle guard and reserve the port for the whole edit.
+`test_direct_cli_writes_refuse_unbound_state_before_metadata_or_registry_mutation`
+and `test_failed_commit_guard_keeps_registry_and_releases_lock` cover those
+boundaries without touching installed state.
 
 A separately prepared local startup entry can perform that sequence on each
 launch, after verifying the exact Operator is stopped and callbacks are empty.

@@ -66,7 +66,8 @@ def lmstudio_models(api_base: str, key_env: str = "") -> list[str]:
 
 
 def register_lmstudio(state: Path, *, model: str, slug: str, api_base: str,
-                      key_env: str, context_window: int, efforts: list[str], responses=None):
+                      key_env: str, context_window: int, efforts: list[str], responses=None,
+                      guard=None):
     """Append an explicit model, preserving existing routes. Gateway must be stopped."""
     if not slug.startswith("local/"):
         raise RouterError("lmstudio_requires_local_slug")
@@ -81,7 +82,7 @@ def register_lmstudio(state: Path, *, model: str, slug: str, api_base: str,
     ModelRegistry({"version": 2 if "responses" in row else 1, "models": [row]}, catalog)
     if model not in lmstudio_models(api_base, key_env):
         raise RouterError("lmstudio_model_not_listed")
-    register_route(state, row)
+    register_route(state, row, guard=guard)
 
 
 def read_registration(path: Path):
@@ -93,12 +94,12 @@ def read_registration(path: Path):
     return loads(data)
 
 
-def register_route(state: Path, row: dict):
+def register_route(state: Path, row: dict, *, guard=None):
     """Append only. v2 upgrades existing rows with explicit null passthrough."""
-    register_routes(state, [row])
+    register_routes(state, [row], guard=guard)
 
 
-def register_routes(state: Path, rows: list[dict], *, expected_sha256=None):
+def register_routes(state: Path, rows: list[dict], *, expected_sha256=None, guard=None):
     """Validate and append an entire batch atomically; never change an existing row."""
     if (state / "codex-entry.json").exists():
         raise RouterError("deactivate_before_registration")
@@ -137,6 +138,8 @@ def register_routes(state: Path, rows: list[dict], *, expected_sha256=None):
             added += 1
         ModelRegistry(value, catalog)
         if added:
+            if guard is not None:
+                guard(state)
             if target.read_bytes() != original:
                 raise RouterError("registry_changed_during_registration")
             atomic_write(target, (json.dumps(value, ensure_ascii=True, indent=2) + "\n").encode())

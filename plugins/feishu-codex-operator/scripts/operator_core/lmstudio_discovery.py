@@ -136,9 +136,10 @@ def scan(state, policy):
     return result
 
 
-def synchronize(state, policy):
+def synchronize(state, policy, *, guard=None):
     if (state / "codex-entry.json").exists():
         raise RouterError("deactivate_before_registration")
     result = scan(state, policy)
-    result["added"] = settings.register_routes(state, result["models_to_add"], expected_sha256=result["registry_sha256"])
+    result["added"] = settings.register_routes(state, result["models_to_add"],
+        expected_sha256=result["registry_sha256"], guard=guard)
     return result

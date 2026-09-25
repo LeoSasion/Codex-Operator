@@ -83,7 +83,7 @@ Responder prompt: current user text, necessary read-only attachment paths, and
 the callback request_id. It contains no Operator history, summary, RAG, preview,
 policy, Page, capability, or attestation data. Beeper does not execute or
 summarize the request, read either task, submit the callback, or retry.
-All Operator-authored Spark input is concise, structured English: outer relay
+The retained historical Spark path uses concise, structured English for all Operator-authored input: outer relay
 instructions, nested callback guidance, attachment labels, and attachment-only
 placeholders. The extracted Feishu user text is preserved without translation.
 Attachment metadata uses ASCII JSON with lossless Unicode escapes, not renamed
@@ -113,7 +113,7 @@ or copies its branches. User text is JSON-escaped data, not control code.
 Only this project's generated program is executable through this route, never
 arbitrary tool text. English control instructions
 do not require an English final answer. Existing Desktop history is not rewritten.
-Spark ignores the Chinese language preference at every reasoning effort. The
+In that historical path, Spark ignores the Chinese language preference at every reasoning effort. The
 complete Chinese control template remains selectable for Luna only with
 `CODEX_OPERATOR_BEEPER_PROMPT_LANGUAGE=zh-cn`. A proven Spark quota rejection
 rebuilds only the Luna control wrapper, preserving the identical payload; language
@@ -137,14 +137,15 @@ The model may still alter the bootstrap or bypass it. Moving branches out of its
 input reduces this failure surface; it is not an exactly-once guarantee.
 
 Missing or blank `CODEX_OPERATOR_BEEPER_MODEL` selects `gpt-5.6-luna` with
-`low` reasoning. Explicit selection may use the local `beeper`/low,
-`gpt-5.3-codex-spark`/medium, or Luna/low. When Spark is explicitly selected,
+`low` reasoning. Current onboarding offers local `beeper`/low or Luna/low.
+The explicit Spark override remains in compatibility code for historical installs;
+it is not a current onboarding choice or a reason to run a new Spark probe. If a
+historical installation explicitly selects Spark,
 an exhausted Spark-specific bucket preselects Luna/low. A proven nonzero Spark usage/rate-limit
 queue rejection may trigger one same-event Luna attempt because the first turn
 was not accepted. Local-provider outcomes never fall back. Timeout, process
 failure, uncertainty, acceptance, and Luna rejection never trigger another attempt. The model override never propagates to
-the Responder task. Spark/low is excluded from normal selection; explicit
-bounded diagnostics are described below.
+the Responder task. Spark/low is excluded from normal selection.
 
 There is no deadline while the exact Responder is explicitly observed as
 active or its new turn is `inProgress`. A stable new-turn terminal state
@@ -154,8 +155,8 @@ transient observation uses a 300-second unknown-status window; if explicit
 running evidence disappears, that window starts fresh at the loss of evidence.
 The current standalone App Server may expose a live Desktop turn as
 `interrupted` without `completedAt`; that combination is unknown, never
-terminal. Expiry converges to the no-replay uncertainty path. For a bounded
-diagnostic comparison, `CODEX_OPERATOR_BEEPER_MODEL` may explicitly select
+terminal. Expiry converges to the no-replay uncertainty path. In the retained
+historical diagnostic path, `CODEX_OPERATOR_BEEPER_MODEL` may explicitly select
 `beeper`, Spark, or Luna; an empty value selects Luna/low. A bounded low- or
 high-effort Spark diagnostic additionally requires an explicit Spark model
 override and `CODEX_OPERATOR_BEEPER_REASONING_EFFORT=low` or `high`; clearing both

@@ -48,11 +48,41 @@ from operator_core.lark import (  # noqa: E402
     should_process,
     split_reply,
     reply_to_message,
+    resolve_session_metadata,
 )
 from operator_core.runtime import LifecycleLeases, parse_command  # noqa: E402
 
 
 class RoutingTests(unittest.TestCase):
+    def test_private_message_metadata_cannot_replace_the_admitted_sender(self) -> None:
+        event = {
+            "chat_type": "p2p", "chat_id": "synthetic-chat",
+            "sender_id": "ou_allowed", "message_id": "synthetic-message",
+        }
+        response = SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"data": {"messages": [{"sender": {
+                "id": "ou_different", "name": "Different user",
+            }}]}}),
+        )
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
+            with patch.dict(os.environ, {"CODEX_OPERATOR_PROJECT_ROOT": temporary}, clear=True):
+                config = load_config()
+            with patch("operator_core.lark.run_command", return_value=response):
+                metadata = resolve_session_metadata("fake-lark", event, config)
+            matching = SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"data": {"messages": [{"sender": {
+                    "id": "ou_allowed", "name": "Allowed user",
+                }}]}}),
+            )
+            with patch("operator_core.lark.run_command", return_value=matching):
+                named = resolve_session_metadata("fake-lark", event, config)
+        self.assertEqual("ou_allowed", metadata.user_open_id)
+        self.assertEqual("ou_allowed", metadata.name)
+        self.assertEqual("ou_allowed", named.user_open_id)
+        self.assertEqual("Allowed user", named.name)
+
     def test_event_consumer_stderr_never_logs_remote_message_or_scope_text(self) -> None:
         consumer = object.__new__(LarkEventConsumer)
         startup = {"ready": threading.Event(), "error": ""}
@@ -135,6 +165,22 @@ class RoutingTests(unittest.TestCase):
     def test_private_chat_keeps_v1_scope_shape(self) -> None:
         event = {"chat_type": "p2p", "chat_id": "chat-1", "sender_id": "user-1"}
         self.assertEqual("p2p:chat-1", conversation_scope(event))
+
+    def test_native_post_preserves_repeated_text_rows(self) -> None:
+        raw = {
+            "event": {
+                "message": {
+                    "message_type": "post",
+                    "content": json.dumps({"zh_cn": {"content": [
+                        [{"tag": "text", "text": "请重复"}],
+                        [{"tag": "text", "text": "请重复"}],
+                    ]}}, ensure_ascii=False),
+                },
+            },
+        }
+        event = normalize_event(raw)
+        self.assertEqual("请重复\n请重复", extract_message_text(event))
+        self.assertEqual("请重复\n请重复", build_turn_material(event, [], "")[0])
 
     def test_flat_cli_text_is_not_reparsed_as_json(self) -> None:
         for source in ("456", "true", "null", '{"text":"literal JSON"}'):

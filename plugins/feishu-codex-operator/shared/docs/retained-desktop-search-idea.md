@@ -4,7 +4,7 @@
 
 2026-09-14 跟进：容量修复已加载。Huihui 的 exec 调用层级混淆由 LM Studio 日志
 确认；单模型 standard 配置已热加载，配置前后两次隔离 CLI 搜索通过，Desktop
-刷新及新任务验收仍待完成。旧任务压缩错误未消除。见[具体诊断](../../models/common/docs/model-router.md#local-exec-call-level-diagnosis-20260914)。
+刷新及新任务验收仍待完成。旧任务压缩错误未消除。见[具体诊断](../../models/common/docs/model-router.md#local-exec-call-level-diagnosis-2026-09-14)。
 
 状态：**2026-09-12 已按所有者要求恢复统一搜索，采用 Codex 官方独立搜索入口；原替换草案及致谢继续保留。**
 

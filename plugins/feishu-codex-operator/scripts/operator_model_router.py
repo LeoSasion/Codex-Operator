@@ -426,8 +426,10 @@ def main():
         from operator_core.lmstudio_discovery import scan, synchronize
         policy = settings.read_registration(args.discovery_policy)
         if args.apply:
+            from operator_core.responses_labels import assert_registry_edit_stopped
             with reserve_inactive_port(args.port):
-                result = synchronize(args.state_dir, policy)
+                assert_registry_edit_stopped(args.state_dir)
+                result = synchronize(args.state_dir, policy, guard=assert_registry_edit_stopped)
         else:
             result = scan(args.state_dir, policy)
             result["added"] = 0
@@ -479,15 +481,18 @@ def main():
         if args.action == "lmstudio-register" and (
                 not args.model or not args.slug or args.context_window is None or not args.reasoning_effort):
             parser.error("model, slug, context-window and reasoning-effort must be explicit")
+        from operator_core.responses_labels import assert_registry_edit_stopped
         with reserve_inactive_port(args.port):
+            assert_registry_edit_stopped(args.state_dir)
             if args.action == "register-model":
-                settings.register_route(args.state_dir, registration)
+                settings.register_route(args.state_dir, registration, guard=assert_registry_edit_stopped)
             else:
                 responses = (settings.read_registration(args.responses_capabilities)
                              if args.responses_capabilities else None)
                 settings.register_lmstudio(args.state_dir, model=args.model, slug=args.slug,
                     api_base=args.api_base, key_env=args.api_key_env,
-                    context_window=args.context_window, efforts=args.reasoning_effort, responses=responses)
+                    context_window=args.context_window, efforts=args.reasoning_effort, responses=responses,
+                    guard=assert_registry_edit_stopped)
         print("Model registered. Start router separately; configured capabilities remain unverified.")
         return
     if args.action == "init":

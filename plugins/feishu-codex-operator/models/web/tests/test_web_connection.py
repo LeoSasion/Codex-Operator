@@ -540,6 +540,20 @@ class WebConnectionTests(unittest.IsolatedAsyncioTestCase):
         task, state, session = await self.start_service()
         calls = []
 
+        # Capture the exact declaration served by this isolated service rather
+        # than a static module constant: mcp_v1 selects structured begin/call.
+        url = 'http://' + self.endpoint.host + self.endpoint.path
+        async with ClientSession() as client:
+            async with client.post(url, json={'jsonrpc': '2.0', 'id': 101,
+                    'method': 'initialize', 'params': {'protocolVersion': '2025-03-26'}}) as response:
+                self.assertEqual(response.status, 200)
+                sid = response.headers['Mcp-Session-Id']
+            async with client.post(url, headers={'Mcp-Session-Id': sid},
+                    json={'jsonrpc': '2.0', 'id': 102, 'method': 'tools/list', 'params': {}}) as response:
+                self.assertEqual(response.status, 200)
+                advertised = (await response.json())['result']['tools']
+        self.assertIn('outputSchema', advertised[1])
+
         class Response:
             status = 200
             headers = {'Mcp-Session-Id': 's' * 43}
@@ -554,7 +568,7 @@ class WebConnectionTests(unittest.IsolatedAsyncioTestCase):
                 value = json.loads(request.data)
                 result = {'protocolVersion': '2025-03-26', 'capabilities': {'tools': {}},
                     'serverInfo': {'name': 'operator-web-tools', 'version': '0.2.0'}} \
-                    if len(calls) == 1 else {'tools': deepcopy(service.MCP_TOOLS)}
+                    if len(calls) == 1 else {'tools': deepcopy(advertised)}
                 return Response({'jsonrpc': '2.0', 'id': value['id'], 'result': result})
 
         health = {'active': False}
@@ -570,6 +584,47 @@ class WebConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(service.read_json(state / 'status.json')['connection']['connector_bound'])
         self.assertEqual(len(self.launches), 1)
         self.assertNotIn(session['token'], json.dumps(result))
+        await self.finish_service(task, state)
+
+    async def test_public_check_rejects_each_changed_tool_declaration_field(self):
+        task, state, session = await self.start_service()
+        from operator_core.web_mcp_transport import mcp_tool_declarations
+        expected = mcp_tool_declarations('structured_begin_v1', 'structured_call_v1')
+
+        class Response:
+            status = 200
+            headers = {'Mcp-Session-Id': 's' * 43}
+            def __init__(self, value): self.value = value
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+            def read(self, limit): return json.dumps(self.value).encode()[:limit]
+
+        for field, mutate in (
+                ('name', lambda tools: tools[1].update(name='operator_call_changed')),
+                ('description', lambda tools: tools[1].update(description='different')),
+                ('inputSchema', lambda tools: tools[1]['inputSchema'].update(required=['turn_key'])),
+                ('outputSchema', lambda tools: tools[1]['outputSchema'].update(required=[])),
+                ('annotations', lambda tools: tools[1]['annotations'].update(openWorldHint=False))):
+            with self.subTest(field=field):
+                actual = deepcopy(expected)
+                mutate(actual)
+                calls = []
+
+                class Opener:
+                    def open(self, request, timeout):
+                        calls.append(request)
+                        value = json.loads(request.data)
+                        result = {'protocolVersion': '2025-03-26', 'capabilities': {'tools': {}},
+                            'serverInfo': {'name': 'operator-web-tools', 'version': '0.2.0'}} \
+                            if len(calls) == 1 else {'tools': actual}
+                        return Response({'jsonrpc': '2.0', 'id': value['id'], 'result': result})
+
+                with patch.object(service, 'build_opener', return_value=Opener()):
+                    result = service.check_connection(state, session, {'active': False})
+                self.assertEqual((result['state'], result['code']),
+                    ('failed', 'web_connection_probe_tools_changed'))
+                self.assertEqual(len(calls), 2)
+        self.assertEqual(len(self.launches), 1)
         await self.finish_service(task, state)
 
     async def test_public_http_error_is_terminal_and_does_not_launch_assistance(self):

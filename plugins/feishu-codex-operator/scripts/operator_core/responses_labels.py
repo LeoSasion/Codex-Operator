@@ -49,22 +49,38 @@ foreach ($p in @(Get-CimInstance Win32_Process)) {
 """
 
 
-def assert_stopped(state, desktop_version):
+def assert_stopped(state, desktop_version, *, registry_edit=False):
     """Observe the exact installed Windows lifecycle; never stop anything."""
     state = Path(state)
+    errors = ({'runtime': 'registry_edit_requires_standard_windows_runtime',
+               'entry': 'deactivate_before_registry_edit',
+               'identity': 'registry_edit_runtime_identity_unavailable',
+               'powershell': 'registry_edit_lifecycle_powershell_unavailable',
+               'observation': 'registry_edit_lifecycle_observation_failed',
+               'running': 'operator_and_router_must_be_stopped_for_registry_edit',
+               'callback': 'registry_edit_callback_state_unavailable',
+               'pending': 'callbacks_must_be_empty_for_registry_edit'} if registry_edit else
+              {'runtime': 'label_update_requires_standard_windows_runtime',
+               'entry': 'deactivate_before_label_update',
+               'identity': 'label_runtime_identity_unavailable',
+               'powershell': 'label_lifecycle_powershell_unavailable',
+               'observation': 'label_lifecycle_observation_failed',
+               'running': 'operator_and_router_must_be_stopped_for_label_update',
+               'callback': 'label_callback_state_unavailable',
+               'pending': 'callbacks_must_be_empty_for_label_update'})
     if (os.name != 'nt' or state.resolve() != state.absolute()
             or state.name != 'model-router' or state.parent.name != 'feishu-codex-operator-runtime'
             or state.parent.parent.name != '.codex'):
-        raise RouterError('label_update_requires_standard_windows_runtime')
+        raise RouterError(errors['runtime'])
     journal = state / 'codex-entry.json'
     if journal.exists() or journal.is_symlink():
-        raise RouterError('deactivate_before_label_update')
+        raise RouterError(errors['entry'])
     runtime = state.parent
     if not (runtime / 'operator_main.py').is_file():
-        raise RouterError('label_runtime_identity_unavailable')
+        raise RouterError(errors['identity'])
     pwsh = Path(os.environ.get('ProgramFiles', '')) / 'PowerShell' / '7' / 'pwsh.exe'
     if not pwsh.is_absolute() or not pwsh.is_file():
-        raise RouterError('label_lifecycle_powershell_unavailable')
+        raise RouterError(errors['powershell'])
     env = dict(os.environ, CODEX_OPERATOR_LABEL_RUNTIME=str(runtime))
     try:
         result = subprocess.run([str(pwsh), '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', PROCESS_CHECK],
@@ -74,19 +90,19 @@ def assert_stopped(state, desktop_version):
             raise ValueError('invalid process observation')
         observed = settings.loads(result.stdout.decode('utf-8-sig'))
     except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
-        raise RouterError('label_lifecycle_observation_failed') from exc
+        raise RouterError(errors['observation']) from exc
     if (not isinstance(observed, dict)
             or set(observed) != {'desktop_running', 'operator_running', 'router_running', 'desktop_version'}
             or any(type(observed[k]) is not int or observed[k] < 0
                    for k in ('desktop_running', 'operator_running', 'router_running'))):
-        raise RouterError('label_lifecycle_observation_failed')
+        raise RouterError(errors['observation'])
     if observed['operator_running'] or observed['router_running']:
-        raise RouterError('operator_and_router_must_be_stopped_for_label_update')
-    if observed['desktop_version'] != desktop_version:
+        raise RouterError(errors['running'])
+    if not registry_edit and observed['desktop_version'] != desktop_version:
         raise RouterError('desktop_version_changed_before_label_update')
     db = runtime / 'callbacks.sqlite3'
     if db.is_symlink() or not db.is_file():
-        raise RouterError('label_callback_state_unavailable')
+        raise RouterError(errors['callback'])
     try:
         connection = sqlite3.connect(db.as_uri() + '?mode=ro', uri=True, timeout=1)
         try:
@@ -94,9 +110,14 @@ def assert_stopped(state, desktop_version):
         finally:
             connection.close()
     except sqlite3.Error as exc:
-        raise RouterError('label_callback_state_unavailable') from exc
+        raise RouterError(errors['callback']) from exc
     if pending:
-        raise RouterError('callbacks_must_be_empty_for_label_update')
+        raise RouterError(errors['pending'])
+
+
+def assert_registry_edit_stopped(state):
+    """Bind a registry write to its installed Operator and empty callback queue."""
+    assert_stopped(state, None, registry_edit=True)
 
 
 def _snapshot(state, slug):

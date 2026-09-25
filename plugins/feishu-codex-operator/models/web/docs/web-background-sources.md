@@ -2,9 +2,14 @@
 
 ## 2026-09-20 当前参考策略与研究范围
 
-所有者将 [Chat On Steroids](https://github.com/totec448-spec/chat-on-steroids) 设为首要参考，
-其他参考冷置，仅在必要时查阅；下方带日期的旧优先级保留为历史来源。
-本轮阅读其 `src/main/connection.ts`、`src/main/plugin-refresh.ts`、
+所有者将 [Chat On Steroids](https://github.com/totec448-spec/chat-on-steroids) 设为首要参考。
+2026-09-24 核对下列四个独立仓库均可访问，但仅在出现具体缺口时查阅：
+[WebCodex](https://github.com/yyjeqhc/webcodex)、
+[localmcp](https://github.com/daodao97/localmcp)、
+[codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web)，以及截图中 MCPX 的候选仓库
+[opentokenz/mcpx](https://github.com/opentokenz/mcpx)。仓库存在不证明截图身份；旧文的
+“localmcp / MCPX”是并列简写，不表示同一项目。下方带日期的旧优先级仅作历史来源。
+2026-09-20 阅读 Chat On Steroids 的 `src/main/connection.ts`、`src/main/plugin-refresh.ts`、
 `src/main/browser-startup.ts`、`src/main/browser-wake.ts` 与
 `docs/chatgpt-turn-signals.md`，对照本项目已有后台、保存连接、页面与提供方入口。
 采用的是研究方向：保存连接复用、按真实工具声明判断是否需要刷新、准确回合归属、
