@@ -117,8 +117,20 @@ class BrowserSurface {
     this.view.setVisible(true);
   }
 
-  async loadURL(url) {
-    await this.webContents.loadURL(url);
+  async loadURL(url, timeoutMs = 60000) {
+    // Chromium can leave its navigation promise pending during a network stall.
+    // The caller closes this worker on failure; no page or model request retries.
+    let timer;
+    try {
+      await Promise.race([
+        this.webContents.loadURL(url),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("web_navigation_timeout_no_retry")), timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
     this.rendererReady = true;
     this.emulationDirty = true;
     this.sync();
@@ -204,7 +216,8 @@ function validateAssistancePacket(value, seen) {
 function assistanceReady(state) {
   return state?.pageKind === "chatgpt" && state.composer === true
     && state.modelButtonCount === 1 && state.loginVisible === false
-    && state.userCount === 0 && state.assistantCount === 0;
+    && state.userCount === 0 && state.assistantCount === 0
+    && state.modernRowCount === 0;
 }
 
 function recoverableBeforeDispatch(error, sent) {
@@ -212,18 +225,25 @@ function recoverableBeforeDispatch(error, sent) {
     "web_browser_challenge_required_before_dispatch"].includes(error);
 }
 
-function navigationAllowed(value, assisting) {
+const PUBLIC_LOGIN_ORIGINS = new Set([
+  "https://auth.openai.com", "https://accounts.google.com", "https://appleid.apple.com",
+]);
+
+function navigationAllowed(value, assisting, visibleAssistance = false) {
   try {
     const url = new URL(value);
-    return !url.username && !url.password && (url.origin === "https://chatgpt.com"
-      || assisting === true && url.origin === "https://auth.openai.com");
+    return url.protocol === "https:" && !url.username && !url.password
+      && (url.origin === "https://chatgpt.com"
+        || assisting === true && (PUBLIC_LOGIN_ORIGINS.has(url.origin)
+          || visibleAssistance === true));
   } catch { return false; }
 }
 
 function isPublicLoginUrl(value) {
   try {
     const url = new URL(value);
-    return url.origin === "https://auth.openai.com" && !url.username && !url.password;
+    return !url.username && !url.password && (PUBLIC_LOGIN_ORIGINS.has(url.origin)
+      || url.origin === "https://chatgpt.com" && url.pathname === "/auth/login");
   } catch { return false; }
 }
 

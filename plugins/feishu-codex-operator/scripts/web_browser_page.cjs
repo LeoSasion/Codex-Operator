@@ -46,7 +46,9 @@ function controls(modelLabels = ["GPT-5.6 Sol"]) {
   const modelButtons = eligibleModelButtons(composer);
   const chooser = [...document.querySelectorAll('[role="menuitem"]')].filter(e => menuVisible(e) && ["选择模型", "Choose model"].includes(e.getAttribute("aria-label")));
   const options = [...document.querySelectorAll('[role="menuitemradio"]')].filter(e => menuVisible(e) && modelLabels.includes(e.textContent.trim()));
-  const send = form?.querySelector('[data-testid="send-button"]');
+  const send = form?.querySelector('[data-testid="send-button"]')
+    || [...(form?.querySelectorAll('button[type="submit"]') || [])]
+      .filter(e => ['发送', 'Send'].includes(e.getAttribute('aria-label')))[0];
   const modelControl = modelButtons.length === 1 ? modelButtons[0] : null;
   const modelPropsKey = modelControl && Object.keys(modelControl).find(k => k.startsWith("__reactProps$"));
   const modelProps = modelPropsKey ? modelControl[modelPropsKey] : null;
@@ -77,6 +79,7 @@ function controls(modelLabels = ["GPT-5.6 Sol"]) {
     modelChecked: options.length === 1 ? options[0].getAttribute("aria-checked") : null,
     userCount: document.querySelectorAll('[data-message-author-role="user"]').length,
     assistantCount: document.querySelectorAll('[data-message-author-role="assistant"]').length,
+    modernRowCount: document.querySelectorAll('[data-chatgpt-search-unit-key]').length,
     sendReady: visible(send) && !send.disabled && send.getAttribute("aria-disabled") !== "true" };
 }
 function startupControlStructure() {
@@ -176,22 +179,77 @@ function pluginMaintenanceReady() {
       || document.getElementById(e.getAttribute('aria-labelledby'))?.textContent?.trim() || ''))) return false;
   return true;
 }
-function startFreshChat() {
+function startFreshChat(expectedPrompt = null, expectedId = null) {
   const composer = uniqueComposer();
+  const users = document.querySelectorAll('[data-message-author-role="user"]');
+  const assistants = document.querySelectorAll('[data-message-author-role="assistant"]');
+  const modernRows = document.querySelectorAll('[data-chatgpt-search-unit-key]');
+  const legacyIdle = !modernRows.length && users.length === 1 && assistants.length === 1;
+  // The current renderer no longer exposes data-message-author-role. Recheck
+  // the exact completed public turn immediately before navigating away from it.
+  const modernFinal = modernRows.length && users.length === 0 && assistants.length === 0
+    && typeof expectedPrompt === 'string' && typeof expectedId === 'string'
+    ? modernPublicFinal(expectedPrompt, false, true) : null;
+  const modernIdle = !!modernFinal && modernFinal.id === expectedId;
   if (!composer || composer.textContent !== ''
-      || document.querySelectorAll('[data-message-author-role="user"]').length !== 1
-      || document.querySelectorAll('[data-message-author-role="assistant"]').length !== 1
+      || (!legacyIdle && !modernIdle)
       || [...document.querySelectorAll('[data-testid="stop-button"]')].some(e => e.getClientRects().length))
     throw new Error('web_new_chat_idle_page_required');
-  const choices = [...document.querySelectorAll('a[data-testid="create-new-chat-button"]')]
+  const links = [...document.querySelectorAll('a[data-testid="create-new-chat-button"]')]
     .filter(e => e.getClientRects().length);
-  // The observed toolbar and sidebar expose two equivalent home links.
-  // Both must keep the same fixed destination and dated public label.
-  if (choices.length < 1 || choices.length > 2 || choices.some(e => e.getAttribute('href') !== '/'
-      || e.getAttribute('aria-disabled') === 'true' || e.getAttribute('target')
-      || !/^(新聊天|New chat)(CtrlShiftO)?$/.test((e.textContent || '').trim())))
+  const buttons = [...document.querySelectorAll('nav[aria-label="首页"] button,nav[aria-label="Home"] button,nav[aria-label="聊天记录"] button,nav[aria-label="Chat history"] button')]
+    .filter(e => e.getClientRects().length
+      && /^(新聊天|New chat)$/.test((e.textContent || '').trim()));
+  // The old UI has one or two equivalent home links; the current sidebar has
+  // one exact public button. Never choose among mixed or ambiguous controls.
+  if (links.length && !buttons.length && links.length <= 2
+      && links.every(e => e.getAttribute('href') === '/'
+        && e.getAttribute('aria-disabled') !== 'true' && !e.getAttribute('target')
+        && /^(新聊天|New chat)(CtrlShiftO)?$/.test((e.textContent || '').trim()))) {
+    links[0].click();
+    return;
+  }
+  if (links.length || buttons.length !== 1 || buttons[0].getAttribute('type') !== 'button'
+      || buttons[0].disabled || buttons[0].getAttribute('aria-disabled') === 'true'
+      || buttons[0].getAttribute('href') || buttons[0].getAttribute('target')
+      || buttons[0].closest('[hidden],[inert],[aria-hidden="true"]'))
     throw new Error('web_new_chat_control_ambiguous');
-  choices[0].click();
+  buttons[0].click();
+}
+function freshChatControlStructure() {
+  // Diagnostic after a rejected New chat selection only. Return fixed categories,
+  // never page text, URLs, attributes or conversation identities.
+  const bucket = count => count === 0 ? 'zero' : count === 1 ? 'one' : 'multiple';
+  const visible = e => e.getClientRects().length > 0;
+  const links = [...document.querySelectorAll('a[data-testid="create-new-chat-button"]')].filter(visible);
+  const navButtons = [...document.querySelectorAll('nav[aria-label="首页"] button,nav[aria-label="Home"] button,nav[aria-label="聊天记录"] button,nav[aria-label="Chat history"] button')]
+    .filter(visible);
+  const buttons = navButtons.filter(e => /^(新聊天|New chat)$/.test((e.textContent || '').trim()));
+  const all = test => links.length ? links.every(test) ? 'yes' : 'no' : 'unknown';
+  const button = buttons.length === 1 ? buttons[0] : null;
+  const attr = name => button ? button.getAttribute(name) : null;
+  const type = attr('type'), ariaDisabled = attr('aria-disabled');
+  return { legacyLinks: bucket(links.length),
+    legacyRootHref: all(e => e.getAttribute('href') === '/'),
+    legacyLabel: all(e => /^(新聊天|New chat)(CtrlShiftO)?$/.test((e.textContent || '').trim())),
+    legacyEnabled: all(e => e.getAttribute('aria-disabled') !== 'true'
+      && !e.getAttribute('target')),
+    navButtons: bucket(navButtons.length), namedButtons: bucket(buttons.length),
+    buttonType: !button ? 'unknown' : type === 'button' ? 'button' : type === null ? 'absent' : 'other',
+    buttonDisabled: !button ? 'unknown' : button.disabled ? 'yes' : 'no',
+    buttonAriaDisabled: !button ? 'unknown' : ariaDisabled === 'true' ? 'yes'
+      : ariaDisabled === null || ariaDisabled === 'false' ? 'no' : 'other',
+    buttonHref: !button ? 'unknown' : attr('href') ? 'present' : 'absent',
+    buttonTarget: !button ? 'unknown' : attr('target') ? 'present' : 'absent',
+    buttonHiddenAncestor: !button ? 'unknown'
+      : button.closest('[hidden],[inert],[aria-hidden="true"]') ? 'yes' : 'no' };
+}
+function emptyFreshChat() {
+  const composer = uniqueComposer();
+  return !!composer && composer.textContent === ''
+    && document.querySelectorAll('[data-message-author-role],[data-chatgpt-search-unit-key]').length === 0
+    && ![...document.querySelectorAll('[data-testid="stop-button"]')]
+      .some(e => e.getClientRects().length);
 }
 function enableTemporaryChat() {
   const composer = uniqueComposer();
@@ -268,12 +326,19 @@ function eligibleEffortContainer() {
   // An unrelated page slider must never become the model-effort target.
   const candidates = [...document.querySelectorAll('[data-model-picker-power-slider]')].filter(visible);
   if (candidates.length !== 1) return null;
-  const sliders = [...candidates[0].querySelectorAll('[role="slider"]')].filter(visible);
+  // The current page marks the slider span itself aria-hidden while its
+  // enclosing menuitem remains visible and keyboard-operable.  Do not treat
+  // that self annotation as a hidden menu; hidden ancestors still disqualify it.
+  const sliders = [...candidates[0].querySelectorAll('[role="slider"]')].filter(element =>
+    element.getClientRects().length > 0
+    && !element.closest('[hidden],[inert],[role="menu"][data-state="closed"]')
+    && !element.parentElement?.closest('[aria-hidden="true"]'));
   const choosers = [...document.querySelectorAll('[role="menuitem"]')]
     .filter(element => visible(element)
       && ['选择模型', 'Choose model'].includes(element.getAttribute('aria-label')));
   const menu = sliders.length === 1 ? sliders[0].closest('[role="menu"]') : null;
-  return sliders.length === 1 && sliders[0].closest('[role="menuitem"]') && menu
+  return sliders.length === 1 && sliders[0].closest('[role="menuitem"]')
+    && visible(sliders[0].closest('[role="menuitem"]')) && menu
     && choosers.length === 1 && choosers[0].closest('[role="menu"]') === menu
     ? candidates[0] : null;
 }
@@ -367,10 +432,15 @@ function focusEffort() {
 function connectorAccessState() {
   // The initial temporary page can render before account plugin access loads.
   // Read only the public setting; never change personalization or permissions.
-  const controls = [...document.querySelectorAll('button[aria-label="个性化"],button[aria-label="不个性化"]')]
-    .filter(e => e.getClientRects().length && !e.closest('[hidden],[inert],[aria-hidden="true"]'));
+  const labels = ['个性化', '不个性化'];
+  const controls = [...document.querySelectorAll('button')]
+    .filter(e => e.getClientRects().length && !e.closest('[hidden],[inert],[aria-hidden="true"]')
+      && (labels.includes(e.getAttribute('aria-label'))
+        || (e.getAttribute('aria-label') === null && e.getAttribute('aria-haspopup') === 'menu'
+          && labels.includes(e.textContent.trim()))));
   if (controls.length !== 1) return 'unknown';
-  return controls[0].getAttribute('aria-label') === '个性化' ? 'enabled' : 'disabled';
+  const label = controls[0].getAttribute('aria-label') ?? controls[0].textContent.trim();
+  return label === '个性化' ? 'enabled' : 'disabled';
 }
 function connectorMenuChoice(name, query, activate = false, expectedId) {
   // Match the complete ASCII/CJK label, including a true end-of-input check.
@@ -389,17 +459,59 @@ function connectorMenuChoice(name, query, activate = false, expectedId) {
     ?.getAttribute('data-composer-plugin-impression-id') === expectedId.slice('plugin:'.length)
     && (e.textContent === name || [...e.querySelectorAll('span')].some(label => label.textContent === name)));
   if (matches.length > 1) throw new Error("web_connector_menu_ambiguous");
-  if (!matches.length) return null;
-  if (activate) matches[0].click();
-  return { name, id: expectedId, activated: activate };
+  if (matches.length) {
+    if (activate) matches[0].click();
+    return { name, id: expectedId, activated: activate };
+  }
+  if (rows.length) return null;
+  // The current menu exposes a label but no app ID. This is only a provisional
+  // pick: the caller must validate the exact ID on the resulting pill before
+  // adding prompt text or sending anything. Duplicate labels fail closed.
+  const current = [...document.querySelectorAll('[data-mention-list-scroll-area] button[data-list-navigation-item="true"]')]
+    .filter(e => e.getClientRects().length && e.getAttribute('aria-disabled') !== 'true'
+      && !e.closest('[hidden],[inert],[aria-hidden="true"]'));
+  if (current.length > 512) throw new Error("web_connector_menu_too_large");
+  const candidates = current.filter(e => [...e.querySelectorAll('span')]
+    .some(label => label.textContent === name));
+  if (candidates.length > 1) throw new Error("web_connector_menu_ambiguous");
+  if (!candidates.length) return null;
+  if (activate) candidates[0].click();
+  return { name, id: null, activated: activate, identityPending: true };
 }
-function selectedConnector(expectedName) {
+function connectorPillState(expectedName) {
   if (typeof expectedName !== 'string' || !/^[A-Za-z0-9\u3400-\u4dbf\u4e00-\u9fff][A-Za-z0-9\u3400-\u4dbf\u4e00-\u9fff -]{0,63}(?![\s\S])/.test(expectedName))
     throw new Error("web_connector_name_invalid");
   const composer = uniqueComposer();
   if (!composer) throw new Error("web_composer_missing");
   const pills = composer.querySelectorAll('[data-inline-selection-pill]');
-  if (pills.length === 0) return null;
+  const current = composer.querySelectorAll('span[app-mention-path]');
+  if (!pills.length && !current.length) return null;
+  if (pills.length && current.length) throw new Error("web_connector_mention_ambiguous");
+  if (current.length) {
+    if (current.length !== 1 || composer.querySelectorAll('[data-inline-selection-pill-cursor-target]').length)
+      throw new Error("web_connector_mention_ambiguous");
+    const pill = current[0], path = pill.getAttribute('app-mention-path');
+    const label = pill.getAttribute('data-prompt-link-label');
+    const paragraph = pill.parentElement, text = paragraph?.childNodes[1];
+    if (!/^app:\/\/asdk_app_[a-f0-9]{32}$/.test(path || '')
+        || pill.getAttribute('contenteditable') !== 'false'
+        || pill.getAttribute('app-mention-display-name') !== expectedName
+        || pill.getAttribute('data-prompt-link-href') !== path
+        || !/^\$[a-z0-9-]{1,32}$/.test(label || '')
+        || pill.getAttribute('app-mention-name') !== label.slice(1)
+        || pill.textContent !== expectedName
+        || paragraph?.tagName !== 'P' || paragraph.parentElement !== composer
+        || paragraph.childNodes.length < 2 || paragraph.childNodes.length > 3
+        || paragraph.childNodes[0] !== pill
+        || (paragraph.childNodes.length === 3
+          && (paragraph.childNodes[2].tagName !== 'SPAN'
+            || paragraph.childNodes[2].getAttribute('data-prompt-literal-paste') !== ''))
+        || text?.nodeType !== 3
+        || !(text.textContent.startsWith(' ') || text.textContent.startsWith('\u00a0')))
+      throw new Error("web_connector_mention_mismatch");
+    return { id: 'plugin:' + path.slice(6), name: expectedName,
+      prefix: expectedName + ' ', publicPrefix: '[' + label + '](' + path + ')\u00a0' };
+  }
   const cursors = composer.querySelectorAll('[data-inline-selection-pill-cursor-target]');
   if (pills.length !== 1 || cursors.length !== 1) throw new Error("web_connector_mention_ambiguous");
   const pill = pills[0], cursor = cursors[0], id = pill.getAttribute('data-id');
@@ -408,10 +520,18 @@ function selectedConnector(expectedName) {
       || pill.getAttribute('data-system-hint-type') !== id
       || pill.getAttribute('data-symbol') !== 'ecosystemMention'
       || pill.getAttribute('data-keyword') !== expectedName || pill.textContent !== expectedName
-      || cursor.getAttribute('contenteditable') !== 'false' || cursor.textContent !== '\uFEFF'
-      || composer.textContent !== '\uFEFF' + expectedName + ' ')
+      || cursor.getAttribute('contenteditable') !== 'false' || cursor.textContent !== '\uFEFF')
     throw new Error("web_connector_mention_mismatch");
-  return { id, name: expectedName };
+  return { id, name: expectedName, prefix: '\uFEFF' + expectedName + ' ',
+    publicPrefix: '@' + expectedName + ' ' };
+}
+function selectedConnector(expectedName) {
+  const state = connectorPillState(expectedName);
+  if (!state) return null;
+  if (uniqueComposer().querySelectorAll('[data-prompt-literal-paste]').length)
+    throw new Error("web_connector_mention_mismatch");
+  if (uniqueComposer().textContent !== state.prefix) throw new Error("web_connector_mention_mismatch");
+  return { id: state.id, name: state.name, publicPrefix: state.publicPrefix };
 }
 function composerPrefix(mention) {
   const composer = uniqueComposer();
@@ -420,30 +540,44 @@ function composerPrefix(mention) {
     if (composer.textContent !== "") throw new Error("web_empty_composer_required");
     return "";
   }
-  const pills = composer.querySelectorAll('[data-inline-selection-pill]');
-  const cursors = composer.querySelectorAll('[data-inline-selection-pill-cursor-target]');
-  if (pills.length !== 1 || cursors.length !== 1) throw new Error("web_connector_mention_ambiguous");
-  const pill = pills[0], cursor = cursors[0];
-  if (pill.getAttribute('contenteditable') !== 'false'
-      || pill.getAttribute('data-id') !== mention.id
-      || pill.getAttribute('data-system-hint-type') !== mention.id
-      || pill.getAttribute('data-symbol') !== 'ecosystemMention'
-      || pill.getAttribute('data-keyword') !== mention.name
-      || pill.textContent !== mention.name
-      || cursor.getAttribute('contenteditable') !== 'false'
-      || cursor.textContent !== '\uFEFF') throw new Error("web_connector_mention_mismatch");
-  const prefix = '\uFEFF' + mention.name + ' ';
-  if (composer.textContent !== prefix) throw new Error("web_connector_composer_not_empty");
-  return prefix;
+  const state = connectorPillState(mention.name);
+  if (!state || state.id !== mention.id) throw new Error("web_connector_mention_mismatch");
+  if (composer.querySelectorAll('[data-prompt-literal-paste]').length)
+    throw new Error("web_connector_composer_not_empty");
+  if (composer.textContent !== state.prefix) throw new Error("web_connector_composer_not_empty");
+  return state.prefix;
 }
-function focusComposer(prefix = "") {
+function focusComposer(prefix = "", replaceAppSeparator = false) {
   const composer = uniqueComposer();
   if (!composer || composer.textContent !== prefix) throw new Error("web_empty_composer_required");
+  const current = composer.querySelectorAll('span[app-mention-path]');
+  if (current.length > 1) throw new Error("web_connector_mention_ambiguous");
+  let currentTail = null;
+  if (current.length) {
+    const state = connectorPillState(current[0].getAttribute('app-mention-display-name'));
+    if (!state || state.prefix !== prefix) throw new Error("web_connector_mention_mismatch");
+    currentTail = current[0].parentElement.childNodes[1];
+  }
   composer.focus();
   if (document.activeElement !== composer) throw new Error("web_composer_focus_failed");
   const range = document.createRange();
-  range.selectNodeContents(composer);
-  range.collapse(false);
+  if (currentTail) {
+    // Replace the one checked placeholder separator with the exact separator
+    // and request text. The editor may otherwise retain it or consume it,
+    // producing two spaces or none after the app pill.
+    if (replaceAppSeparator) {
+      if (currentTail.textContent !== ' ') throw new Error("web_connector_mention_mismatch");
+      range.setStart(currentTail, 0);
+      range.setEnd(currentTail, 1);
+    } else {
+      range.setStart(currentTail, currentTail.textContent.length);
+      range.collapse(true);
+    }
+  } else {
+    if (replaceAppSeparator) throw new Error("web_connector_mention_mismatch");
+    range.selectNodeContents(composer);
+    range.collapse(false);
+  }
   const selection = window.getSelection();
   selection.removeAllRanges();
   selection.addRange(range);
@@ -453,34 +587,141 @@ function composerMatches(text, prefix = "", mention = null) {
   if (!composer || document.activeElement !== composer) return false;
   const pills = composer.querySelectorAll('[data-inline-selection-pill]');
   const cursors = composer.querySelectorAll('[data-inline-selection-pill-cursor-target]');
+  const current = composer.querySelectorAll('span[app-mention-path]');
+  const literalPastes = composer.querySelectorAll('[data-prompt-literal-paste]');
   // The observed editor represents each inserted LF line as a direct P child,
   // including empty lines. textContent drops these boundaries; innerText adds
   // layout-dependent breaks around the application pill. Validate each node
   // against its exact original line instead of rewriting the submitted text.
   const paragraphs = [...composer.childNodes], lines = (prefix + text).split('\n');
-  const exactParagraphs = paragraphs.length > 0 && paragraphs.length <= 1024
+  const exactParagraphs = literalPastes.length === 0
+    && paragraphs.length > 0 && paragraphs.length <= 1024
     && paragraphs.length === lines.length && paragraphs.every((p, index) => {
-      if (p.nodeType !== 1 || p.tagName !== 'P' || p.textContent !== lines[index]) return false;
+      if (p.nodeType !== 1 || p.tagName !== 'P') return false;
+      const exact = p.textContent === lines[index];
+      // The current contenteditable represents the sole separator immediately
+      // after an app pill as NBSP while editing. Bind that one DOM encoding to
+      // the exact pill and text node; the posted public message must still
+      // match the bound app-link projection before accepting any result.
+      const encodedSeparator = index === 0 && !!mention && current.length === 1
+        && prefix === mention.name + ' ' && p.childNodes.length === 2
+        && p.childNodes[0] === current[0] && p.childNodes[1].nodeType === 3
+        && p.childNodes[1].textContent === '\u00a0' + text.split('\n')[0];
+      if (!exact && !encodedSeparator) return false;
       const breaks = p.querySelectorAll('br');
       return breaks.length === 0 || (breaks.length === 1 && p.textContent === '');
     });
+  // The current editor keeps a pasted multi-line literal inside one SPAN,
+  // with BR nodes carrying LF bytes. Reconstruct only these exact, bounded
+  // public nodes; arbitrary markup or missing boundaries must not pass.
+  const structuredText = () => {
+    if (paragraphs.length !== 1 || paragraphs[0].nodeType !== 1
+        || paragraphs[0].tagName !== 'P' || !paragraphs[0].childNodes
+        || paragraphs[0].childNodes.length > 1024) return null;
+    const allowedPill = mention && current.length === 1 ? current[0] : null;
+    let value = '';
+    const append = node => {
+      if (node.nodeType === 3) return node.textContent;
+      if (node === allowedPill) return node.textContent;
+      if (node.tagName !== 'SPAN' || node.getAttribute('data-prompt-literal-paste') !== ''
+          || node.attributes.length !== 1 || node.childNodes.length > 1024) return null;
+      let literal = '';
+      for (const child of node.childNodes) {
+        if (child.nodeType === 3) literal += child.textContent;
+        else if (child.tagName === 'BR' && child.attributes.length === 0
+            && child.childNodes.length === 0) literal += '\n';
+        else return null;
+        if (literal.length > 1024 * 1024) return null;
+      }
+      return literal;
+    };
+    for (const node of paragraphs[0].childNodes) {
+      const part = append(node);
+      if (part === null || typeof part !== 'string') return null;
+      value += part;
+      if (value.length > 1024 * 1024) return null;
+    }
+    return value;
+  };
+  const exactStructuredText = structuredText() === prefix + text;
   // A plain multiline paste also becomes one P per source line. innerText can
   // add layout breaks, so accept only the exact ordered paragraph structure.
   if (mention == null) return prefix === '' && pills.length === 0 && cursors.length === 0
-    && (composer.innerText === text || exactParagraphs);
-  return prefix === '\uFEFF' + mention.name + ' '
-    && pills.length === 1 && cursors.length === 1
-    && cursors[0].getAttribute('contenteditable') === 'false' && cursors[0].textContent === '\uFEFF'
-    && pills[0].getAttribute('contenteditable') === 'false'
-    && pills[0].getAttribute('data-id') === mention.id
-    && pills[0].getAttribute('data-system-hint-type') === mention.id
-    && pills[0].getAttribute('data-symbol') === 'ecosystemMention'
-    && pills[0].getAttribute('data-keyword') === mention.name
-    && pills[0].textContent === mention.name && exactParagraphs;
+    && current.length === 0
+    && (composer.innerText === text || exactParagraphs || exactStructuredText);
+  let state;
+  try { state = connectorPillState(mention.name); }
+  catch (error) {
+    if (error?.message === 'web_connector_mention_mismatch'
+        || error?.message === 'web_connector_mention_ambiguous') return false;
+    throw error;
+  }
+  return !!state && state.id === mention.id && state.prefix === prefix
+    && (exactParagraphs || exactStructuredText);
+}
+function promptMismatchShape(text, prefix = "") {
+  // Failure-only, fixed categories. Never return the prompt or editor text.
+  const composer = uniqueComposer();
+  if (!composer || typeof text !== 'string' || typeof prefix !== 'string') return null;
+  const bucket = count => count === 0 ? 'zero' : count === 1 ? 'one'
+    : count <= 8 ? 'few' : 'many';
+  const kind = node => node?.nodeType === 3 ? 'text'
+    : node?.tagName === 'BR' ? 'break'
+    : node?.getAttribute?.('app-mention-path') ? 'app_pill'
+    : node?.getAttribute?.('data-prompt-literal-paste') === '' ? 'literal'
+    : 'other';
+  const paragraphs = [...composer.childNodes];
+  const first = paragraphs[0], nodes = [...(first?.childNodes || [])];
+  const literal = [...composer.querySelectorAll('[data-prompt-literal-paste]')];
+  const literalNodes = [...(literal[0]?.childNodes || [])];
+  const expected = prefix + text;
+  const lines = expected.split('\n');
+  return { paragraphs: bucket(paragraphs.length), nodes: bucket(nodes.length),
+    nodeKinds: nodes.slice(0, 8).map(kind), literalPastes: bucket(literal.length),
+    literalKinds: literalNodes.slice(0, 8).map(kind),
+    paragraphCount: Math.min(9, paragraphs.length), expectedLines: Math.min(9, lines.length),
+    lineMatches: paragraphs.slice(0, 8).map((p, index) =>
+      p.nodeType === 1 && p.tagName === 'P' && p.textContent === lines[index]),
+    firstExpectedEndsCR: lines[0]?.endsWith('\r') === true,
+    firstMatchesWithoutCR: lines[0]?.endsWith('\r') === true
+      && first?.textContent === lines[0].slice(0, -1),
+    firstStartsWithPrefix: typeof first?.textContent === 'string'
+      && first.textContent.startsWith(prefix),
+    firstPillMatchesName: nodes[0]?.textContent === prefix.trimEnd(),
+    firstNodeMatchesTailWithSpace: nodes[1]?.nodeType === 3
+      && nodes[1].textContent === ' ' + text.split('\n')[0],
+    firstNodeMatchesTailNoSpace: nodes[1]?.nodeType === 3
+      && nodes[1].textContent === text.split('\n')[0],
+    firstNodeStartsWithSpace: nodes[1]?.nodeType === 3
+      && nodes[1].textContent.startsWith(' '),
+    firstNodeStartsWithNbsp: nodes[1]?.nodeType === 3
+      && nodes[1].textContent.startsWith('\u00a0'),
+    firstNodeMatchesTailWithNbsp: nodes[1]?.nodeType === 3
+      && nodes[1].textContent === '\u00a0' + text.split('\n')[0],
+    firstNodeMatchesTailWithTwoSpaces: nodes[1]?.nodeType === 3
+      && nodes[1].textContent === '  ' + text.split('\n')[0],
+    firstMatchesWithoutSeparator: prefix.endsWith(' ')
+      && first?.textContent === prefix.slice(0, -1) + text.split('\n')[0],
+    firstMatchesWithNbspSeparator: prefix.endsWith(' ')
+      && first?.textContent === prefix.slice(0, -1) + '\u00a0' + text.split('\n')[0],
+    secondNodeKinds: [...(paragraphs[1]?.childNodes || [])].slice(0, 8).map(kind),
+    innerTextExact: composer.innerText === expected,
+    textContentExact: composer.textContent === expected,
+    expectedNewlines: bucket((expected.match(/\n/g) || []).length),
+    renderedNewlines: bucket(((composer.innerText || '').match(/\n/g) || []).length) };
 }
 function sendOnce() {
+  // A route can change between the host's readiness check and the click. A
+  // retained modern conversation must never receive this new task's input.
+  if (document.querySelectorAll('[data-message-author-role],[data-chatgpt-search-unit-key]').length)
+    throw new Error("web_fresh_page_required");
   const form = uniqueComposer()?.closest("form");
-  const buttons = [...(form?.querySelectorAll('[data-testid="send-button"]') || [])].filter(e => e.getClientRects().length && !e.disabled && e.getAttribute("aria-disabled") !== "true");
+  const legacy = [...(form?.querySelectorAll('[data-testid="send-button"]') || [])];
+  const current = legacy.length ? [] : [...(form?.querySelectorAll('button[type="submit"]') || [])]
+    .filter(e => ['发送', 'Send'].includes(e.getAttribute('aria-label')));
+  const buttons = [...legacy, ...current].filter(e => e.getClientRects().length
+    && !e.disabled && e.getAttribute("aria-disabled") !== "true"
+    && !e.closest('[hidden],[inert],[aria-hidden="true"]'));
   if (buttons.length !== 1) throw new Error("web_send_control_ambiguous");
   buttons[0].click();
 }
@@ -574,6 +815,14 @@ function currentPublicFiber(fiber) {
       const left = childOf(parent, first, second), right = childOf(other, first, second);
       if (left === first && right === second) { first = parent; second = other; }
       else if (left === second && right === first) { first = other; second = parent; }
+      else if (!!left !== !!right) {
+        // A completed row can retain its old DOM seed after React removes
+        // that seed from one parent's child list. Prove the sole remaining
+        // child belongs to the current parent before reading its props.
+        const owner = left ? parent : other;
+        if (resolve(owner, level + 1) !== owner) invalid();
+        return finish((left || right) === first);
+      }
       else invalid();
     }
     invalid();
@@ -581,9 +830,158 @@ function currentPublicFiber(fiber) {
   return resolve(fiber);
 }
 
+function modernPublicItem(role, committedView = false) {
+  // The current renderer binds a visible message unit to one item, rather
+  // than exposing the former message row. Read only that row's item and the
+  // containing turn's terminal flags; never walk a turn-wide message list.
+  const rows = [...document.querySelectorAll('[data-chatgpt-search-unit-key]')]
+    .filter(row => row.getAttribute('data-chatgpt-search-unit-key')?.endsWith(':' + role));
+  if (!rows.length) return null;
+  if (rows.length !== 1) throw new Error('web_public_message_ambiguous');
+  const row = rows[0], key = row.getAttribute('data-chatgpt-search-unit-key');
+  const rawIds = row.getAttribute('data-chatgpt-search-message-ids');
+  const ids = typeof rawIds === 'string' ? rawIds.trim().split(/\s+/) : [];
+  if (!row.getClientRects().length || row.closest('[hidden],[inert],[aria-hidden="true"]')
+      || !/^[A-Za-z0-9_-]{1,80}:[0-9]{1,4}:(?:user|assistant)$/.test(key || '')
+      || !ids.length || ids.length > 8
+      || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(ids[0])
+      || ids.some(id => id !== ids[0])) throw new Error('web_public_message_identity_invalid');
+  const id = ids[0];
+  if (role === 'user') {
+    if (row.querySelectorAll('[data-user-message-bubble="true"]').length !== 1)
+      throw new Error('web_public_message_identity_invalid');
+  } else {
+    const selected = row.querySelectorAll('[data-chatgpt-selection-message-id]');
+    // During a tool step the assistant unit can exist before its final
+    // selection marker. It is not a completed public answer yet.
+    if (selected.length === 0) return null;
+    if (selected.length !== 1 || selected[0].getAttribute('data-chatgpt-selection-message-id') !== id)
+      throw new Error('web_public_message_identity_invalid');
+  }
+  const fiberKey = Object.keys(row).find(name => name.startsWith('__reactFiber$'));
+  let fiber = fiberKey ? row[fiberKey] : null, item = null, turn = null;
+  for (let depth = 0; fiber && depth < 45; depth++, fiber = fiber.return) {
+    const current = committedView ? currentPublicFiber(fiber) : fiber;
+    const props = current.memoizedProps;
+    if (props?.item?.messageId === id && props.item.type === role + '-message')
+      item ??= props.item;
+    if (props?.entry?.turn && turn === null) turn = props.entry.turn;
+    if (item && turn) break;
+  }
+  if (!item || !turn) throw new Error('web_public_message_source_unavailable');
+  return { id, item, turn };
+}
+
+function modernIdentityShape() {
+  // Failure-only public DOM structure; never export IDs, labels or messages.
+  const rows = [...document.querySelectorAll('[data-chatgpt-search-unit-key]')]
+    .filter(row => row.getAttribute('data-chatgpt-search-unit-key')?.endsWith(':assistant'));
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+  return { assistantRows: Math.min(9, rows.length), rows: rows.slice(0, 4).map(row => {
+    const key = row.getAttribute('data-chatgpt-search-unit-key');
+    const raw = row.getAttribute('data-chatgpt-search-message-ids');
+    const bounded = typeof raw === 'string' && raw.length <= 2048;
+    const ids = bounded ? raw.trim().split(/\s+/).filter(Boolean) : [];
+    const selected = [...row.querySelectorAll('[data-chatgpt-selection-message-id]')];
+    const chosen = selected.length === 1
+      ? selected[0].getAttribute('data-chatgpt-selection-message-id') : null;
+    return { keyPattern: /^[A-Za-z0-9_-]{1,80}:[0-9]{1,4}:assistant$/.test(key || ''),
+      visible: !!row.getClientRects().length,
+      hidden: !!row.closest('[hidden],[inert],[aria-hidden="true"]'),
+      idsBounded: bounded, idsCount: Math.min(9, ids.length),
+      allIdsUuid: ids.length > 0 && ids.every(id => uuid.test(id)),
+      allIdsEqual: ids.length > 0 && ids.every(id => id === ids[0]),
+      selectedCount: Math.min(9, selected.length), selectedUuid: uuid.test(chosen || ''),
+      selectedFirst: !!chosen && chosen === ids[0],
+      selectedLast: !!chosen && chosen === ids[ids.length - 1],
+      selectedAny: !!chosen && ids.includes(chosen) };
+  }) };
+}
+
+function projectPublicReferences(references) {
+  if (!Array.isArray(references) || references.length > 128)
+    throw new Error('web_public_citations_invalid');
+  // Both observed renderers use these public reference fields. Never export
+  // snippets, search queries, prompt_text or unrelated account data.
+  const textField = (value, maximum) => {
+    if (typeof value !== 'string' || value.length > maximum)
+      throw new Error('web_public_citation_field_invalid');
+    return value;
+  };
+  const sources = values => {
+    if (!Array.isArray(values) || values.length > 64)
+      throw new Error('web_public_citation_sources_invalid');
+    return values.map(value => ({ title: textField(value?.title, 2048),
+      url: textField(value?.url, 8192) }));
+  };
+  return references.map(reference => {
+    if (!reference || typeof reference !== 'object' || Array.isArray(reference))
+      throw new Error('web_public_citations_invalid');
+    const value = { type: textField(reference.type, 64),
+      matched_text: textField(reference.matched_text, 2048) };
+    for (const key of ['start_idx', 'end_idx']) {
+      if (!Number.isSafeInteger(reference[key]) || reference[key] < 0
+          || reference[key] > 1024 * 1024)
+        throw new Error('web_public_citation_position_invalid');
+      value[key] = reference[key];
+    }
+    if (reference.items != null) value.items = sources(reference.items);
+    if (reference.sources != null) value.sources = sources(reference.sources);
+    if (reference.type === 'url') {
+      value.title = textField(reference.title, 2048);
+      value.item = sources([reference.item])[0];
+    }
+    return value;
+  });
+}
+
+function modernPublicFinal(prompt, includeCitations = false, committedView = false) {
+  const currentItem = role => {
+    try { return modernPublicItem(role, committedView); }
+    catch (error) {
+      // A row in React's concurrent pending branch is not a committed answer.
+      // Wait for a later stable observation; never accept its current props.
+      if (committedView && error?.message === 'web_public_current_branch_unavailable') return null;
+      throw error;
+    }
+  };
+  const user = currentItem('user');
+  if (!user) return null;
+  if (typeof user.item.message !== 'string' || user.item.message !== prompt)
+    throw new Error('web_user_turn_mismatch');
+  const final = currentItem('assistant');
+  if (!final) return null;
+  // Identical prompt text and a completed assistant item cannot bind a reply
+  // from an earlier turn. Both visible units must share their exact turn.
+  if (final.turn !== user.turn) return null;
+  const message = final.item;
+  if (message.completed !== true || message.phase !== 'final_answer'
+      || message.latestMessageId !== final.id
+      || !Array.isArray(message.sourceMessageIds)
+      || message.sourceMessageIds.length !== 1 || message.sourceMessageIds[0] !== final.id
+      || final.turn.status !== 'complete'
+      || !Number.isFinite(final.turn.workCompletedAtMs) || final.turn.workCompletedAtMs <= 0)
+    return null;
+  if (typeof message.content !== 'string' || message.structuredOutput != null)
+    throw new Error('web_public_content_unsupported');
+  const references = message.contentReferences;
+  // This renderer's public source is one exact content string, unlike the
+  // earlier parts array. No split, trim or reconstruction is permitted.
+  const result = { id: final.id, author: { role: 'assistant' }, recipient: null,
+    channel: 'final', end_turn: true, status: 'finished_successfully',
+    metadata: { operator_web_renderer: 'modern_content_references_v1' },
+    content: { content_type: 'text', parts: [message.content] } };
+  if (includeCitations) result.public_references = projectPublicReferences(references ?? []);
+  if (new TextEncoder().encode(JSON.stringify(result)).length > 1024 * 1024)
+    throw new Error('web_public_message_too_large');
+  return result;
+}
+
 function publicFinal(prompt, includeCitations = false, committedView = false) {
   if (document.querySelector('[data-testid="stop-button"]')) return null;
   const users = [...document.querySelectorAll('[data-message-author-role="user"]')];
+  if (!users.length && document.querySelector('[data-chatgpt-search-unit-key]'))
+    return modernPublicFinal(prompt, includeCitations, committedView);
   if (users.length !== 1) return null;
   // Long user bubbles can add presentation controls. Bind the current row's
   // structured public source instead of trimming those controls from text.
@@ -640,40 +1038,7 @@ function publicFinal(prompt, includeCitations = false, committedView = false) {
           const result = { id: rowId, author: { role: "assistant" }, recipient: candidate.recipient ?? null,
             channel: "final", end_turn: true, status: candidate.status, metadata: hidden,
             content: { content_type: "text", parts: content.parts.slice() } };
-          if (includeCitations) {
-            const references = meta?.content_references ?? [];
-            if (!Array.isArray(references) || references.length > 128)
-              throw new Error("web_public_citations_invalid");
-            // Preserve only the observed public reference fields. Do not read
-            // snippets, search queries, prompt_text or unrelated account data.
-            const textField = (value, maximum) => {
-              if (typeof value !== "string" || value.length > maximum)
-                throw new Error("web_public_citation_field_invalid");
-              return value;
-            };
-            const sources = values => {
-              if (!Array.isArray(values) || values.length > 64)
-                throw new Error("web_public_citation_sources_invalid");
-              return values.map(value => ({ title: textField(value?.title, 2048), url: textField(value?.url, 8192) }));
-            };
-            result.public_references = references.map(reference => {
-              if (!reference || typeof reference !== "object") throw new Error("web_public_citations_invalid");
-              const value = { type: textField(reference.type, 64),
-                matched_text: textField(reference.matched_text, 2048) };
-              for (const key of ["start_idx", "end_idx"]) {
-                if (!Number.isSafeInteger(reference[key]) || reference[key] < 0 || reference[key] > 1024 * 1024)
-                  throw new Error("web_public_citation_position_invalid");
-                value[key] = reference[key];
-              }
-              if (reference.items != null) value.items = sources(reference.items);
-              if (reference.sources != null) value.sources = sources(reference.sources);
-              if (reference.type === "url") {
-                value.title = textField(reference.title, 2048);
-                value.item = sources([reference.item])[0];
-              }
-              return value;
-            });
-          }
+          if (includeCitations) result.public_references = projectPublicReferences(meta?.content_references ?? []);
           const encoded = JSON.stringify(result);
           if (new TextEncoder().encode(encoded).length > 1024 * 1024) throw new Error("web_public_message_too_large");
           if (found.has(rowId) && found.get(rowId).encoded !== encoded) throw new Error("web_public_message_contradiction");
@@ -690,6 +1055,28 @@ function publicFinal(prompt, includeCitations = false, committedView = false) {
 
 function publicUserBindingShape(prompt, committedView = false) {
   const users = [...document.querySelectorAll('[data-message-author-role="user"]')];
+  if (!users.length && document.querySelector('[data-chatgpt-search-unit-key]')) {
+    const user = modernPublicItem('user', committedView);
+    if (!user) return null;
+    const source = user.item.message;
+    if (typeof source !== 'string' || source.length > 1024 * 1024 || prompt.length > 65536)
+      return { supportedTextShape: false };
+    let firstDifference = 0;
+    while (firstDifference < Math.min(source.length, prompt.length)
+        && source[firstDifference] === prompt[firstDifference]) firstDifference++;
+    const appHead = /^\[\$[a-z0-9-]{1,32}\]\(app:\/\/asdk_app_[a-f0-9]{32}\)/.exec(prompt)?.[0];
+    // The editor's one app separator has two public text encodings. This
+    // classifies only that character; the bound app link and every body byte
+    // must already match. The host must recheck the selected exact projection.
+    const appSeparatorOnly = !!appHead && source !== prompt && source.startsWith(appHead)
+      && [' ', '\u00a0'].includes(source[appHead.length])
+      && [' ', '\u00a0'].includes(prompt[appHead.length])
+      && source.slice(appHead.length + 1) === prompt.slice(appHead.length + 1);
+    return { supportedTextShape: true, exact: source === prompt,
+      appSeparatorOnly,
+      sourceLength: source.length, promptLength: prompt.length,
+      firstDifference: source === prompt ? -1 : firstDifference };
+  }
   if (users.length !== 1) return null;
   const user = users[0], id = user.getAttribute('data-message-id');
   const key = Object.keys(user).find(k => k.startsWith('__reactFiber$'));
@@ -785,9 +1172,16 @@ function inspectionSnapshot(messageId) {
     throw new Error('web_inspection_message_invalid');
   const visible = element => !!element && element.getClientRects().length > 0
     && !element.closest('[hidden],[inert],[aria-hidden="true"]');
-  const rows = [...document.querySelectorAll('[data-message-author-role="assistant"][data-message-id]')]
+  const legacyRows = [...document.querySelectorAll('[data-message-author-role="assistant"][data-message-id]')];
+  const rows = legacyRows
     .filter(element => element.getAttribute('data-message-id') === messageId && visible(element));
-  if (rows.length !== 1) throw new Error('web_inspection_message_ambiguous');
+  const modernRows = document.querySelectorAll('[data-chatgpt-search-unit-key]');
+  if (modernRows.length && legacyRows.length === 0) {
+    const current = modernPublicItem('assistant', true);
+    if (!current || current.id !== messageId) throw new Error('web_inspection_message_ambiguous');
+  } else if (modernRows.length || rows.length !== 1) {
+    throw new Error('web_inspection_message_ambiguous');
+  }
   const cards = [...document.querySelectorAll('[role="alert"],[data-testid="tool-approval-card"]')].filter(visible);
   if (cards.length > 16)
     throw new Error('web_inspection_snapshot_bound');
@@ -907,6 +1301,6 @@ function publicCitationShape(committedView = false) {
   return { observations };
 }
 
-module.exports = { uniqueComposer, eligibleModelButtons, eligibleEffortContainer, controls, startupControlStructure, freshChatControls, pluginMaintenanceReady, startFreshChat, enableTemporaryChat, currentPublicFiber, publicGenerationState, publicInterruptionState, inspectionSnapshot, focusModelMenu, clickModelChooser, chooseModel, effortState, effortRangeShape,
-  backgroundModelInput, backgroundMenuKey, composerFocused,
-  focusEffort, connectorAccessState, connectorMenuChoice, selectedConnector, composerPrefix, focusComposer, composerMatches, sendOnce, cancelGeneration, publicFinal, publicMessageShape, publicUserBindingShape, publicCitationShape };
+module.exports = { uniqueComposer, eligibleModelButtons, eligibleEffortContainer, controls, startupControlStructure, freshChatControls, freshChatControlStructure, pluginMaintenanceReady, startFreshChat, enableTemporaryChat, currentPublicFiber, publicGenerationState, publicInterruptionState, inspectionSnapshot, focusModelMenu, clickModelChooser, chooseModel, effortState, effortRangeShape,
+  backgroundModelInput, backgroundMenuKey, composerFocused, emptyFreshChat,
+  focusEffort, connectorAccessState, connectorMenuChoice, connectorPillState, selectedConnector, composerPrefix, focusComposer, composerMatches, promptMismatchShape, sendOnce, cancelGeneration, modernPublicItem, modernIdentityShape, projectPublicReferences, modernPublicFinal, publicFinal, publicMessageShape, publicUserBindingShape, publicCitationShape };

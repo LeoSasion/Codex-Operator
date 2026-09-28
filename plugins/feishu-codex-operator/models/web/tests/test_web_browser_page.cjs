@@ -20,7 +20,7 @@ const operatorTestScript = name => operatorTestPath.join(operatorTestRoot, "scri
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
-const { publicFinal, clickModelChooser, focusModelMenu, connectorMenuChoice, selectedConnector, composerPrefix, composerMatches,
+const { publicFinal, clickModelChooser, focusModelMenu, connectorMenuChoice, connectorPillState, selectedConnector, composerPrefix, focusComposer, composerMatches,
   uniqueComposer, eligibleModelButtons, eligibleEffortContainer } = require(operatorTestScript("web_browser_page.cjs"));
 const prompt = "Synthetic fixture 中文";
 
@@ -76,10 +76,16 @@ test('composer and model compatibility uses only one observed control per page a
     'button[aria-haspopup="menu"][data-tone="neutral"],button[data-testid="model-switcher-dropdown-button"]': oldButtons,
     'button[aria-label="选择 ChatGPT 模型"],button[aria-label="Choose ChatGPT model"]': namedButtons,
   })[selector] || []};
-  const sendButton = {disabled: false, getAttribute: () => null, getClientRects: () => [{}],
+  const sendButton = {disabled: false, getAttribute: () => null, getClientRects: () => [{}], closest: () => null,
     click: () => sendClicks++};
+  let retainedRows = [];
+  const originalQuery = document.querySelectorAll;
+  document.querySelectorAll = selector => selector === '[data-message-author-role],[data-chatgpt-search-unit-key]'
+    ? retainedRows : originalQuery(selector);
+  let oldSendButtons = [sendButton], currentSendButtons = [];
   const form = {contains: element => element === namedButton || element === oldButton,
-    querySelectorAll: selector => selector === '[data-testid="send-button"]' ? [sendButton] : []};
+    querySelectorAll: selector => selector === '[data-testid="send-button"]' ? oldSendButtons
+      : selector === 'button[type="submit"]' ? currentSendButtons : []};
   const editor = {textContent: '', getAttribute: name => name === 'contenteditable' ? 'true' : null,
     getClientRects: () => [{}], closest: selector => selector === 'form' ? form : null};
   const oldButton = {disabled: false, getClientRects: () => [{}],
@@ -111,6 +117,17 @@ test('composer and model compatibility uses only one observed control per page a
   assert.equal(run(`(${composerFocused.toString()})()`), false);
   run(`(${sendOnce.toString()})()`);
   assert.equal(sendClicks, 1);
+  retainedRows = [{}];
+  assert.throws(() => run(`(${sendOnce.toString()})()`), /web_fresh_page_required/);
+  assert.equal(sendClicks, 1);
+  retainedRows = [];
+  oldSendButtons = [];
+  currentSendButtons = [{...sendButton, getAttribute: name => name === 'aria-label' ? '发送' : null}];
+  run(`(${sendOnce.toString()})()`);
+  assert.equal(sendClicks, 2);
+  currentSendButtons.push({...currentSendButtons[0]});
+  assert.throws(() => run(`(${sendOnce.toString()})()`), /web_send_control_ambiguous/);
+  currentSendButtons = [];
   oldEditors = [editor]; oldButtons = [oldButton];
   assert.equal(read().buttons[0], oldButton);
   assert.equal(run(`(${focusModelMenu.toString()})()`), true);
@@ -130,6 +147,19 @@ test('composer and model compatibility uses only one observed control per page a
   namedButtons = [namedButton];
   form.contains = () => false;
   assert.equal(read().buttons.length, 0);
+});
+
+test('control snapshot counts retained modern rows before a new task is admitted', () => {
+  const { controls } = require(operatorTestScript('web_browser_page.cjs'));
+  let modernRows = [];
+  const document = { title: 'ChatGPT', readyState: 'complete',
+    hasFocus: () => false, activeElement: null,
+    querySelectorAll: selector => selector === '[data-chatgpt-search-unit-key]' ? modernRows : [] };
+  const read = () => vm.runInNewContext(`(${controls.toString()})()`, {
+    document, uniqueComposer: () => null, eligibleModelButtons: () => [] });
+  assert.equal(read().modernRowCount, 0);
+  modernRows = [{}, {}];
+  assert.equal(read().modernRowCount, 2);
 });
 
 test('plugin close readiness excludes drafts, forms, permissions, auth and pending refresh', () => {
@@ -162,13 +192,39 @@ test('inspection binds the exact public row without reading its partial text and
   const alert = element('visible refusal card');
   let rows = [element('unrelated private row','other'), row];
   let cards = [alert, element('hidden text',null,true)];
-  const document = {querySelectorAll:selector => selector.startsWith('[data-message-author-role') ? rows : cards};
+  const document = {querySelectorAll:selector => selector.startsWith('[data-message-author-role') ? rows
+    : selector === '[data-chatgpt-search-unit-key]' ? [] : cards};
   const read = () => vm.runInNewContext('('+inspectionSnapshot.toString()+')("selected")', {document});
   assert.equal(JSON.stringify(read()), JSON.stringify({notices:[alert.innerText]}));
   rows.push(row); assert.throws(read, /web_inspection_message_ambiguous/); rows.pop();
   cards = Array(17).fill(alert); assert.throws(read, /web_inspection_snapshot_bound/);
   cards = [element('a'.repeat(4097))]; assert.throws(read, /web_inspection_snapshot_bound/);
   rows = []; assert.throws(read, /web_inspection_message_ambiguous/);
+});
+
+test('inspection accepts the exact mounted modern result without reading reply text', () => {
+  const { inspectionSnapshot, modernPublicItem } = require(operatorTestScript('web_browser_page.cjs'));
+  const id = '22222222-2222-4222-8222-222222222222';
+  const item = { messageId: id, type: 'assistant-message' };
+  Object.defineProperty(item, 'content', { get() { throw Error('reply text must not be read'); } });
+  const row = { getClientRects: () => [{}], closest: () => null,
+    getAttribute: key => key === 'data-chatgpt-search-unit-key' ? 'fixture:1:assistant'
+      : key === 'data-chatgpt-search-message-ids' ? id : null,
+    querySelectorAll: () => [{ getAttribute: () => id }],
+    __reactFiber$fixture: { memoizedProps: { item, entry: { turn: {} } }, return: null } };
+  const alert = { innerText: 'visible notice', getClientRects: () => [{}], closest: () => null };
+  let rows = [row];
+  const document = { querySelectorAll: selector => selector === '[data-chatgpt-search-unit-key]'
+    ? rows : selector === '[role="alert"],[data-testid="tool-approval-card"]' ? [alert] : [] };
+  const read = expected => vm.runInNewContext(`(() => {
+    const currentPublicFiber = fiber => fiber;
+    const modernPublicItem = (${modernPublicItem.toString()});
+    return (${inspectionSnapshot.toString()})(expected);
+  })()`, { document, expected });
+  assert.deepEqual(plain(read(id)), { notices: ['visible notice'] });
+  assert.throws(() => read('another-message'), /web_inspection_message_ambiguous/);
+  rows = [row, row]; assert.throws(() => read(id), /web_public_message_ambiguous/);
+  rows = []; assert.throws(() => read(id), /web_inspection_message_ambiguous/);
 });
 function hiddenHostFixture(overrides = {}) {
   // Evaluate the actual host with an unstarted app and a synthetic WebContents.
@@ -185,6 +241,7 @@ function hiddenHostFixture(overrides = {}) {
   const fixtureWindow = { isDestroyed: () => false, isVisible: () => state.visible,
     isFocused: () => state.focused, focus: noNativeInput, getContentSize: () => [1080, 850],
     hide: () => { commands.push({ method: 'hide' }); state.visible = state.focused = false; },
+    setTitle: value => { state.title = value; },
     setSkipTaskbar: value => commands.push({ method: 'skipTaskbar', value }),
     setFocusable: value => commands.push({ method: 'focusable', value }),
     webContents: { getURL: () => state.origin, focus: noNativeInput, sendInputEvent: noNativeInput,
@@ -200,14 +257,19 @@ function hiddenHostFixture(overrides = {}) {
   const app = { setName() {}, setAppUserModelId() {}, setPath() {}, requestSingleInstanceLock: () => true,
     exit: code => exits.push(code), whenReady: () => new Promise(() => {}) };
   const page = { backgroundModelInput: function () { return true; }, composerFocused: function () { return true; },
-    composerPrefix: function () { return ''; },
+    composerPrefix: function () { return ''; }, connectorPillState,
+    promptMismatchShape: function () { return null; },
+    modernPublicItem: function () {}, modernPublicFinal: function () {},
+    projectPublicReferences: require(operatorTestScript('web_browser_page.cjs')).projectPublicReferences,
     uniqueComposer, eligibleModelButtons, eligibleEffortContainer,
-    publicFinal: function () {}, startFreshChat: function () {}, enableTemporaryChat: function () {},
+    publicFinal: function () {}, startFreshChat: function () {}, freshChatControlStructure: function () {},
+    enableTemporaryChat: function () {},
     currentPublicFiber: require(operatorTestScript("web_browser_page.cjs")).currentPublicFiber,
     backgroundMenuKey: require(operatorTestScript("web_browser_page.cjs")).backgroundMenuKey,
     focusModelMenu: function () { return true; }, controls: function () {
     return { pageKind: 'chatgpt', composer: true, modelButtonCount: 1, loginVisible: false,
-      userCount: 0, assistantCount: 0, documentFocused: false, modelControlInteractive: true, modelControlFocused: true,
+      userCount: 0, assistantCount: 0, modernRowCount: 0,
+      documentFocused: false, modelControlInteractive: true, modelControlFocused: true,
       modelControlPoint: { x: 80, y: 90 }, modelButtonLabels: ['fixture'], chooser: true };
   } };
   const context = vm.createContext({ fixtureWindow, fixtureSurface, Buffer, TextDecoder, URL, setTimeout, clearTimeout,
@@ -320,6 +382,7 @@ test('explicit initial assistance closes to the same hidden window before any mo
   await host.invoke('completeAssistance()');
   assert.equal(host.state.visible, false);
   assert.equal(host.state.focused, false);
+  assert.equal(host.state.title, 'Operator 网页模型辅助窗口');
   assert.deepEqual(host.commands, [{ method: 'hide' }, { method: 'skipTaskbar', value: true },
     { method: 'focusable', value: false }]);
   assert.equal(host.invoke('assistanceFinished === 1 && !assisting && !sent && windowShown === 0 && windowFocused === 0'), true);
@@ -335,7 +398,8 @@ test('fresh chat clicks only equivalent public home links on the idle owned page
   let choices = [link(), link('新聊天CtrlShiftO')], users = [{}], assistants = [{}], stops = [];
   const invoke = () => vm.runInNewContext(`(${startFreshChat.toString()})()`, { uniqueComposer: () => composer, document: {
     querySelector: () => composer, querySelectorAll: selector => selector.includes('author-role="user"') ? users
-      : selector.includes('author-role="assistant"') ? assistants : selector.includes('stop-button') ? stops : choices } });
+      : selector.includes('author-role="assistant"') ? assistants : selector.includes('stop-button') ? stops
+      : selector === '[data-chatgpt-search-unit-key]' || selector.startsWith('nav[') ? [] : choices } });
   invoke();
   assert.deepEqual(actions, ['/']);
   for (const bad of [[], [link('Unknown')], [link('新聊天', '/c/unrelated')], [link(), link(), link()]]) {
@@ -352,6 +416,77 @@ test('fresh chat clicks only equivalent public home links on the idle owned page
   assert.throws(invoke, /web_new_chat_idle_page_required/);
   assert.equal(actions.length, 1);
 });
+test('fresh chat accepts only the exact completed modern turn and unique sidebar button', () => {
+  const { startFreshChat } = require(operatorTestScript('web_browser_page.cjs'));
+  const actions = [], composer = { textContent: '' };
+  const button = { textContent: '新聊天', disabled: false, getClientRects: () => [{}],
+    getAttribute: key => key === 'type' ? 'button' : null, closest: () => null,
+    click: () => actions.push('new-chat') };
+  let rows = [{}, {}], buttons = [button], links = [], finalId = 'bound-id';
+  const document = { querySelectorAll: selector => selector === '[data-chatgpt-search-unit-key]' ? rows
+    : selector.startsWith('nav[') ? buttons
+    : selector === 'a[data-testid="create-new-chat-button"]' ? links : [] };
+  const invoke = (prompt = 'exact prompt', id = 'bound-id') => vm.runInNewContext(
+    `(${startFreshChat.toString()})(prompt,id)`, { prompt, id, uniqueComposer: () => composer,
+      modernPublicFinal: value => value === 'exact prompt' ? { id: finalId } : null, document });
+  invoke();
+  assert.deepEqual(actions, ['new-chat']);
+  finalId = 'different-id';
+  assert.throws(() => invoke(), /web_new_chat_idle_page_required/);
+  assert.throws(() => invoke('wrong prompt'), /web_new_chat_idle_page_required/);
+  finalId = 'bound-id'; buttons = [button, button];
+  assert.throws(() => invoke(), /web_new_chat_control_ambiguous/);
+  buttons = [button]; links = [{getClientRects: () => [{}]}];
+  assert.throws(() => invoke(), /web_new_chat_control_ambiguous/);
+  links = []; rows = [];
+  assert.throws(() => invoke(), /web_new_chat_idle_page_required/);
+  assert.deepEqual(actions, ['new-chat']);
+});
+test('fresh chat recognizes the visible text button in chat-history navigation', () => {
+  const { startFreshChat } = require(operatorTestScript('web_browser_page.cjs'));
+  const actions = [], composer = { textContent: '' };
+  const button = (text, aria = null) => ({ textContent: text, disabled: false,
+    getClientRects: () => [{}], getAttribute: key => key === 'type' ? 'button'
+      : key === 'aria-label' ? aria : null, closest: () => null,
+    click: () => actions.push(text || 'icon') });
+  const textButton = button('新聊天'), iconButton = button('', '新聊天');
+  const document = { querySelectorAll: selector => selector === '[data-chatgpt-search-unit-key]'
+    ? [{}, {}] : selector.includes('nav[aria-label="聊天记录"]')
+      ? [textButton, iconButton] : [] };
+  vm.runInNewContext(`(${startFreshChat.toString()})('new prompt','bound-id')`, {
+    uniqueComposer: () => composer,
+    modernPublicFinal: () => ({ id: 'bound-id' }), document });
+  assert.deepEqual(actions, ['新聊天']);
+});
+test('failed fresh chat diagnostic contains only fixed selector categories', () => {
+  const { freshChatControlStructure } = require(operatorTestScript('web_browser_page.cjs'));
+  const element = (text, attributes = {}) => ({textContent: text, disabled: false,
+    getClientRects: () => [{}], getAttribute: key => attributes[key] ?? null,
+    closest: () => null});
+  const link = element('PRIVATE LINK', {href: '/c/private-conversation'});
+  const button = element('New chat', {type: 'submit', href: '/c/private-target'});
+  const privateButton = element('PRIVATE BUTTON');
+  const document = {querySelectorAll: selector => selector.startsWith('a[') ? [link]
+    : [button, privateButton]};
+  const result = vm.runInNewContext(`(${freshChatControlStructure.toString()})()`, {document});
+  assert.equal(JSON.stringify(result), JSON.stringify({legacyLinks: 'one', legacyRootHref: 'no',
+    legacyLabel: 'no', legacyEnabled: 'yes', navButtons: 'multiple', namedButtons: 'one',
+    buttonType: 'other', buttonDisabled: 'no', buttonAriaDisabled: 'no',
+    buttonHref: 'present', buttonTarget: 'absent', buttonHiddenAncestor: 'no'}));
+  assert.equal(JSON.stringify(result).includes('PRIVATE'), false);
+  assert.equal(JSON.stringify(result).includes('/c/'), false);
+});
+test('empty fresh chat rejects retained modern messages and drafts', () => {
+  const { emptyFreshChat } = require(operatorTestScript('web_browser_page.cjs'));
+  let text = '', rows = [], stops = [];
+  const invoke = () => vm.runInNewContext(`(${emptyFreshChat.toString()})()`, {
+    uniqueComposer: () => ({ textContent: text }), document: { querySelectorAll: selector =>
+      selector.includes('stop-button') ? stops : rows } });
+  assert.equal(invoke(), true);
+  rows = [{}]; assert.equal(invoke(), false);
+  rows = []; text = 'draft'; assert.equal(invoke(), false);
+  text = ''; stops = [{ getClientRects: () => [{}] }]; assert.equal(invoke(), false);
+});
 test('worker enters a fresh temporary chat without reload and rejects changed previous output or lost temporary mode', async () => {
   const setup = () => {
     const host = hiddenHostFixture({ mode: 'worker', workerDirectory: require('node:path').resolve(__dirname), parentPid: 1 });
@@ -361,7 +496,11 @@ test('worker enters a fresh temporary chat without reload and rejects changed pr
       completedPage = { prompt: 'exact previous', message: { id: 'previous' } };
       inPage = async (fn, ...args) => {
         if (fn === page.publicFinal) { requireValue(args[0] === 'exact previous', 'web_binding_changed'); return { id: 'previous' }; }
-        if (fn === page.startFreshChat) { navigationCalls++; return; }
+        if (fn === page.startFreshChat) {
+          requireValue(args[0] === 'exact previous' && args[1] === 'previous',
+            'web_binding_changed'); navigationCalls++; return;
+        }
+        if (fn === page.emptyFreshChat) return true;
         if (fn === page.enableTemporaryChat) { temporaryCalls++; surface.webContents.getURL = () => 'https://chatgpt.com/?temporary-chat=true'; return; }
         return { composer: true, userCount: 0, assistantCount: 0 };
       };`);
@@ -370,6 +509,12 @@ test('worker enters a fresh temporary chat without reload and rejects changed pr
   const good = setup();
   await good.invoke('loadFreshPage()');
   assert.equal(good.invoke('navigationCalls === 1 && completedPage === null && !sent'), true);
+  const settling = setup();
+  settling.invoke(`let priorReads = 0, priorInPage = inPage;
+    inPage = async (fn, ...args) => fn === page.publicFinal && priorReads++ === 0
+      ? null : priorInPage(fn, ...args);`);
+  await settling.invoke('loadFreshPage()');
+  assert.equal(settling.invoke('priorReads === 2 && navigationCalls === 1'), true);
   const changed = setup();
   changed.invoke("completedPage.message.id = 'changed'");
   await assert.rejects(changed.invoke('loadFreshPage()'), /web_new_chat_previous_page_changed/);
@@ -380,8 +525,60 @@ test('worker enters a fresh temporary chat without reload and rejects changed pr
   assert.equal(home.invoke('navigationCalls === 1 && temporaryCalls === 1'), true);
   const unknown = setup();
   unknown.state.origin = 'https://chatgpt.com/?unknown=true';
-  await assert.rejects(unknown.invoke('loadFreshPage()'), /web_new_chat_temporary_mode_required/);
+  unknown.invoke(`waitFor = async fn => {
+    const value = await fn();
+    if (!value) throw Error('web_page_state_timeout');
+    return value;
+  };`);
+  await assert.rejects(unknown.invoke('loadFreshPage()'), /web_page_state_timeout/);
   assert.equal(unknown.invoke('navigationCalls === 1 && temporaryCalls === 0'), true);
+});
+test('worker waits for the new chat URL before trusting an empty modern row count', async () => {
+  const host = hiddenHostFixture({ mode: 'worker', workerDirectory: require('node:path').resolve(__dirname), parentPid: 1 });
+  host.state.origin = 'https://chatgpt.com/c/synthetic?temporary-chat=true';
+  host.invoke(`let navigationCalls = 0, emptyReads = 0, urlChecks = 0, waitCalls = 0;
+    completedPage = { prompt: 'bound prompt', message: { id: 'bound-id' } };
+    inPage = async (fn, ...args) => {
+      if (fn === page.publicFinal) return { id: 'bound-id' };
+      if (fn === page.startFreshChat) {
+        requireValue(args[0] === 'bound prompt' && args[1] === 'bound-id', 'web_binding_changed');
+        navigationCalls++; return;
+      }
+      if (fn === page.emptyFreshChat) { emptyReads++; return true; }
+      throw Error('unexpected page read');
+    };
+    waitFor = async fn => {
+      if (waitCalls++ === 0) return await fn();
+      urlChecks++;
+      requireValue(await fn() === false, 'web_navigation_prematurely_accepted');
+      surface.webContents.getURL = () => 'https://chatgpt.com/?temporary-chat=true';
+      urlChecks++;
+      const result = await fn();
+      requireValue(result === true, 'web_navigation_not_accepted');
+      return result;
+    };`);
+  await host.invoke('loadFreshPage()');
+  assert.equal(host.invoke('navigationCalls === 1 && emptyReads === 1 && urlChecks === 2'), true);
+});
+test('ambiguous New chat control emits one bounded read before the worker stops', async () => {
+  const host = hiddenHostFixture({mode: 'worker', workerDirectory: require('node:path').resolve(__dirname),
+    parentPid: 1});
+  host.invoke(`completedPage = { prompt: 'prior prompt', message: { id: 'prior-id' } };
+    let readCount = 0, clickCount = 0;
+    inPage = async fn => {
+      if (fn === page.publicFinal) return { id: 'prior-id' };
+      if (fn === page.startFreshChat) { clickCount++; throw Error('web_new_chat_control_ambiguous'); }
+      if (fn === page.freshChatControlStructure) { readCount++; return {
+        legacyLinks: 'zero', legacyRootHref: 'unknown', legacyLabel: 'unknown',
+        legacyEnabled: 'unknown', navButtons: 'multiple', namedButtons: 'zero',
+        buttonType: 'unknown', buttonDisabled: 'unknown', buttonAriaDisabled: 'unknown',
+        buttonHref: 'unknown', buttonTarget: 'unknown', buttonHiddenAncestor: 'unknown' }; }
+      throw Error('unexpected page operation');
+    };`);
+  await assert.rejects(host.invoke('loadFreshPage()'), /web_new_chat_control_ambiguous/);
+  assert.equal(host.invoke('readCount === 1 && clickCount === 1 && !sent'), true);
+  assert.equal(host.events.filter(e => e.kind === 'fresh_chat_control_structure').length, 1);
+  assert.equal(host.events.some(e => e.kind === 'dispatch_started'), false);
 });
 test('temporary chat requires one enabled public control and an empty page', () => {
   const { enableTemporaryChat } = require(operatorTestScript("web_browser_page.cjs"));
@@ -451,8 +648,11 @@ test('connector labels preserve Chinese names across startup, worker and public 
     host.invoke(`validateWorkerRequest(${JSON.stringify({ id: 'c'.repeat(32), text: 'fixture', model:'gpt-5.6-sol', effort:'high',
       connectorMention: mention, autoSelectConnector: true })}, new Set())`);
     const f = connectorFixture({ name });
-    assert.deepEqual(plain(vm.runInNewContext(`(${selectedConnector.toString()})(name)`,
-      { document: f.document, name, uniqueComposer: () => f.composer })), { id: f.id, name });
+    assert.deepEqual(plain(vm.runInNewContext(`(() => {
+      const connectorPillState = (${connectorPillState.toString()});
+      return (${selectedConnector.toString()})(name);
+    })()`, { document: f.document, name, uniqueComposer: () => f.composer })),
+    { id: f.id, name, publicPrefix: '@' + name + ' ' });
     let clicks = 0;
     const query = '@' + name.split(' ')[0], composer = { textContent: query };
     const row = { textContent: name, getClientRects: () => [{}], getAttribute: () => null,
@@ -470,7 +670,10 @@ test('connector labels preserve Chinese names across startup, worker and public 
     assert.deepEqual(hiddenHostFixture({ connectorMention: mention, autoSelectConnector: true }).exits, [1]);
     assert.throws(() => host.invoke(`validateWorkerRequest(${JSON.stringify({ id: 'c'.repeat(32),
       text: 'fixture', model:'gpt-5.6-sol', effort:'high', connectorMention: mention, autoSelectConnector: true })}, new Set())`), /web_connector_mention_invalid/);
-    assert.throws(() => vm.runInNewContext(`(${selectedConnector.toString()})(name)`, { name }), /web_connector_name_invalid/);
+    assert.throws(() => vm.runInNewContext(`(() => {
+      const connectorPillState = (${connectorPillState.toString()});
+      return (${selectedConnector.toString()})(name);
+    })()`, { name }), /web_connector_name_invalid/);
     assert.throws(() => vm.runInNewContext(`(${connectorMenuChoice.toString()})(name, query, true)`,
       { name, query: '@' + name.split(' ')[0] }), /web_connector_query_invalid/);
   }
@@ -660,6 +863,21 @@ test('public branch resolution proves current membership, including shared retur
   assert.throws(() => currentPublicFiber(disconnected), /web_public_tree_cycle/);
 });
 
+test('current public branch follows the sole mounted child only after proving its parent is current', () => {
+  const { currentPublicFiber } = require(operatorTestScript('web_browser_page.cjs'));
+  const tree = currentTree({}, {});
+  tree.parentA.child = null;
+  tree.rootState.current = tree.rootB;
+  assert.equal(currentPublicFiber(tree.a), tree.b);
+  tree.rootState.current = tree.rootA;
+  assert.throws(() => currentPublicFiber(tree.a), /web_public_current_branch_unavailable/);
+  tree.parentA.child = tree.a;
+  tree.parentB.child = null;
+  assert.equal(currentPublicFiber(tree.b), tree.a);
+  tree.rootState.current = tree.rootB;
+  assert.throws(() => currentPublicFiber(tree.b), /web_public_current_branch_unavailable/);
+});
+
 test('committed public output never releases a stale successful copy or reads its content', () => {
   const { currentPublicFiber, publicGenerationState } = require(operatorTestScript("web_browser_page.cjs"));
   const tree = currentTree(authored(['STALE']), authored(['exact 中文😀\r\n_a_']));
@@ -779,6 +997,7 @@ function authored(parts = ["answer"], extra = {}) {
     end_turn: true, status: "finished_successfully", content: { content_type: "text", parts }, ...extra };
 }
 function project(messages, options = {}) {
+  const { projectPublicReferences } = require(operatorTestScript('web_browser_page.cjs'));
   const rows = messages.map(message => ({
     getAttribute: () => options.rowId || message.id,
     querySelectorAll: () => [],
@@ -791,10 +1010,134 @@ function project(messages, options = {}) {
           __reactFiber$fixture: { memoizedProps: { message: options.userMessage }, return: null } }] : rows,
   };
   // Match Electron's function-source serialization, with no module closure.
-  return vm.runInNewContext(`(${publicFinal.toString()})(prompt, includeCitations)`,
+  return vm.runInNewContext(`const projectPublicReferences = (${projectPublicReferences.toString()});
+    (${publicFinal.toString()})(prompt, includeCitations)`,
     { document, prompt, TextEncoder, includeCitations: options.includeCitations === true });
 }
 function plain(value) { return value === null ? null : JSON.parse(JSON.stringify(value)); }
+
+test('current message units bind exact source, terminal status and one public output string', () => {
+  const page = require(operatorTestScript('web_browser_page.cjs'));
+  const userId = '11111111-1111-4111-8111-111111111111';
+  const answerId = '22222222-2222-4222-8222-222222222222';
+  const request = '[$operator](app://asdk_app_' + 'a'.repeat(32) + ') synthetic probe';
+  const user = { type: 'user-message', messageId: userId, message: request };
+  const answer = { type: 'assistant-message', messageId: answerId,
+    latestMessageId: answerId, sourceMessageIds: [answerId],
+    completed: true, phase: 'final_answer', content: '  exact reply\n', contentReferences: [] };
+  const turn = { status: 'complete', workCompletedAtMs: 12 };
+  Object.defineProperty(turn, 'messageIds', { get() { throw Error('turn-wide messages must not be read'); } });
+  const makeRow = (role, id, item) => ({ getClientRects: () => [{}], closest: () => null,
+    getAttribute: key => key === 'data-chatgpt-search-unit-key' ? 'fallback-turn-0:'
+      + (role === 'user' ? '0:user' : '2:assistant')
+      : key === 'data-chatgpt-search-message-ids' ? role === 'user' ? id : id + ' ' + id : null,
+    querySelectorAll: selector => role === 'user'
+      ? selector === '[data-user-message-bubble="true"]' ? [{}] : []
+      : selector === '[data-chatgpt-selection-message-id]'
+        ? selectionReady ? [{ getAttribute: () => id }] : [] : [],
+    __reactFiber$fixture: { memoizedProps: {}, return: { memoizedProps: { item },
+      return: { memoizedProps: { entry: { turn } }, return: null } } } });
+  const userRow = makeRow('user', userId, user), answerRow = makeRow('assistant', answerId, answer);
+  let rows = [userRow, answerRow], stop = false, unstableAssistant = null,
+    selectionReady = true;
+  const document = { querySelector: selector => selector === '[data-testid="stop-button"]'
+    ? stop ? {} : null : selector === '[data-chatgpt-search-unit-key]' ? rows[0] : null,
+    querySelectorAll: selector => selector === '[data-chatgpt-search-unit-key]' ? rows
+      : selector === '[data-message-author-role="user"]' ? [] : [] };
+  const run = (citations = false) => vm.runInNewContext(`(() => {
+    const currentPublicFiber = fiber => {
+      if (unstableAssistant && fiber === answerRow.__reactFiber$fixture)
+        throw Error(unstableAssistant);
+      return fiber;
+    };
+    const modernPublicItem = (${page.modernPublicItem.toString()});
+    const projectPublicReferences = (${page.projectPublicReferences.toString()});
+    const modernPublicFinal = (${page.modernPublicFinal.toString()});
+    return (${publicFinal.toString()})(request, citations, true);
+  })()`, { document, request, citations, TextEncoder, answerRow, unstableAssistant });
+  assert.deepEqual(plain(run()), { id: answerId, author: { role: 'assistant' },
+    recipient: null, channel: 'final', end_turn: true, status: 'finished_successfully',
+    metadata: { operator_web_renderer: 'modern_content_references_v1' },
+    content: { content_type: 'text', parts: ['  exact reply\n'] } });
+  assert.deepEqual(plain(run(true)).public_references, []);
+  const answerEntry = answerRow.__reactFiber$fixture.return.return.memoizedProps.entry;
+  answerEntry.turn = {...turn};
+  turn.status = 'in_progress';
+  assert.equal(run(), null); // A completed reply from another turn cannot finish this request.
+  turn.status = 'complete';
+  assert.equal(run(), null); // Matching terminal flags do not establish turn identity.
+  answerEntry.turn = turn;
+  selectionReady = false; assert.equal(run(), null); selectionReady = true;
+  unstableAssistant = 'web_public_current_branch_unavailable';
+  assert.equal(run(), null);
+  unstableAssistant = 'web_public_tree_cycle';
+  assert.throws(run, /web_public_tree_cycle/);
+  unstableAssistant = null;
+  stop = true; assert.equal(run(), null); stop = false;
+  answer.completed = false; assert.equal(run(), null); answer.completed = true;
+  turn.status = 'in_progress'; assert.equal(run(), null); turn.status = 'complete';
+  answer.sourceMessageIds = [userId]; assert.equal(run(), null); answer.sourceMessageIds = [answerId];
+  user.message += ' changed'; assert.throws(run, /web_user_turn_mismatch/);
+  user.message = request;
+  rows = [userRow, answerRow, answerRow];
+  assert.throws(run, /web_public_message_ambiguous/);
+  rows = [userRow, answerRow]; answer.contentReferences = [{ snippet: 'DO_NOT_EXPORT' }];
+  assert.throws(() => run(true), /web_public_citation_field_invalid/);
+  answer.contentReferences = [{ type: 'grouped_webpages', start_idx: 0, end_idx: 4,
+    matched_text: 'text', items: [{ title: 'Source', url: 'https://example.test',
+      snippet: 'DO_NOT_EXPORT' }], prompt_text: 'DO_NOT_EXPORT' },
+  { type: 'sources_footnote', start_idx: answer.content.length,
+    end_idx: answer.content.length + 1, matched_text: ' ',
+    sources: [{ title: 'Another', url: 'https://example.test/other' }],
+    prompt_text: 'DO_NOT_EXPORT' }];
+  assert.deepEqual(plain(run(true)).public_references, [
+    { type: 'grouped_webpages', start_idx: 0, end_idx: 4, matched_text: 'text',
+      items: [{ title: 'Source', url: 'https://example.test' }] },
+    { type: 'sources_footnote', start_idx: answer.content.length,
+      end_idx: answer.content.length + 1, matched_text: ' ',
+      sources: [{ title: 'Another', url: 'https://example.test/other' }] }]);
+  assert.equal(JSON.stringify(run(true)).includes('DO_NOT_EXPORT'), false);
+});
+
+test('public app separator classification preserves the exact app link and complete body', () => {
+  const { publicUserBindingShape } = require(operatorTestScript('web_browser_page.cjs'));
+  const head = '[$operator](app://asdk_app_' + 'a'.repeat(32) + ')';
+  const body = ' exact body\n\u00a0keep both spaces';
+  const prompt = head + '\u00a0' + body;
+  const read = source => plain(vm.runInNewContext(`(${publicUserBindingShape.toString()})(prompt, true)`, {
+    document: { querySelectorAll: () => [], querySelector: () => ({}) }, prompt,
+    modernPublicItem: () => ({ item: { message: source } }),
+  }));
+  assert.equal(read(prompt).exact, true);
+  assert.equal(read(prompt).appSeparatorOnly, false);
+  assert.equal(read(head + ' ' + body).appSeparatorOnly, true);
+  for (const value of [head + '\t' + body, head + ' ' + body.trim(),
+      head + ' ' + body.replace('\u00a0', ' '), head.replace('operator', 'other') + ' ' + body,
+      head + '  ' + body, ' ' + head + ' ' + body]) {
+    assert.equal(read(value).exact, false);
+    assert.equal(read(value).appSeparatorOnly, false);
+  }
+});
+
+test('current assistant identity diagnostic exposes only bounded public structure', () => {
+  const { modernIdentityShape } = require(operatorTestScript('web_browser_page.cjs'));
+  const first = '11111111-1111-4111-8111-111111111111';
+  const last = '22222222-2222-4222-8222-222222222222';
+  const row = { getAttribute: key => key === 'data-chatgpt-search-unit-key'
+    ? 'fallback-turn-0:2:assistant' : key === 'data-chatgpt-search-message-ids'
+      ? first + ' ' + last : null,
+    getClientRects: () => [{}], closest: () => null,
+    querySelectorAll: () => [{ getAttribute: () => last }] };
+  const shape = plain(vm.runInNewContext(`(${modernIdentityShape.toString()})()`,
+    { document: { querySelectorAll: () => [row] } }));
+  assert.deepEqual(shape, { assistantRows: 1, rows: [{ keyPattern: true,
+    visible: true, hidden: false, idsBounded: true, idsCount: 2,
+    allIdsUuid: true, allIdsEqual: false, selectedCount: 1,
+    selectedUuid: true, selectedFirst: false, selectedLast: true,
+    selectedAny: true }] });
+  assert.equal(JSON.stringify(shape).includes(first), false);
+  assert.equal(JSON.stringify(shape).includes(last), false);
+});
 
 test("explicit public references retain only the bound public citation fields", () => {
   const reference = { type: 'grouped_webpages', start_idx: 2, end_idx: 10,
@@ -838,10 +1181,8 @@ test("automatic selection binds the exact public plugin identity before activati
   const invoke = (rows, activate = false) => vm.runInNewContext(
     `(${connectorMenuChoice.toString()})(name, query, activate, id)`,
     { name, query, activate, id, uniqueComposer: () => composer, document: { activeElement: composer,
-      querySelector: () => composer, querySelectorAll: selector => {
-        assert.equal(selector, '[data-composer-plugin-impression-id] .__menu-item[tabindex="0"]');
-        return rows;
-      } } });
+      querySelector: () => composer, querySelectorAll: selector => selector
+        === '[data-composer-plugin-impression-id] .__menu-item[tabindex="0"]' ? rows : [] } });
   const rows = [row("Other app"), row(name, false), row(name)];
   assert.equal(invoke(rows).activated, false);
   assert.equal(clicked, 0);
@@ -861,8 +1202,9 @@ test("automatic selection binds the exact public plugin identity before activati
 
 test("connector access observation reads the visible public setting without changing it", () => {
   const { connectorAccessState } = require(operatorTestScript("web_browser_page.cjs"));
-  const button = (label, hidden = false) => ({ getClientRects: () => [{}],
-    closest: () => hidden ? {} : null, getAttribute: () => label,
+  const button = (label, hidden = false, text = '', popup = null) => ({ getClientRects: () => [{}],
+    closest: () => hidden ? {} : null, textContent: text,
+    getAttribute: name => name === 'aria-label' ? label : name === 'aria-haspopup' ? popup : null,
     click: () => { throw Error('must not change account settings'); } });
   const state = rows => vm.runInNewContext(`(${connectorAccessState.toString()})()`, {
     document: { querySelectorAll: () => rows } });
@@ -871,6 +1213,104 @@ test("connector access observation reads the visible public setting without chan
   assert.equal(state([button('个性化')]), 'enabled');
   assert.equal(state([button('个性化', true), button('不个性化')]), 'disabled');
   assert.equal(state([button('个性化'), button('不个性化')]), 'unknown');
+  assert.equal(state([button(null, false, '个性化', 'menu')]), 'enabled');
+  assert.equal(state([button(null, false, '不个性化', 'menu')]), 'disabled');
+  assert.equal(state([button(null, false, '个性化', null)]), 'unknown');
+  assert.equal(state([button(null, false, '个性化 设置', 'menu')]), 'unknown');
+  assert.equal(state([button(null, true, '个性化', 'menu')]), 'unknown');
+});
+
+test('current app menu only provisionally selects a unique label and validates its pill before send', () => {
+  const name = 'Operator 固定连接', id = 'plugin:asdk_app_' + 'a'.repeat(32);
+  const composer = { textContent: '@Operator' };
+  let clicks = 0, rows = [];
+  const row = label => ({ getClientRects: () => [{}], getAttribute: () => null,
+    closest: () => null, querySelectorAll: () => [{ textContent: label }],
+    click: () => { clicks++; } });
+  const document = { activeElement: composer, querySelectorAll: selector => selector
+    === '[data-mention-list-scroll-area] button[data-list-navigation-item="true"]' ? rows : [] };
+  const choose = activate => vm.runInNewContext(
+    `(${connectorMenuChoice.toString()})(name, '@Operator', activate, id)`,
+    { document, name, activate, id, uniqueComposer: () => composer });
+  rows = [row(name)];
+  assert.deepEqual(plain(choose(false)), { name, id: null, activated: false, identityPending: true });
+  assert.equal(clicks, 0);
+  assert.equal(choose(true).identityPending, true);
+  assert.equal(clicks, 1);
+  rows = [row(name), row(name)];
+  assert.throws(() => choose(true), /web_connector_menu_ambiguous/);
+  assert.equal(clicks, 1);
+
+  const path = 'app://' + id.slice(7), label = '$operator';
+  const attrs = { 'app-mention-path': path, 'data-prompt-link-href': path,
+    'data-prompt-link-label': label, 'app-mention-name': 'operator',
+    'app-mention-display-name': name, contenteditable: 'false' };
+  const pill = { textContent: name, getAttribute: key => attrs[key] ?? null };
+  const tail = { nodeType: 3, textContent: ' ' };
+  const editor = { querySelectorAll: selector => selector === 'span[app-mention-path]' ? [pill]
+    : selector === '[data-prompt-literal-paste]' ? paragraph.childNodes.filter(
+      node => node.getAttribute?.('data-prompt-literal-paste') === '') : [],
+    querySelector: selector => selector === '[data-prompt-literal-paste]'
+      ? paragraph.childNodes.find(node => node.getAttribute?.('data-prompt-literal-paste') === '') || null : null,
+    get textContent() { return paragraph.textContent; },
+    get innerText() { return paragraph.textContent; },
+    get childNodes() { return [paragraph]; } };
+  const paragraph = { nodeType: 1, tagName: 'P', parentElement: editor, childNodes: [pill, tail],
+    get textContent() { return this.childNodes.map(node => node.textContent).join(''); }, querySelectorAll: () => [] };
+  pill.parentElement = paragraph;
+  const invoke = (fn, args) => vm.runInNewContext(`(() => {
+    const connectorPillState = (${connectorPillState.toString()});
+    return (${fn.toString()})(...args);
+  })()`, { args, document: { activeElement: editor }, uniqueComposer: () => editor });
+  const picked = plain(invoke(selectedConnector, [name]));
+  assert.deepEqual(picked, { id, name, publicPrefix: '[' + label + '](' + path + ')\u00a0' });
+  assert.equal(invoke(composerPrefix, [picked]), name + ' ');
+  const caret = [];
+  const focusDocument = { activeElement: null, createRange: () => ({
+    setStart: (node, offset) => caret.push(['start', node, offset]),
+    setEnd: (node, offset) => caret.push(['end', node, offset]),
+    selectNodeContents: () => caret.push(['container']),
+    collapse: atStart => caret.push(['collapse', atStart]) }) };
+  editor.focus = () => { focusDocument.activeElement = editor; };
+  vm.runInNewContext(`(() => {
+    const connectorPillState = (${connectorPillState.toString()});
+    return (${focusComposer.toString()})(prefix);
+  })()`, { prefix: name + ' ', document: focusDocument,
+    window: { getSelection: () => ({ removeAllRanges() {}, addRange() {} }) },
+    uniqueComposer: () => editor });
+  assert.deepEqual(caret, [['start', tail, 1], ['collapse', true]]);
+  caret.length = 0;
+  vm.runInNewContext(`(() => {
+    const connectorPillState = (${connectorPillState.toString()});
+    return (${focusComposer.toString()})(prefix, true);
+  })()`, { prefix: name + ' ', document: focusDocument,
+    window: { getSelection: () => ({ removeAllRanges() {}, addRange() {} }) },
+    uniqueComposer: () => editor });
+  assert.deepEqual(caret, [['start', tail, 0], ['end', tail, 1]]);
+  tail.textContent += 'synthetic probe';
+  assert.equal(invoke(composerMatches, ['synthetic probe', name + ' ', picked]), true);
+  tail.textContent = '\u00a0synthetic probe';
+  assert.equal(invoke(composerMatches, ['synthetic probe', name + ' ', picked]), true);
+  tail.textContent = '\u00a0\u00a0synthetic probe';
+  assert.equal(invoke(composerMatches, ['synthetic probe', name + ' ', picked]), false);
+  tail.textContent = ' ';
+  const literal = { nodeType: 1, tagName: 'SPAN', attributes: [{}],
+    getAttribute: key => key === 'data-prompt-literal-paste' ? '' : null,
+    childNodes: [{nodeType: 3, textContent: 'first'},
+      {nodeType: 1, tagName: 'BR', attributes: [], childNodes: []},
+      {nodeType: 3, textContent: 'second'}], get textContent() { return 'firstsecond'; } };
+  paragraph.childNodes.push(literal);
+  assert.equal(invoke(composerMatches, ['first\nsecond', name + ' ', picked]), true);
+  assert.equal(invoke(composerMatches, ['firstsecond', name + ' ', picked]), false);
+  literal.childNodes.push({nodeType: 1, tagName: 'IMG', attributes: [], childNodes: []});
+  assert.equal(invoke(composerMatches, ['first\nsecond', name + ' ', picked]), false);
+  paragraph.childNodes.pop();
+  tail.textContent += 'synthetic probe';
+  attrs['app-mention-path'] = 'app://asdk_app_' + 'b'.repeat(32);
+  attrs['data-prompt-link-href'] = attrs['app-mention-path'];
+  assert.equal(invoke(composerMatches, ['synthetic probe', name + ' ', picked]), false);
+  tail.textContent = ' '; attrs['app-mention-display-name'] = 'Another app';
+  assert.throws(() => invoke(selectedConnector, [name]), /web_connector_mention_mismatch/);
 });
 
 function connectorFixture(options = {}) {
@@ -882,7 +1322,9 @@ function connectorFixture(options = {}) {
   const composer = { textContent: options.text ?? '\uFEFF' + name + ' ',
     innerText: options.text ?? '\uFEFF' + name + ' ', getClientRects: () => [{}],
     querySelectorAll: selector => selector === '[data-inline-selection-pill]'
-      ? Array(options.pills ?? 1).fill(pill) : Array(options.cursors ?? 1).fill(cursor) };
+      ? Array(options.pills ?? 1).fill(pill)
+      : selector === '[data-inline-selection-pill-cursor-target]'
+        ? Array(options.cursors ?? 1).fill(cursor) : [] };
   const document = { querySelectorAll: () => [composer], querySelector: () => composer, activeElement: composer };
   Object.defineProperty(composer, 'childNodes', { configurable: true,
     get: () => [{ nodeType: 1, tagName: 'P', textContent: composer.textContent, querySelectorAll: () => [] }] });
@@ -891,10 +1333,13 @@ function connectorFixture(options = {}) {
 
 test("selected app identity comes from one exact visible pill and stays bound before send", () => {
   const f = connectorFixture();
-  const invoke = (fn, args) => vm.runInNewContext(`(${fn.toString()})(...args)`,
+  const invoke = (fn, args) => vm.runInNewContext(`(() => {
+    const connectorPillState = (${connectorPillState.toString()});
+    return (${fn.toString()})(...args);
+  })()`,
     { document: f.document, args, uniqueComposer: () => f.composer });
   const mention = plain(invoke(selectedConnector, [f.name]));
-  assert.deepEqual(mention, { name: f.name, id: f.id });
+  assert.deepEqual(mention, { name: f.name, id: f.id, publicPrefix: '@' + f.name + ' ' });
   const prefix = invoke(composerPrefix, [mention]);
   f.composer.textContent += "authorized fixture";
   f.composer.innerText += "authorized fixture";
@@ -917,7 +1362,10 @@ test("connector prompt comparison retains paragraph breaks and rejects collapsed
     querySelectorAll: () => value === '' ? [{}] : [] });
   Object.defineProperty(f.composer, 'childNodes', { writable: true,
     value: (prefix + text).split('\n').map(paragraph) });
-  const invoke = () => vm.runInNewContext(`(${composerMatches.toString()})(text, prefix, mention)`,
+  const invoke = () => vm.runInNewContext(`(() => {
+    const connectorPillState = (${connectorPillState.toString()});
+    return (${composerMatches.toString()})(text, prefix, mention);
+  })()`,
     { document: f.document, text, prefix, mention, uniqueComposer: () => f.composer });
   assert.equal(invoke(), true);
   const original = f.composer.childNodes;
@@ -960,7 +1408,10 @@ test("plain multiline prompt accepts exact editor paragraphs without normalizing
 test("selection waits only for an absent pill and rejects ambiguity or altered app metadata", () => {
   const invoke = options => {
     const f = connectorFixture(options);
-    return vm.runInNewContext(`(${selectedConnector.toString()})(name)`,
+    return vm.runInNewContext(`(() => {
+      const connectorPillState = (${connectorPillState.toString()});
+      return (${selectedConnector.toString()})(name);
+    })()`,
       { document: f.document, name: f.name, uniqueComposer: () => f.composer });
   };
   assert.equal(invoke({ pills: 0 }), null);
@@ -1128,12 +1579,17 @@ test('new effort container fallback stays inside the unique active model menu', 
     querySelectorAll: selector => selector === '[data-model-reasoning-effort-slider]' ? oldContainers
       : selector === '[data-model-picker-power-slider]' ? newContainers
         : selector === '[role="menuitem"]' ? choosers : []};
-  const menuitem = {getAttribute: name => name === 'aria-describedby' ? 'effort-help' : null,
+  let parentHidden = false, menuitemHidden = false;
+  const menuitem = {getClientRects: () => [{}],
+    closest: selector => menuitemHidden && selector.includes('[aria-hidden="true"]') ? menuitem : null,
+    getAttribute: name => name === 'aria-describedby' ? 'effort-help' : null,
     focus: () => {document.activeElement = menuitem;}};
   const slider = {getClientRects: () => [{}],
+    parentElement: {closest: selector => parentHidden && selector === '[aria-hidden="true"]' ? {} : null},
     getAttribute: name => ({'aria-valuemin': '0', 'aria-valuemax': '4', 'aria-valuenow': '1'})[name] ?? null,
     closest: selector => selector === '[role="menuitem"]' ? menuitem
-      : selector === '[role="menu"]' ? menu : null};
+      : selector === '[role="menu"]' ? menu
+        : selector.includes('[aria-hidden="true"]') ? slider : null};
   const chooser = {textContent: '最新', getClientRects: () => [{}],
     getAttribute: name => name === 'aria-label' ? '选择模型' : null,
     closest: selector => selector === '[role="menu"]' ? menu : null};
@@ -1146,6 +1602,13 @@ test('new effort container fallback stays inside the unique active model menu', 
     return ${source};
   })()`, {document});
   assert.equal(run('eligibleEffortContainer()'), panel);
+  // The observed slider span is aria-hidden itself; its visible menuitem is the
+  // keyboard target. A hidden ancestor or menuitem must still be rejected.
+  parentHidden = true;
+  assert.equal(run('eligibleEffortContainer()'), null);
+  parentHidden = false; menuitemHidden = true;
+  assert.equal(run('eligibleEffortContainer()'), null);
+  menuitemHidden = false;
   assert.deepEqual(plain(run(`(${page.effortState.toString()})()`)),
     {min: 0, max: 4, value: 1, label: '中', announcedGeneration: null,
       generationLabel: '最新', locked: false});

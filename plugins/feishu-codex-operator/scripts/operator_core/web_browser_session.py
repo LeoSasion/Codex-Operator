@@ -15,7 +15,7 @@ import re
 import secrets
 import subprocess
 
-from .web_browser_driver import (child_environment, desktop_session_state, safe_effort_diagnostic, safe_effort_range_diagnostic, safe_generation_progress, safe_model_network, safe_user_binding_diagnostic,
+from .web_browser_driver import (child_environment, desktop_session_state, safe_effort_diagnostic, safe_effort_range_diagnostic, safe_generation_progress, safe_model_network, safe_user_binding_diagnostic, safe_prompt_mismatch_shape, safe_modern_identity_shape, safe_fresh_chat_control_structure,
     rejected_http_status, rejected_network_error, safe_public_interruption, public_interruption_code, rejected_ui_code, public_final_timeout)
 from .web_mcp_transport import WebRequestCapacityError, WebBrowserAssistanceRequired, WebDesktopUnavailable, WebBrowserHttpError, WebBrowserNetworkError, WebBrowserUiError, WebBrowserFinalTimeout, require
 from .responses_tool_adapter import loads
@@ -259,7 +259,7 @@ class WebBrowserSession:
 
     def event(self, value, current):
         kind = value.get('kind')
-        if kind not in ('model_verified', 'dispatch_started', 'public_user_binding', 'window_state', 'generation_state', 'public_interruption_state', 'fresh_chat_navigation', 'model_network_state',
+        if kind not in ('model_verified', 'dispatch_started', 'public_user_binding', 'window_state', 'generation_state', 'prompt_ready_gate', 'prompt_mismatch_shape', 'modern_identity_shape', 'fresh_chat_control_structure', 'previous_page_shape', 'public_interruption_state', 'fresh_chat_navigation', 'model_network_state',
                 'completed', 'failed', 'cancel_requested', 'cancel_click_attempted', 'cancel_click_unavailable',
                 'cancel_idle_unverified', 'effort_initial_state', 'effort_step_verified',
                 'effort_step_unavailable', 'effort_pro_unavailable', 'effort_pro_verified', 'effort_target_verified',
@@ -271,6 +271,18 @@ class WebBrowserSession:
         if kind == 'model_verified':
             require(matches_selection(value, current['selection']), 'web_browser_selection_identity_invalid')
             event.update(**current['selection'], effortIndex=value['effortIndex'])
+        elif kind == 'prompt_ready_gate':
+            event['send_ready'] = value.get('sendReady') if type(value.get('sendReady')) is bool else None
+            event['composer_exact'] = value.get('composerExact') if type(value.get('composerExact')) is bool else None
+        elif kind == 'prompt_mismatch_shape':
+            event['shape'] = safe_prompt_mismatch_shape(value.get('shape'))
+        elif kind == 'modern_identity_shape':
+            event['shape'] = safe_modern_identity_shape(value.get('shape'))
+        elif kind == 'fresh_chat_control_structure':
+            event['shape'] = safe_fresh_chat_control_structure(value.get('shape'))
+        elif kind == 'previous_page_shape':
+            event['shape'] = {key: value.get(key) for key in ('present', 'sameId', 'sameContent')}
+            require(all(type(flag) is bool for flag in event['shape'].values()), 'web_previous_page_shape_invalid')
         elif kind == 'effort_range_unavailable':
             event.update(safe_effort_range_diagnostic(value))
         elif kind.startswith('effort_'):

@@ -185,7 +185,7 @@ def project_overview(project, home, inspect=inspect_entry):
         elif observation.get('configuration_current') is False:
             web = ('changed', '已有配置与当前程序不一致，保留原配置等待核对', 'web status')
         elif observation.get('configuration_current') is not True or not isinstance(state, str) or state not in {
-                'ready', 'assistance', 'starting', 'connection', 'reconnecting', 'draining', 'configured', 'stopped'}:
+                'ready', 'assistance', 'starting', 'preparing', 'connection', 'reconnecting', 'draining', 'configured', 'stopped'}:
             web = ('unavailable', '后台状态暂时无法确认，现有登录与配置仍保留', 'web status')
         elif state == 'draining':
             web = ('stopping', '后台正在结束当前工作，保存的连接仍保留', '等待结束后查看 models web status')
@@ -197,6 +197,8 @@ def project_overview(project, home, inspect=inspect_entry):
             web = ('assistance_open', '辅助或查看窗口已打开，保存的登录与配置仍保留', '完成当前查看或操作后关闭辅助窗口')
         elif state == 'starting':
             web = ('starting', '后台正在启动，沿用保存的配置', '稍后查看 models web status')
+        elif state == 'preparing':
+            web = ('preparing', '后台正在准备空白聊天，沿用保存的登录与配置', '稍后查看 models web status')
         elif state in ('connection', 'reconnecting'):
             web = ('connecting', '后台正在建立连接，沿用保存的登录与配置', '稍后查看 models web status')
         elif state == 'ready' and observation.get('active') is False:

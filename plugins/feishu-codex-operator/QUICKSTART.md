@@ -55,7 +55,7 @@ Channels 的插件工具仍要求可用的 `python` 命令，
 
 首版保留独立 Web provider：助手使用 `models web desktop-prepare`、`models web desktop-connect` 登记，再完成你明确选择的任务接入。**仅登记 provider 不会自动把主窗口模型菜单全部打通，也不会创建或切换你的任务。** 当前已接入 Web 的任务可继续使用；新任务接入仍需助手协助，不应宣称已具备一键全局切换。无需在项目或全局配置中关闭 Codex 搜索；Web provider 对已核对的可选实时搜索声明使用 ChatGPT 网页自己的搜索与来源引用。带域名、位置、缓存、索引等无法对应的要求会在网页提交前明确拒绝。GLM、DeepSeek 等模型的搜索方式按各自型号及接入端点单独验证；网页有来源引用不等于 Codex 执行了原生搜索工具。
 
-如果已登记的 Web provider 因后台显式重启而指向旧实例，`models web desktop-status` 会显示 `stale`；后台就绪且空闲后，由助手执行一次 `models web desktop-rebind`，保留原 provider 名称和任务绑定，并备份原配置。运行中的 Desktop 是否采用新地址须另行验收；失败请求不能重发。
+如果已登记的 Web provider 因后台显式重启而指向旧实例，`models web desktop-status` 会显示 `stale`；后台就绪且空闲后，由助手执行一次 `models web desktop-rebind`，保留原 provider 名称和任务绑定，并备份原配置。已经加载的任务还可能保留旧地址，由助手按[空闲任务重载](models/web/docs/native-web-experience.md#reload-an-idle-web-task)核对和处理，再验证全新输入；失败请求不能重发。
 
 日常入口：`codex-operator.ps1 models web start|status|assist|inspect|stop`。验证编码闭环可明确要求助手执行 `models web verify`；这会用新样例调用一次真实网页模型。它不属于普通状态检查。
 

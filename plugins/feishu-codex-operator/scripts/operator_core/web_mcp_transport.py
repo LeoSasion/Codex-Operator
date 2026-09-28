@@ -6,7 +6,7 @@ does not register models, expose native credentials, or parse calls from prose.
 """
 import asyncio
 from collections import deque
-from copy import deepcopy
+from copy import copy, deepcopy
 import json
 import re
 import secrets
@@ -383,6 +383,33 @@ class IndexedWebRequest:
             'schema_pages_read': self.page_reads['schema'],
             'schemas_complete': len(self.described)}
 
+    def stage_unread_descriptions(self, protocol, names):
+        """Build complete replacement pages without changing live read state.
+
+        A catalog publishes identities and first schema keys, never descriptions.
+        Preserve those keys, but refresh only schemas with zero consumed pages.
+        Partial reads are already model-visible and therefore remain immutable.
+        """
+        staged = copy(self)
+        staged.pages, staged.expected = dict(self.pages), dict(self.expected)
+        descriptors = {tool['name']: tool for tool in protocol.mcp_tools()}
+        tools = {tool['name']: tool for tool in protocol.request().get('tools', [])}
+        for name in sorted(names):
+            first = self.expected.get(('schema', name))
+            if name in self.described or first not in self.pages or self.pages[first][0]['index'] != 0:
+                return None
+            old_keys = [key for key, row in self.pages.items() if row[1:3] == ('schema', name)]
+            if len(old_keys) != self.pages[first][0]['total']:
+                return None
+            for key in old_keys:
+                del staged.pages[key]
+            new_first = staged.fragments('schema', {'request_tool': tools[name],
+                'mcp_tool': descriptors[name]}, name=name)
+            require(first not in staged.pages or first == new_first, 'web_mcp_index_capacity')
+            staged.pages[first] = staged.pages.pop(new_first)
+            staged.expected[('schema', name)] = first
+        return staged.pages, staged.expected
+
 
 class WebMcpTurn:
     """Single-loop, single-call transport; all state transitions are explicit."""
@@ -416,6 +443,7 @@ class WebMcpTurn:
         self._tools = protocol.mcp_tools()
         self.indexed = None
         self.binding_changes = None
+        self.unread_description_refreshes = 0
 
     def guard(self, key):
         require(isinstance(key, str) and secrets.compare_digest(key, self.key), "web_mcp_turn_rejected")
@@ -532,10 +560,16 @@ class WebMcpTurn:
         route_changed = protocol.route != self.protocol.route
         tools_changed = protocol.mcp_tools() != self._tools
         contract_changed = protocol.continuation_contract() != self._contract
+        staged_descriptions = None
+        refresh_names = None
         if route_changed or tools_changed or contract_changed:
             self.binding_changes = {'route': route_changed, 'tools': tools_changed,
                 'controls': protocol.continuation_changes(self.protocol)}
-            raise RouterError('web_mcp_request_binding_changed')
+            if not route_changed and self.indexed is not None:
+                refresh_names = protocol.description_refresh_candidates(self.protocol)
+                if refresh_names:
+                    staged_descriptions = self.indexed.stage_unread_descriptions(protocol, refresh_names)
+            require(staged_descriptions is not None, 'web_mcp_request_binding_changed')
         items = request.get("input")
         require(isinstance(self._input, list) and isinstance(items, list)
             and same_json(items[:len(self._input)], self._input), "web_mcp_history_changed")
@@ -563,6 +597,14 @@ class WebMcpTurn:
             and original_input[-1].get("call_id") == original["call_id"], "web_mcp_original_result_required")
         value = {"codex_function_result": original_input[-1]}
         encoded(value)
+        if staged_descriptions is not None:
+            # Publish only after every result/history check. No awaits, new
+            # grants, consumed-page rewrites, read-budget reset or request replay.
+            self.indexed.pages, self.indexed.expected = staged_descriptions
+            self._tools = protocol.mcp_tools()
+            self._contract = protocol.continuation_contract()
+            self.unread_description_refreshes += len(refresh_names)
+            self.binding_changes = None
         self.protocol = protocol
         self._input = deepcopy(items)
         self._source_input = original_input
@@ -608,6 +650,8 @@ class WebMcpTurn:
             'public_final_returned': self.final_returned,
             **({'search_route': 'web_page_auto_v1'} if self._web_page_search_binding is not None else {}),
             **({'indexed_reads': self.indexed.read_observation()} if self.indexed is not None else {}),
+            **({'unread_description_refreshes': self.unread_description_refreshes}
+                if self.unread_description_refreshes else {}),
             **({'binding_changes': deepcopy(self.binding_changes)} if self.binding_changes is not None else {})}
 
 

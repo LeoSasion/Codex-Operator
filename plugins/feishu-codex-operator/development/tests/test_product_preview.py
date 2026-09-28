@@ -110,7 +110,8 @@ class ProductOverviewTests(unittest.TestCase):
         for state, expected in [({'status': 'ready', 'active': False, 'needs_assistance': True}, 'needs_review'),
                 ({'status': 'assistance', 'active': False, 'needs_assistance': False}, 'assistance_open'),
                 ({'status': 'assistance', 'active': True, 'needs_assistance': True}, 'busy'),
-                ({'status': 'starting'}, 'starting'), ({'status': 'connection', 'active': False}, 'connecting'),
+                ({'status': 'starting'}, 'starting'), ({'status': 'preparing', 'active': False}, 'preparing'),
+                ({'status': 'connection', 'active': False}, 'connecting'),
                 ({'status': 'reconnecting', 'active': False}, 'connecting'),
                 ({'status': 'draining', 'active': True}, 'stopping')]:
             with self.subTest(state=state):

@@ -223,12 +223,40 @@ def connect(profile, home):
     return result('connected', reused=False, provider=plan['provider'])
 
 
-def owned_fragment(current, fragment):
-    if current.count(BEGIN) != 1 or current.count(END) != 1 or current.count(fragment) != 1:
-        return False
-    remaining = current.replace(fragment, b'', 1)
+def owned_parts(current, fragment):
+    """Locate exact owned bytes while preserving later independent TOML tables.
+
+    Native config writers may append a table before the closing comment. That
+    table is not ours: removing our bytes must leave its complete scope intact.
+    Changes within the recorded provider itself still fail the exact match.
+    """
+    if (not fragment.startswith(b'\n' + BEGIN) or not fragment.endswith(END)
+            or current.count(BEGIN) != 1 or current.count(END) != 1):
+        return None
+    head = fragment[:-len(END)]
+    if current.count(head) != 1:
+        return None
+    start, end = current.index(head), current.index(END)
+    if end < start + len(head):
+        return None
+    parts = current[:start], current[start + len(head):end], current[end + len(END):]
+    remaining = b''.join(parts)
     check_scope(remaining, current, fragment)
-    return True
+    return parts
+
+
+def owned_fragment(current, fragment):
+    return owned_parts(current, fragment) is not None
+
+
+def replace_owned_fragment(current, fragment, replacement=b''):
+    parts = owned_parts(current, fragment)
+    require(parts is not None, 'web_desktop_config_changed')
+    if not replacement:
+        return b''.join(parts)
+    require(replacement.startswith(b'\n' + BEGIN) and replacement.endswith(END),
+        'web_desktop_scope_invalid')
+    return parts[0] + replacement[:-len(END)] + parts[1] + END + parts[2]
 
 
 def disconnect(profile, home):
@@ -256,7 +284,7 @@ def disconnect(profile, home):
             require(BEGIN not in current and END not in current, 'web_desktop_config_changed')
         else:
             require(owned_fragment(current, fragment), 'web_desktop_config_changed')
-            remaining = current.replace(fragment, b'', 1)
+            remaining = replace_owned_fragment(current, fragment)
             # Preserve every unrelated byte, including edits after registration.
             backup = folder / ('before-disconnect-' + secrets.token_hex(16) + '.toml')
             with backup.open('xb') as handle: handle.write(current)
@@ -328,8 +356,8 @@ def rebind(profile, home):
     if expected == old_plan['binding'] and fragment == old_files['addition.toml']:
         return result('connected', reused=True, provider=old_plan['provider'])
     require(expected != old_plan['binding'], 'web_desktop_binding_changed')
-    remaining = before.replace(old_files['addition.toml'], b'', 1)
-    after = before.replace(old_files['addition.toml'], fragment, 1)
+    remaining = replace_owned_fragment(before, old_files['addition.toml'])
+    after = replace_owned_fragment(before, old_files['addition.toml'], fragment)
     require(len(after) <= LIMIT, 'web_desktop_config_bound')
     check_scope(remaining, after, fragment)
     with operation_lock(profile):

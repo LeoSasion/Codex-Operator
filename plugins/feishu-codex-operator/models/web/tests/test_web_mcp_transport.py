@@ -18,6 +18,7 @@ import unittest
 from aiohttp import ClientSession
 from test_web_model_protocol import make, message, FUNCTION
 from operator_core.responses_capabilities import RouterError
+from operator_core.web_model_protocol import _tool_declaration_change_kinds
 from operator_core.web_mcp_transport import (WebMcpTurn, WebMcpEndpoint,
     QuickTunnelAnnouncement, WebResponsesBridge, IndexedWebRequest, INDEX_REPLY_BYTES, INDEX_READ_LIMIT)
 
@@ -533,15 +534,154 @@ class IndexedWebRequestTests(unittest.IsolatedAsyncioTestCase):
             page = turn.begin(key)
             self.assertEqual(page['index'], len(fragments))
             # Measure the actual outer HTTP JSON with a maximal string RPC id.
-            wire = json.dumps({'jsonrpc': '2.0', 'id': '😀' * 128, 'result': {
+            result = ({'structuredContent': page, 'content': [], 'isError': False}
+                if turn.indexed.begin_result_mode == 'structured_begin_v1' else {
                 'content': [{'type': 'text', 'text': json.dumps(page, ensure_ascii=False,
-                    separators=(',', ':'))}], 'isError': False}}, ensure_ascii=False,
+                    separators=(',', ':'))}], 'isError': False})
+            wire = json.dumps({'jsonrpc': '2.0', 'id': '😀' * 128, 'result': result}, ensure_ascii=False,
                 separators=(',', ':')).encode('utf8')
             self.assertLessEqual(len(wire), INDEX_REPLY_BYTES)
             fragments.append(page['json_fragment'])
             key = page['next_read_key']
         self.assertEqual(page['total'], len(fragments))
         return json.loads(''.join(fragments)), page
+
+    async def description_fixture(self, *, spare_description='Unread original', mode='unread',
+            wire_protocol='mcp_indexed_request_v1'):
+        payload = {'input': [{'role': 'user', 'content': 'new fixture'}],
+            'tools': [FUNCTION, {'type': 'namespace', 'name': 'fixture_tools', 'tools': [
+                {**FUNCTION, 'name': 'spare', 'description': spare_description}]}]}
+        native = make(payload, structured_tool_outputs=True)
+        turn = WebMcpTurn(native)
+        self.addCleanup(turn.close)
+        turn.prepare_indexed(wire_protocol=wire_protocol,
+            begin_result_mode='text_v1' if wire_protocol == 'mcp_indexed_request_v1' else 'structured_begin_v1')
+        if wire_protocol == 'mcp_indexed_request_v1':
+            _, last = self.read_section(turn, turn.key)
+            catalog, _ = self.read_section(turn, last['catalog_read_key'])
+        else:
+            key = turn.key
+            while key:
+                page = turn.begin(key)
+                key = page['next_read_key']
+            catalog, key = [], page['catalog_read_key']
+            while key:
+                page = turn.begin(key)
+                catalog.extend(page['entries'])
+                key = page['next_read_key']
+        self.read_section(turn, catalog[0]['schema_read_key'])
+        if mode == 'read':
+            self.read_section(turn, catalog[1]['schema_read_key'])
+        elif mode == 'partial':
+            self.assertIsNotNone(turn.begin(catalog[1]['schema_read_key'])['next_read_key'])
+        task = asyncio.create_task(turn.invoke(turn.key, 1, 'inspect', {'value': 'first'}))
+        response, _ = await turn.next_response()
+        call = response['output'][0]
+        continued = deepcopy(payload)
+        result = {'type': 'function_call_output', 'call_id': call['call_id'],
+            'output': [{'type': 'input_text', 'text': 'permission denied\r\n'},
+                       {'type': 'input_text', 'text': 'unchanged second part'}]}
+        continued['input'] += [call, result]
+        return turn, task, payload, continued, catalog, result
+
+    async def test_unread_description_refresh_preserves_result_and_published_schema_key(self):
+        for wire in ('mcp_indexed_request_v1', 'mcp_catalog_pages_v2', 'mcp_context_records_v3'):
+            with self.subTest(wire=wire):
+                await self.description_success_case(wire)
+
+    async def description_success_case(self, wire):
+        turn, task, original, continued, catalog, result = await self.description_fixture(wire_protocol=wire)
+        continued['tools'][1]['tools'][0]['description'] = 'Exact new description 中文\r\n' * 1800
+        new = make(continued, structured_tool_outputs=True)
+        reads = turn.indexed.reads
+        old_keys = {key for key, row in turn.indexed.pages.items() if row[2] == catalog[1]['name']}
+        try:
+            turn.accept_result(new)
+            self.assertEqual(await task, {'codex_function_result': result})
+            self.assertEqual(turn.indexed.reads, reads)
+            self.assertNotIn(catalog[1]['name'], turn.indexed.described)
+            self.assertEqual(turn.observation()['unread_description_refreshes'], 1)
+            self.assertNotIn('binding_changes', turn.observation())
+            schema, last = self.read_section(turn, catalog[1]['schema_read_key'])
+            self.assertGreater(last['total'], 1)
+            self.assertEqual(schema['request_tool'], new.request()['tools'][1])
+            self.assertEqual(schema['mcp_tool'], new.mcp_tools()[1])
+            self.assertFalse(old_keys & set(turn.indexed.pages))
+            second = asyncio.create_task(turn.invoke(turn.key, 2, catalog[1]['name'], {'value': 'second'}))
+            try:
+                response, _ = await turn.next_response()
+                call = response['output'][0]
+                self.assertEqual((call['name'], call['namespace']), ('spare', 'fixture_tools'))
+                continued['input'] += [call, {'type': 'function_call_output',
+                    'call_id': call['call_id'], 'output': 'exact second result'}]
+                turn.accept_result(make(continued, structured_tool_outputs=True))
+                self.assertEqual((await second)['codex_function_result']['output'], 'exact second result')
+                turn.finish(message(['finished']))
+                final, _ = await turn.next_response()
+                self.assertEqual(final['output'][0]['content'][0]['text'], 'finished')
+            finally:
+                turn.close()
+                await asyncio.gather(second, return_exceptions=True)
+        finally:
+            turn.close()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def test_description_refresh_rejects_read_partial_schema_and_other_contract_changes(self):
+        cases = ('read', 'partial', 'parameters', 'strict', 'reordered', 'namespace',
+            'instructions', 'history', 'call_id')
+        for case in cases:
+            with self.subTest(case=case):
+                turn, task, _, continued, catalog, _ = await self.description_fixture(
+                    spare_description='large description ' * 4000 if case == 'partial' else 'original',
+                    mode=case)
+                prior = turn.protocol
+                continued['tools'][1]['tools'][0]['description'] = 'changed'
+                if case == 'parameters':
+                    continued['tools'][1]['tools'][0]['parameters']['properties']['extra'] = {'type': 'number'}
+                elif case == 'strict': continued['tools'][1]['tools'][0]['strict'] = True
+                elif case == 'reordered': continued['tools'].reverse()
+                elif case == 'namespace': continued['tools'][1]['description'] = 'namespace changed'
+                elif case == 'instructions': continued['instructions'] = 'changed'
+                elif case == 'history': continued['input'][0]['content'] = 'changed'
+                elif case == 'call_id': continued['input'][-2]['arguments'] = '{"value":"altered"}'
+                expected = ('web_mcp_history_changed' if case == 'history' else
+                    'web_mcp_call_identity_changed' if case == 'call_id' else
+                    'web_mcp_request_binding_changed')
+                try:
+                    with self.assertRaisesRegex(RouterError, '^' + expected + '$'):
+                        turn.accept_result(make(continued, structured_tool_outputs=True))
+                    self.assertIs(turn.protocol, prior)
+                    self.assertEqual(turn.results, 0)
+                    self.assertNotIn('unread_description_refreshes', turn.observation())
+                finally:
+                    turn.close()
+                    await asyncio.gather(task, return_exceptions=True)
+
+    async def test_unread_description_refresh_preserves_read_budget_and_page_capacity(self):
+        for over_capacity in (False, True):
+            with self.subTest(over_capacity=over_capacity):
+                turn, task, _, continued, catalog, result = await self.description_fixture()
+                continued['tools'][1]['tools'][0]['description'] = (
+                    'x' * (INDEX_REPLY_BYTES * 25) if over_capacity else 'new unread description')
+                old_protocol = turn.protocol
+                try:
+                    if over_capacity:
+                        with self.assertRaisesRegex(RouterError, '^web_mcp_index_section_too_large$'):
+                            turn.accept_result(make(continued, structured_tool_outputs=True))
+                        self.assertIs(turn.protocol, old_protocol)
+                        self.assertEqual(turn.results, 0)
+                    else:
+                        turn.indexed.reads = INDEX_READ_LIMIT
+                        turn.accept_result(make(continued, structured_tool_outputs=True))
+                        self.assertEqual(await task, {'codex_function_result': result})
+                        self.assertEqual(turn.indexed.reads, INDEX_READ_LIMIT)
+                        with self.assertRaisesRegex(RouterError, '^web_mcp_read_limit$'):
+                            turn.begin(catalog[1]['schema_read_key'])
+                        with self.assertRaisesRegex(RouterError, '^web_mcp_schema_not_read$'):
+                            await turn.invoke(turn.key, 2, catalog[1]['name'], {'value': 'blocked'})
+                finally:
+                    turn.close()
+                    await asyncio.gather(task, return_exceptions=True)
 
     async def test_exact_unicode_context_and_catalog_preserve_all_native_declarations(self):
         from test_web_model_protocol import EXEC
@@ -1234,12 +1374,205 @@ class WebMcpTurnTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await endpoint.stop()
 
+    def test_rejected_tool_inventory_diagnostic_reports_counts_only(self):
+        original = {'input': [{'role': 'user', 'content': 'fixture'}], 'tools': [FUNCTION]}
+        extra = {**FUNCTION, 'name': 'second_fixture_tool'}
+        previous = make(original, structured_tool_outputs=True)
+        expanded = make({**original, 'tools': [FUNCTION, extra]}, structured_tool_outputs=True)
+        reduced = make({**original, 'tools': []}, structured_tool_outputs=True)
+        self.assertEqual(expanded.continuation_changes(previous)['tool_declarations'], {
+            'bounded': True, 'before_count': 1, 'after_count': 2,
+            'added_count': 1, 'removed_count': 0, 'change_kinds': {
+                'classified': True, 'identity_added_count': 1, 'identity_removed_count': 0,
+                'description_changed_count': 0, 'parameters_changed_count': 0,
+                'strict_changed_count': 0, 'defer_loading_changed_count': 0,
+                'defer_loading_true_to_false_count': 0,
+                'defer_loading_false_to_true_count': 0, 'other_changed_count': 0,
+                'defer_loading_presence_only_count': 0,
+                'namespace_tools_changed_count': 0, 'custom_format_changed_count': 0,
+                'tool_search_execution_changed_count': 0,
+                'function_changed_count': 0, 'custom_changed_count': 0,
+                'namespace_changed_count': 0, 'tool_search_changed_count': 0,
+                'namespace_nested': {'bounded': True, 'identity_added_count': 0,
+                    'identity_removed_count': 0, 'same_identity_changed_count': 0,
+                    'order_only_count': 0, 'unclassifiable_count': 0},
+                'order_changed': False}})
+        self.assertEqual(reduced.continuation_changes(previous)['tool_declarations'], {
+            'bounded': True, 'before_count': 1, 'after_count': 0,
+            'added_count': 0, 'removed_count': 1, 'change_kinds': {
+                'classified': True, 'identity_added_count': 0, 'identity_removed_count': 1,
+                'description_changed_count': 0, 'parameters_changed_count': 0,
+                'strict_changed_count': 0, 'defer_loading_changed_count': 0,
+                'defer_loading_true_to_false_count': 0,
+                'defer_loading_false_to_true_count': 0, 'other_changed_count': 0,
+                'defer_loading_presence_only_count': 0,
+                'namespace_tools_changed_count': 0, 'custom_format_changed_count': 0,
+                'tool_search_execution_changed_count': 0,
+                'function_changed_count': 0, 'custom_changed_count': 0,
+                'namespace_changed_count': 0, 'tool_search_changed_count': 0,
+                'namespace_nested': {'bounded': True, 'identity_added_count': 0,
+                    'identity_removed_count': 0, 'same_identity_changed_count': 0,
+                    'order_only_count': 0, 'unclassifiable_count': 0},
+                'order_changed': False}})
+        self.assertNotIn(extra['name'], json.dumps(expanded.continuation_changes(previous)))
+
+    def test_rejected_tool_field_diagnostic_counts_only_fixed_categories(self):
+        source = {'type': 'function', 'name': 'private_tool_alpha',
+            'description': 'private description alpha',
+            'parameters': {'type': 'object', 'properties': {}}, 'strict': False,
+            'defer_loading': False}
+        changed = {**source, 'description': 'private description beta',
+            'parameters': {'type': 'object', 'properties': {'secret': {'type': 'string'}}},
+            'strict': True, 'defer_loading': True}
+        result = _tool_declaration_change_kinds([source], [changed])
+        self.assertEqual(result, {'classified': True,
+            'identity_added_count': 0, 'identity_removed_count': 0,
+            'description_changed_count': 1, 'parameters_changed_count': 1,
+            'strict_changed_count': 1, 'defer_loading_changed_count': 1,
+            'defer_loading_true_to_false_count': 0,
+            'defer_loading_false_to_true_count': 1, 'other_changed_count': 0,
+            'defer_loading_presence_only_count': 0,
+            'namespace_tools_changed_count': 0, 'custom_format_changed_count': 0,
+            'tool_search_execution_changed_count': 0,
+            'function_changed_count': 1, 'custom_changed_count': 0,
+            'namespace_changed_count': 0, 'tool_search_changed_count': 0,
+            'namespace_nested': {'bounded': True, 'identity_added_count': 0,
+                'identity_removed_count': 0, 'same_identity_changed_count': 0,
+                'order_only_count': 0, 'unclassifiable_count': 0},
+            'order_changed': False})
+        self.assertNotIn('private', json.dumps(result))
+        renamed = {**source, 'name': 'private_tool_beta'}
+        self.assertEqual(_tool_declaration_change_kinds([source], [renamed])['identity_added_count'], 1)
+        self.assertEqual(_tool_declaration_change_kinds([source], [renamed])['identity_removed_count'], 1)
+        second = {**source, 'name': 'private_tool_gamma'}
+        self.assertTrue(_tool_declaration_change_kinds([source, second], [second, source])['order_changed'])
+
+    def test_rejected_tool_diagnostic_recognizes_only_boolean_defer_loading_lift(self):
+        previous = [{**FUNCTION, 'name': 'private_' + str(index), 'defer_loading': True}
+            for index in range(6)]
+        continued = [{key: value for key, value in item.items() if key != 'defer_loading'}
+            for item in previous]
+        result = _tool_declaration_change_kinds(previous, continued)
+        self.assertEqual((result['defer_loading_changed_count'],
+            result['defer_loading_true_to_false_count'], result['other_changed_count']),
+            (6, 6, 0))
+        self.assertEqual((result['identity_added_count'], result['identity_removed_count']), (0, 0))
+        self.assertNotIn('private_', json.dumps(result))
+        explicit_false = {**previous[0], 'defer_loading': False}
+        self.assertEqual(_tool_declaration_change_kinds([previous[0]], [explicit_false])[
+            'defer_loading_true_to_false_count'], 1)
+        malformed = {**previous[0], 'defer_loading': 'false'}
+        bad = _tool_declaration_change_kinds([previous[0]], [malformed])
+        self.assertEqual((bad['defer_loading_changed_count'], bad['other_changed_count']), (0, 1))
+        presence_only = _tool_declaration_change_kinds(
+            [{**FUNCTION, 'defer_loading': False}], [FUNCTION])
+        self.assertEqual((presence_only['defer_loading_changed_count'],
+            presence_only['defer_loading_presence_only_count'],
+            presence_only['other_changed_count']), (0, 1, 0))
+
+    def test_rejected_tool_diagnostic_separates_known_remaining_fields_by_kind(self):
+        source = [
+            {'type': 'function', 'name': 'secret_function', 'parameters': {'type': 'object'}},
+            {'type': 'custom', 'name': 'secret_custom', 'format': {'type': 'text'}},
+            {'type': 'namespace', 'name': 'secret_namespace', 'tools': []},
+            {'type': 'tool_search', 'execution': 'client', 'parameters': {'type': 'object'}},
+        ]
+        changed = deepcopy(source)
+        changed[0]['unknown_private_field'] = 'private value'
+        changed[1]['format'] = {'type': 'grammar', 'secret': 'private value'}
+        changed[2]['tools'] = [FUNCTION]
+        changed[3]['execution'] = 'server'
+        result = _tool_declaration_change_kinds(source, changed)
+        self.assertEqual({key: result[key] for key in (
+            'function_changed_count', 'custom_changed_count', 'namespace_changed_count',
+            'tool_search_changed_count', 'namespace_tools_changed_count',
+            'custom_format_changed_count', 'tool_search_execution_changed_count',
+            'other_changed_count')}, {
+            'function_changed_count': 1, 'custom_changed_count': 1,
+            'namespace_changed_count': 1, 'tool_search_changed_count': 1,
+            'namespace_tools_changed_count': 1, 'custom_format_changed_count': 1,
+            'tool_search_execution_changed_count': 1, 'other_changed_count': 1})
+        for private in ('secret_', 'private value', 'unknown_private_field'):
+            self.assertNotIn(private, json.dumps(result))
+
+    def test_rejected_namespace_nested_diagnostic_aggregates_one_level_only(self):
+        def function(name, description='private original'):
+            return {**FUNCTION, 'name': name, 'description': description}
+        first = [
+            {'type': 'namespace', 'name': 'secret_changed', 'tools': [function('secret_a')]},
+            {'type': 'namespace', 'name': 'secret_added', 'tools': []},
+            {'type': 'namespace', 'name': 'secret_removed', 'tools': [function('secret_b')]},
+            {'type': 'namespace', 'name': 'secret_reordered',
+                'tools': [function('secret_c'), function('secret_d')]},
+            {'type': 'namespace', 'name': 'secret_duplicate', 'tools': [function('secret_e')]},
+            {'type': 'namespace', 'name': 'secret_malformed', 'tools': [function('secret_f')]},
+        ]
+        second = deepcopy(first)
+        second[0]['tools'][0]['description'] = 'private changed'
+        second[1]['tools'].append(function('secret_g'))
+        second[2]['tools'] = []
+        second[3]['tools'].reverse()
+        second[4]['tools'].append(function('secret_e'))
+        second[5]['tools'] = ['private invalid']
+        result = _tool_declaration_change_kinds(first, second)
+        self.assertEqual(result['namespace_tools_changed_count'], 6)
+        self.assertEqual(result['namespace_nested'], {
+            'bounded': True, 'identity_added_count': 1, 'identity_removed_count': 1,
+            'same_identity_changed_count': 1, 'order_only_count': 1,
+            'unclassifiable_count': 2, 'field_changes': {
+                'description': 1, 'parameters': 0, 'strict': 0, 'format': 0,
+                'defer_loading_true_to_false': 0, 'defer_loading_false_to_true': 0,
+                'defer_loading_presence_only': 0}})
+        for private in ('secret_', 'private changed', 'private invalid'):
+            self.assertNotIn(private, json.dumps(result))
+
+    def test_nested_declaration_fields_keep_schema_and_loading_changes_distinct(self):
+        original = [
+            {**FUNCTION, 'name': 'private_function', 'description': 'private text',
+                'strict': False, 'defer_loading': True},
+            {**FUNCTION, 'name': 'private_presence', 'defer_loading': False},
+            {'type': 'custom', 'name': 'private_custom', 'format': {'type': 'text'}},
+        ]
+        updated = deepcopy(original)
+        updated[0].update(description='other private text', strict=True, defer_loading=False,
+            parameters={'type': 'object', 'properties': {'private_arg': {'type': 'string'}}})
+        updated[1].pop('defer_loading')
+        updated[2].update(format={'type': 'grammar', 'definition': 'private grammar'},
+            defer_loading=True)
+        before = [{'type': 'namespace', 'name': 'private_namespace', 'tools': original}]
+        after = [{'type': 'namespace', 'name': 'private_namespace', 'tools': updated}]
+        saved = deepcopy((before, after))
+        result = _tool_declaration_change_kinds(before, after)
+        self.assertEqual(result['namespace_nested']['field_changes'], {
+            'description': 1, 'parameters': 1, 'strict': 1, 'format': 1,
+            'defer_loading_true_to_false': 1, 'defer_loading_false_to_true': 1,
+            'defer_loading_presence_only': 1})
+        self.assertEqual((before, after), saved)
+        self.assertNotIn('private', json.dumps(result))
+
+    def test_rejected_namespace_nested_diagnostic_caps_aggregate_size(self):
+        many = [{**FUNCTION, 'name': 'private_' + str(index)} for index in range(1025)]
+        old = [{'type': 'namespace', 'name': 'secret_namespace', 'tools': many}]
+        new = [{'type': 'namespace', 'name': 'secret_namespace', 'tools': []}]
+        self.assertEqual(_tool_declaration_change_kinds(old, new)['namespace_nested'], {
+            'bounded': False, 'identity_added_count': 0, 'identity_removed_count': 0,
+            'same_identity_changed_count': 0, 'order_only_count': 0,
+            'unclassifiable_count': 1})
+
+    def test_rejected_tool_field_diagnostic_does_not_guess_ambiguous_identity(self):
+        source = {'type': 'function', 'name': 'private_tool_alpha'}
+        for before, after in (([source, source], [source]), ([source], [source, source]),
+                ([source], ['private invalid']), ([source] * 1025, [])):
+            with self.subTest(before=len(before), after=len(after)):
+                self.assertEqual(_tool_declaration_change_kinds(before, after), {'classified': False})
+
     async def test_continuation_controls_cannot_change_after_browser_begin(self):
         changes = [
             {'tool_choice': 'none'}, {'tool_choice': 'required'},
             {'reasoning': None}, {'parallel_tool_calls': True},
             {'instructions': None}, {'text': {'format': {'type': 'json_object'}}},
             {'tools': [{**FUNCTION, 'strict': True}]},
+            {'tools': [{**FUNCTION, 'description': 'changed after non-indexed begin'}]},
             {'metadata': {'fixture': 1}},
             {'client_metadata': {'x-codex-turn-metadata': '{"turn_id":"changed"}'}},
         ]
@@ -1267,7 +1600,32 @@ class WebMcpTurnTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn('binding_changes', observation)
                     self.assertEqual(observation['binding_changes']['route'], False)
                     self.assertTrue(observation['binding_changes']['controls']['fields'])
+                    if 'tools' in change:
+                        self.assertEqual(observation['binding_changes']['controls']['tool_declarations'], {
+                            'bounded': True, 'before_count': 1, 'after_count': 1,
+                            'added_count': 1, 'removed_count': 1, 'change_kinds': {
+                                'classified': True, 'identity_added_count': 0,
+                                'identity_removed_count': 0,
+                                'description_changed_count': int(change['tools'][0]['description'] != FUNCTION['description']),
+                                'parameters_changed_count': 0,
+                                'strict_changed_count': int('strict' in change['tools'][0]),
+                                'defer_loading_changed_count': 0,
+                                'defer_loading_true_to_false_count': 0,
+                                'defer_loading_false_to_true_count': 0,
+                                'defer_loading_presence_only_count': 0,
+                                'namespace_tools_changed_count': 0,
+                                'custom_format_changed_count': 0,
+                                'tool_search_execution_changed_count': 0,
+                                'function_changed_count': 1, 'custom_changed_count': 0,
+                                'namespace_changed_count': 0, 'tool_search_changed_count': 0,
+                                'namespace_nested': {'bounded': True, 'identity_added_count': 0,
+                                    'identity_removed_count': 0, 'same_identity_changed_count': 0,
+                                    'order_only_count': 0, 'unclassifiable_count': 0},
+                                'other_changed_count': 0, 'order_changed': False}})
+                    else:
+                        self.assertNotIn('tool_declarations', observation['binding_changes']['controls'])
                     self.assertNotIn('exact result', json.dumps(observation))
+                    self.assertNotIn('Synthetic read', json.dumps(observation))
                     observation['binding_changes']['controls']['fields'].append('mutated')
                     self.assertNotIn('mutated', turn.binding_changes['controls']['fields'])
                     with self.assertRaises(asyncio.CancelledError):

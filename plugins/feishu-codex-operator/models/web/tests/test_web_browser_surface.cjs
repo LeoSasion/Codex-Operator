@@ -23,7 +23,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { BrowserSurface, surfaceBounds, validateAssistancePacket, assistanceReady,
-  recoverableBeforeDispatch, navigationAllowed, isEmptyTemporaryChatUrl } = require(operatorTestScript("web_browser_surface.cjs"));
+  recoverableBeforeDispatch, navigationAllowed, isPublicLoginUrl,
+  isEmptyTemporaryChatUrl } = require(operatorTestScript("web_browser_surface.cjs"));
 
 class Contents extends EventEmitter {
   constructor() {
@@ -74,7 +75,7 @@ function makeSurface(extra = {}) {
     browserSession: { identity: "fixture-partition" }, ...extra });
 }
 const ready = { pageKind: "chatgpt", composer: true, modelButtonCount: 1,
-  loginVisible: false, userCount: 0, assistantCount: 0 };
+  loginVisible: false, userCount: 0, assistantCount: 0, modernRowCount: 0 };
 
 test("hidden shell owns a distinct persistent-session view without showing or focusing", () => {
   const surface = makeSurface();
@@ -98,6 +99,15 @@ test("zero-sized hidden shell retains at least an 800 by 600 renderer viewport",
   const emulation = surface.webContents.calls.filter(([kind]) => kind === "enable").at(-1)[1];
   assert.deepEqual(emulation.viewSize, { width: 800, height: 600 });
   assert.equal(emulation.screenPosition, "desktop");
+  assert.equal(surface.window.visible, false);
+});
+
+test("stalled navigation fails within its deadline without marking the renderer ready", async () => {
+  const surface = makeSurface();
+  surface.webContents.loadURL = () => new Promise(() => {});
+  await assert.rejects(surface.loadURL("https://chatgpt.com/?temporary-chat=true", 20),
+    /web_navigation_timeout_no_retry/);
+  assert.equal(surface.rendererReady, false);
   assert.equal(surface.window.visible, false);
 });
 
@@ -219,7 +229,8 @@ test("assistance accepts a fresh exact id packet and rejects payloads or replays
 test("assistance readiness never accepts a login, challenge, prior turn or ambiguous composer", () => {
   assert.equal(assistanceReady(ready), true);
   for (const changes of [{ pageKind: "challenge" }, { composer: false }, { loginVisible: true },
-    { modelButtonCount: 2 }, { userCount: 1 }, { assistantCount: 1 }, { loginVisible: undefined }])
+    { modelButtonCount: 2 }, { userCount: 1 }, { assistantCount: 1 },
+    { modernRowCount: 1 }, { modernRowCount: undefined }, { loginVisible: undefined }])
     assert.equal(assistanceReady({ ...ready, ...changes }), false);
   for (const value of ["https://chatgpt.com/", "https://chatgpt.com/c/abc?temporary-chat=true",
     "https://auth.openai.com/?temporary-chat=true", "https://chatgpt.com/?temporary-chat=true#x",
@@ -228,13 +239,25 @@ test("assistance readiness never accepts a login, challenge, prior turn or ambig
   assert.equal(isEmptyTemporaryChatUrl("https://chatgpt.com/?temporary-chat=true"), true);
 });
 
-test("only explicit assistance admits the narrow login origin, never an arbitrary IdP", () => {
+test("only explicit assistance admits the visible sign-in providers, never an arbitrary IdP", () => {
   assert.equal(navigationAllowed("https://chatgpt.com/", false), true);
-  assert.equal(navigationAllowed("https://auth.openai.com/login", false), false);
-  assert.equal(navigationAllowed("https://auth.openai.com/login", true), true);
-  for (const value of ["https://accounts.google.com/", "https://auth.openai.com.evil/",
+  for (const value of ["https://auth.openai.com/login", "https://accounts.google.com/o/oauth2/v2/auth",
+    "https://appleid.apple.com/auth/authorize"]) {
+    assert.equal(navigationAllowed(value, false), false);
+    assert.equal(navigationAllowed(value, true), true);
+    assert.equal(isPublicLoginUrl(value), true);
+  }
+  assert.equal(isPublicLoginUrl("https://chatgpt.com/auth/login?next=%2F%3Ftemporary-chat%3Dtrue"), true);
+  assert.equal(isPublicLoginUrl("https://chatgpt.com/auth/unknown"), false);
+  assert.equal(navigationAllowed("https://login.microsoftonline.com/common/oauth2/authorize", true), false);
+  assert.equal(navigationAllowed("https://login.microsoftonline.com/common/oauth2/authorize", true, true), true);
+  assert.equal(navigationAllowed("https://login.microsoftonline.com/common/oauth2/authorize", false, true), false);
+  for (const value of ["https://login.microsoftonline.com/", "https://auth.openai.com.evil/",
     "http://auth.openai.com/", "https://user@auth.openai.com/", "file:///C:/private"])
     assert.equal(navigationAllowed(value, true), false);
+  for (const value of ["http://login.microsoftonline.com/", "https://user@login.microsoftonline.com/",
+    "file:///C:/private", "javascript:alert(1)"])
+    assert.equal(navigationAllowed(value, true, true), false);
 });
 
 test("only pre-dispatch login and challenge failures can preserve the worker for assistance", () => {
@@ -255,7 +278,7 @@ function hostHarness(configOverride = {}) {
   let elapsedMs = 0;
   class FixtureDate extends Date { static now() { return Date.now() + elapsedMs; } }
   const fixture = { state: { ...ready }, draft: "", operations: [], publicFinal: null,
-    redirectOnce: null }, signals = new Map();
+    redirectOnce: null, landingUrl: null }, signals = new Map();
   const root = path.resolve(process.env.TEMP || ".", "surface-host-fixture");
   const configPath = path.join(root, "config.json");
   const config = { version: 1, mode: "worker", profileDirectory: path.join(root, "profile"),
@@ -291,14 +314,19 @@ function hostHarness(configOverride = {}) {
         this.emit("will-redirect", { preventDefault() { prevented = true; } }, destination, false, true);
         if (prevented) throw new Error("fixture navigation rejected");
       }
-      return super.loadURL(url);
+      const result = await super.loadURL(url);
+      if (fixture.landingUrl) this.url = fixture.landingUrl;
+      return result;
     }
     async executeJavaScript(source) {
       if (source.includes("function controls(")) return { ok: true, value: { ...fixture.state } };
       if (source.includes("function startupControlStructure(")) return { ok: true, value: fixture.structure };
       if (source.includes("function composerPrefix(")) return { ok: true, value: fixture.draft };
-      if (source.includes("function publicUserBindingShape("))
-        return { ok: true, value: { exact: fixture.bindingExact !== false } };
+      if (source.includes("function publicUserBindingShape(")) {
+        const args = JSON.parse(source.match(/\)\(\.\.\.(\[[^\n]*\])\) \}; \}/)[1]);
+        return { ok: true, value: { exact: fixture.bindingExact !== false
+          && (fixture.expectedPrompt === undefined || args[0] === fixture.expectedPrompt) } };
+      }
       if (source.includes("function cancelGeneration(")) {
         fixture.operations.push("cancelGeneration");
         if (fixture.stopAvailable === false) return { ok: true, value: false };
@@ -323,6 +351,9 @@ function hostHarness(configOverride = {}) {
         fixture.state = { ...ready }; this.url = "https://chatgpt.com/";
         return { ok: true };
       }
+      if (source.includes("function emptyFreshChat("))
+        return { ok: true, value: fixture.state.composer === true
+          && fixture.state.userCount === 0 && fixture.state.assistantCount === 0 };
       if (source.includes("function enableTemporaryChat(")) {
         fixture.operations.push("enableTemporaryChat"); this.url = "https://chatgpt.com/?temporary-chat=true";
         return { ok: true };
@@ -385,6 +416,17 @@ test("a prepared page is rechecked at consumption and cannot hide a later draft"
   } finally { h.cleanup(); }
 });
 
+test("a prepared temporary URL cannot admit retained modern conversation rows", async () => {
+  const h = hostHarness({ startupPrepare: true });
+  try {
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_prepared'));
+    h.fixture.state.modernRowCount = 2;
+    await assert.rejects(h.invoke('loadFreshPage()'), /web_prepared_page_changed/);
+    assert.equal(h.outputs.some(x => x.kind === 'dispatch_started'), false);
+    assert.equal(h.context.__host.surface.webContents.calls.filter(([kind]) => kind === 'load').length, 1);
+  } finally { h.cleanup(); }
+});
+
 test("an idle challenge may clear during hidden preparation without a popup", async () => {
   const h = hostHarness({ startupPrepare: true });
   h.fixture.state = { ...ready, pageKind: 'challenge', composer: false };
@@ -405,7 +447,7 @@ test("persistent challenge and login redirect request assistance without consumi
     else h.fixture.redirectOnce = 'https://auth.openai.com/login';
     try {
       await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
-      if (variant === 'challenge') h.advanceTime(65001);
+      h.advanceTime(65001);
       await observed(h, () => h.outputs.some(x => x.kind === 'worker_attention_required'));
       const attention = h.outputs.find(x => x.kind === 'worker_attention_required');
       assert.equal(attention.reason, variant === 'challenge'
@@ -416,6 +458,55 @@ test("persistent challenge and login redirect request assistance without consumi
       assert.equal(h.outputs.some(x => x.requestId || x.kind === 'dispatch_started'), false);
     } finally { h.cleanup(); }
   }
+});
+
+test("an observed ChatGPT login route requests assistance even without a login-labelled button", async () => {
+  const h = hostHarness({ startupPrepare: true });
+  h.fixture.state = { ...ready, pageKind: "other", composer: false, loginVisible: false };
+  h.fixture.landingUrl = "https://chatgpt.com/auth/login?next=%2F%3Ftemporary-chat%3Dtrue";
+  try {
+    await observed(h, () => h.outputs.some(x => x.kind === "worker_ready"));
+    h.advanceTime(65001);
+    await observed(h, () => h.outputs.some(x => x.kind === "worker_attention_required"));
+    assert.equal(h.outputs.find(x => x.kind === "worker_attention_required").reason,
+      "web_browser_login_required_before_dispatch");
+    assert.equal(h.outputs.some(x => x.kind === "failed" || x.kind === "dispatch_started"), false);
+  } finally { h.cleanup(); }
+});
+
+test("visible assistance permits an HTTPS identity provider and displays its host", async () => {
+  const h = hostHarness({ startupPrepare: true });
+  h.fixture.state = { ...ready, pageKind: "challenge", composer: false };
+  try {
+    await observed(h, () => h.outputs.some(x => x.kind === "worker_ready"));
+    h.advanceTime(65001);
+    await observed(h, () => h.outputs.some(x => x.kind === "worker_attention_required"));
+    h.put("assist.json", { id: "e".repeat(32) });
+    await observed(h, () => h.outputs.some(x => x.kind === "assistance_opened"));
+    assert.equal(h.context.__host.surface.window.isVisible(), true);
+    h.fixture.redirectOnce = "https://login.example.com/authorize";
+    await h.context.__host.surface.webContents.loadURL("https://chatgpt.com/?temporary-chat=true");
+    h.context.__host.surface.webContents.url = "https://login.example.com/authorize";
+    h.context.__host.surface.webContents.emit("did-navigate");
+    assert.equal(h.context.__host.surface.window.title, "Operator 登录辅助窗口 · login.example.com");
+    assert.equal(h.outputs.some(x => x.kind === "assistance_failed" || x.kind === "dispatch_started"), false);
+  } finally { h.cleanup(); }
+});
+
+test("a rejected startup login redirect does not require assistance after the saved page becomes ready", async () => {
+  const h = hostHarness({ startupPrepare: true });
+  h.fixture.redirectOnce = 'https://auth.openai.com/login';
+  try {
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
+    setTimeout(() => {
+      h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
+    }, 80);
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_prepared'));
+    assert.equal(h.outputs.some(x => x.kind === 'startup_login_redirect_cleared'), true);
+    assert.equal(h.outputs.some(x => x.kind === 'worker_attention_required'), false);
+    assert.equal(h.context.__host.surface.window.isVisible(), false);
+    assert.equal(h.outputs.some(x => x.requestId || x.kind === 'dispatch_started'), false);
+  } finally { h.cleanup(); }
 });
 
 test("hidden preparation timeout reports only fixed readiness gates before failing", async () => {
@@ -493,7 +584,7 @@ test("bound cancellation retains one hidden worker only after stop and stable pa
     h.fixture.stopPresent = true;
     h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
     h.invoke(`runCurrentPage = async function () {
-      stage = 'wait_public_final'; sent = true; record('dispatch_started');
+      stage = 'wait_public_final'; sent = true; dispatchedPublicPrompt = config.text; record('dispatch_started');
       if (config.text === 'next independent input') return finish(0, {model: config.model,
         effortIndex: 2, publicMessage: {content: {parts: ['next answer']}}});
       await waitFor(() => false, 5000);
@@ -529,7 +620,7 @@ test("cancellation cannot reuse mismatched, busy, draft, permission or unconfirm
       h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
       h.context.__host.surface.window.visible = change.visible === true;
       h.invoke(`runCurrentPage = async function () {
-        stage = 'wait_public_final'; sent = true; record('dispatch_started');
+        stage = 'wait_public_final'; sent = true; dispatchedPublicPrompt = config.text; record('dispatch_started');
         await waitFor(() => false, 5000);
       }`);
       h.put('next.json', {id: 'a'.repeat(32), text: 'one input'});
@@ -547,6 +638,75 @@ test("cancellation cannot reuse mismatched, busy, draft, permission or unconfirm
   }
 });
 
+test("current app-pill cancellation binds its dispatched public prompt and modern idle page", async () => {
+  const mention = { name: 'Operator', id: 'plugin:asdk_app_' + 'a'.repeat(32) };
+  const h = hostHarness();
+  try {
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
+    h.fixture.state.userCount = h.fixture.state.assistantCount = 0;
+    h.fixture.state.modernRowCount = 2;
+    h.fixture.stopPresent = true;
+    h.fixture.expectedPrompt = '[$operator](app://asdk_app_' + 'a'.repeat(32) + ')\u00a0new cancellation input';
+    h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
+    h.invoke(`runCurrentPage = async function () {
+      dispatchedPublicPrompt = ${JSON.stringify(h.fixture.expectedPrompt)};
+      stage = 'wait_public_final'; sent = true; record('dispatch_started');
+      await waitFor(() => false, 5000);
+    }`);
+    h.put('next.json', { id: 'd'.repeat(32), text: 'new cancellation input',
+      connectorMention: mention, autoSelectConnector: true });
+    await observed(h, () => h.outputs.some(x => x.kind === 'dispatch_started'));
+    h.put('cancel.json', { id: 'd'.repeat(32), reuse_when_idle: true });
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_idle' && x.requestId));
+    assert.equal(h.outputs.find(x => x.kind === 'worker_idle' && x.requestId).cancelledIdleVerified, true);
+    assert.deepEqual(h.fixture.operations.filter(x => x === 'cancelGeneration'), ['cancelGeneration']);
+    assert.equal(h.outputs.some(x => Object.hasOwn(x, 'exitCode')), false);
+    assert.equal(h.outputs.filter(x => x.kind === 'failed').length, 1);
+  } finally { h.cleanup(); }
+});
+
+test("dispatch binds one exact app separator projection without reinserting or resending the body", async () => {
+  for (const variant of ['nbsp', 'space', 'changed', 'false-classification']) {
+    const h = hostHarness();
+    try {
+      await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
+      h.invoke(`globalThis.fixtureSends = 0; globalThis.fixtureText = [];
+        globalThis.fixtureFinalPrompt = null;
+        loadFreshPage = async function () {};
+        selectModel = async function () { verifiedSelection = { model: config.model, effortIndex: 2 }; };
+        insertText = async function (text) { fixtureText.push(text); };
+        inPage = async function (fn, ...args) {
+          const head = '[$operator](app://asdk_app_' + 'a'.repeat(32) + ')';
+          if (fn.name === 'controls') return {composer:true, modelButtonCount:1,
+            userCount:0, assistantCount:0, modernRowCount:0, sendReady:true};
+          if (fn.name === 'connectorAccessState') return 'enabled';
+          if (fn.name === 'selectedConnector') return {id:config.connectorMention.id, publicPrefix:head+'\\u00a0'};
+          if (fn.name === 'composerPrefix') return 'Operator ';
+          if (fn.name === 'sendOnce') { fixtureSends++; return; }
+          if (fn.name === 'publicUserBindingShape') {
+            const expected = head + (${JSON.stringify(variant)} === 'nbsp' ? '\\u00a0' : ' ') + config.text;
+            return {exact: !['changed','false-classification'].includes(${JSON.stringify(variant)}) && args[0] === expected,
+              appSeparatorOnly: ['space','false-classification'].includes(${JSON.stringify(variant)})};
+          }
+          return true;
+        };
+        waitForPublicFinal = async function (prompt) {
+          fixtureFinalPrompt=prompt; return { id:'fixture', content:{parts:['answer']} };
+        };`);
+      h.put('next.json', { id: 'e'.repeat(32), text: ' exact\nbody ',
+        connectorMention: {name:'Operator',id:'plugin:asdk_app_'+'a'.repeat(32)}, autoSelectConnector:true });
+      await observed(h, () => h.outputs.some(x => x.kind === 'worker_idle' && x.requestId));
+      assert.equal(h.invoke('fixtureSends'), 1);
+      assert.deepEqual([...h.invoke('fixtureText')].slice(-1), ['  exact\nbody ']);
+      const passed = ['nbsp', 'space'].includes(variant);
+      assert.equal(h.outputs.some(x => x.kind === 'completed' && x.requestId), passed);
+      assert.equal(h.invoke('fixtureFinalPrompt !== null'), passed);
+      if (passed) assert.equal(h.invoke('dispatchedPublicPrompt'), h.invoke('fixtureFinalPrompt'));
+      else assert.equal(h.outputs.find(x => x.kind === 'failed').error, 'web_user_turn_mismatch');
+    } finally { h.cleanup(); }
+  }
+});
+
 test("a racing answer cannot complete a turn already owned by cancellation", async () => {
   const h = hostHarness();
   try {
@@ -554,7 +714,7 @@ test("a racing answer cannot complete a turn already owned by cancellation", asy
     h.fixture.state.userCount = 1;
     h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
     h.invoke(`runCurrentPage = async function () {
-      stage = 'wait_public_final'; sent = true; record('dispatch_started');
+      stage = 'wait_public_final'; sent = true; dispatchedPublicPrompt = config.text; record('dispatch_started');
       await waitFor(() => cancelling, 5000);
       completedPage = {prompt: config.text, message: {text: 'racing answer'}};
       finish(0, {model: config.model, effortIndex: 2, publicMessage: {text: 'racing answer'}});
@@ -930,6 +1090,7 @@ test("plugin return rejects edits, other routes and changed landing pages withou
 test("home-page assistance never activates temporary mode over a draft or conversation", async () => {
   for (const mutation of [h => { h.fixture.draft = "owner draft"; },
     h => { h.fixture.state.userCount = 1; }, h => { h.fixture.state.assistantCount = 1; },
+    h => { h.fixture.state.modernRowCount = 1; },
     h => { h.fixture.state.loginVisible = true; }]) {
     const h = hostHarness();
     try {
@@ -990,7 +1151,7 @@ test("a rejected pre-dispatch public login redirect can load only the constant p
 
 test("nonpublic login redirects remain terminal and cannot request assistance recovery", async () => {
   for (const url of ["https://auth.openai.com.evil/login", "https://user@auth.openai.com/login",
-    "https://accounts.google.com/", "http://auth.openai.com/login"]) {
+    "https://login.microsoftonline.com/", "http://auth.openai.com/login"]) {
     const h = hostHarness();
     try {
       await observed(h, () => h.outputs.some(e => e.kind === "worker_ready"));

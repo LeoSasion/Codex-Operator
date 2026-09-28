@@ -155,7 +155,7 @@ try {
     if ($reuseSavedSettings -and $resultCode -eq 0) {
         $entryReason = 'web_entry_reuse_unverified'
         if ($result.configuration_current -isnot [bool] -or -not $result.configuration_current -or
-            $result.status -cnotin @('ready','assistance','starting','connection','reconnecting','draining','configured','stopped')) {
+            $result.status -cnotin @('ready','assistance','starting','preparing','connection','reconnecting','draining','configured','stopped')) {
             throw 'Saved configuration reuse unverified.'
         }
         $result = [ordered]@{status='configured'; reused=$true; configuration_current=$true;

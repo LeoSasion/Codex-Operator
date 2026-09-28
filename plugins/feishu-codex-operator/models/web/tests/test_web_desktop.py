@@ -158,6 +158,50 @@ class WebDesktopTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'rebind_uncertain'):
             desktop.rebind(self.profile, self.home)
 
+    def test_native_appended_tables_inside_markers_survive_rebind_and_disconnect(self):
+        self.prepare(); desktop.connect(self.profile, self.home)
+        old_folder, old_plan, old_files, _ = desktop.load_trial(self.profile, self.home)
+        inserted = b'\n# native-owned addition\n[hooks]\nconfigured = true\n'
+        later = b'\r\n[projects."C:/unrelated"]\r\ntrust_level="trusted"\r\n'
+        changed = self.target.read_bytes().replace(desktop.END, inserted + desktop.END) + later
+        self.target.write_bytes(changed)
+        self.assertEqual(desktop.status(self.profile, self.home)['status'], 'connected')
+        self.assertTrue(desktop.connect(self.profile, self.home)['reused'])
+        self.assertEqual(self.target.read_bytes(), changed)
+        self.binding = {'profile_sha256': self.binding['profile_sha256'], 'session_sha256': 'b' * 64}
+        self.route = replace(self.route, api_base='http://127.0.0.1:54322/v1',
+            web_binding=WebServiceBinding(**self.binding, token='new-private-local-token'))
+        self.assertEqual(desktop.status(self.profile, self.home)['status'], 'stale')
+        self.assertEqual(desktop.rebind(self.profile, self.home)['provider'], old_plan['provider'])
+        folder, _, files, _ = desktop.load_trial(self.profile, self.home)
+        self.assertEqual((folder / 'before-rebind.toml').read_bytes(), changed)
+        self.assertEqual((old_folder / 'addition.toml').read_bytes(), old_files['addition.toml'])
+        expected = self.original + files['addition.toml'].replace(desktop.END, inserted + desktop.END) + later
+        self.assertEqual(self.target.read_bytes(), expected)
+        self.assertEqual(desktop.status(self.profile, self.home)['status'], 'connected')
+        desktop.disconnect(self.profile, self.home)
+        self.assertEqual(self.target.read_bytes(), self.original + inserted + later)
+
+    def test_additions_to_owned_provider_or_marker_conflicts_remain_rejected(self):
+        self.prepare(); desktop.connect(self.profile, self.home)
+        registered = self.target.read_bytes()
+        _, plan, _, _ = desktop.load_trial(self.profile, self.home)
+        additions = (
+            b'unknown_provider_setting = true\n',
+            ('[model_providers.' + plan['provider'] + '.extra]\nvalue = true\n').encode(),
+            desktop.BEGIN,
+            desktop.END,
+        )
+        for addition in additions:
+            with self.subTest(addition=addition):
+                changed = registered.replace(desktop.END, addition + desktop.END)
+                self.target.write_bytes(changed)
+                for action in (desktop.rebind, desktop.disconnect):
+                    with self.assertRaises(ValueError):
+                        action(self.profile, self.home)
+                    self.assertEqual(self.target.read_bytes(), changed)
+                self.assertFalse((self.profile / 'desktop/rebind.json').exists())
+
     def test_changed_snapshot_stops_connect_without_overwriting_user_bytes(self):
         self.prepare()
         changed = self.original + b'\n# concurrent owner edit\n'

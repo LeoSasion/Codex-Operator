@@ -6,6 +6,7 @@ supplying public messages or completed structured calls. Page text can never
 declare or invoke a tool here.
 """
 
+from collections import Counter
 from copy import deepcopy
 import hashlib
 import json
@@ -36,13 +37,53 @@ PUBLIC_CITATION_ERRORS = frozenset({
 PUBLIC_CITATION_ID = r'[A-Za-z0-9_-]{1,128}'
 
 
+def _public_links(values):
+    if not isinstance(values, list) or not 1 <= len(values) <= 64:
+        raise RouterError('web_public_citation_sources_invalid')
+    result = []
+    for value in values:
+        if not isinstance(value, dict) or set(value) != {'title', 'url'}:
+            raise RouterError('web_public_citation_source_invalid')
+        title = bounded_string(value['title'], maximum=8192)
+        url = bounded_string(value['url'], maximum=8192)
+        if not title or any(ord(c) < 32 for c in title):
+            raise RouterError('web_public_citation_title_invalid')
+        try:
+            parsed = urlsplit(url)
+            valid = (parsed.scheme in ('http', 'https') and parsed.hostname
+                and parsed.username is None and parsed.password is None
+                and not any(c.isspace() or ord(c) < 32 or c in '<>\\"' for c in url))
+            parsed.port
+        except ValueError:
+            valid = False
+        if not valid:
+            raise RouterError('web_public_citation_url_invalid')
+        label = re.sub(r'([\\`*_{}\[\]()<>!#|~])', r'\\\1', title)
+        result.append((title, url, '[' + label + '](<' + url + '>)'))
+    return result
+
+
+def _citation_url_variants(url):
+    """Only ChatGPT's observed attribution suffix may differ from a source URL."""
+    variants = {url}
+    head, sep, fragment = url.partition('#')
+    base, query_sep, query = head.partition('?')
+    attribution = 'utm_source=chatgpt.com'
+    if query_sep and query == attribution:
+        variants.add(base + sep + fragment)
+    elif query_sep and query.endswith('&' + attribution):
+        variants.add(head[:-len('&' + attribution)] + sep + fragment)
+    return variants
+
+
 def render_public_citations(parts, references):
     """Render the dated Web citation spans, without changing any other text.
 
     2026-09-16's emoji probe establishes Unicode-scalar offsets. The observed
-    sources_footnote is a virtual trailing space outside the original text; it
-    supplies no invented character or search event. The 2026-09-19 probe also
-    observes zero-width trailing footnotes and labelled url/item references.
+    sources_footnote is virtual metadata and supplies no invented character or
+    search event. The 2026-09-19 probe observed zero-width trailing footnotes;
+    a 2026-09-26 public page also placed one at a zero-width position inside
+    the answer. Labelled url/item references remain separate.
     Footnotes cover grouped citations, not the separately labelled links.
     Original parts/references
     remain untouched in the caller's bound public message.
@@ -52,30 +93,7 @@ def render_public_citations(parts, references):
     total = sum(len(part) for part in parts)
     grouped, footnotes, cited = [], [], set()
 
-    def links(values):
-        if not isinstance(values, list) or not 1 <= len(values) <= 64:
-            raise RouterError('web_public_citation_sources_invalid')
-        result = []
-        for value in values:
-            if not isinstance(value, dict) or set(value) != {'title', 'url'}:
-                raise RouterError('web_public_citation_source_invalid')
-            title = bounded_string(value['title'], maximum=8192)
-            url = bounded_string(value['url'], maximum=8192)
-            if not title or any(ord(c) < 32 for c in title):
-                raise RouterError('web_public_citation_title_invalid')
-            try:
-                parsed = urlsplit(url)
-                valid = (parsed.scheme in ('http', 'https') and parsed.hostname
-                    and parsed.username is None and parsed.password is None
-                    and not any(c.isspace() or ord(c) < 32 or c in '<>\\"' for c in url))
-                parsed.port
-            except ValueError:
-                valid = False
-            if not valid:
-                raise RouterError('web_public_citation_url_invalid')
-            label = re.sub(r'([\\`*_{}\[\]()<>!#|~])', r'\\\1', title)
-            result.append((title, url, '[' + label + '](<' + url + '>)'))
-        return result
+    links = _public_links
 
     for reference in references:
         if not isinstance(reference, dict):
@@ -94,7 +112,9 @@ def render_public_citations(parts, references):
             raise RouterError('web_public_citation_position_invalid')
         matched = bounded_string(reference['matched_text'], maximum=8192)
         if kind == 'sources_footnote':
-            if start != total or end not in (total, total + 1) or matched != ' ' or footnotes:
+            if (start > total or end not in (start, start + 1) or matched != ' ' or footnotes
+                    or end == start + 1 and start < total
+                    and ''.join(parts)[start:end] != matched):
                 raise RouterError('web_public_sources_footnote_invalid')
             footnotes.append(links(reference['sources']))
             continue
@@ -110,14 +130,7 @@ def render_public_citations(parts, references):
             # public page may append one observed ChatGPT attribution suffix
             # to that source link; only that exact suffix may differ.
             source = links([reference['item']])[0]
-            source_urls = {source[1]}
-            head, fragment_separator, fragment = source[1].partition('#')
-            base, query_separator, query = head.partition('?')
-            attribution = 'utm_source=chatgpt.com'
-            if query_separator and query == attribution:
-                source_urls.add(base + fragment_separator + fragment)
-            elif query_separator and query.endswith('&' + attribution):
-                source_urls.add(head[:-len('&' + attribution)] + fragment_separator + fragment)
+            source_urls = _citation_url_variants(source[1])
             if not re.fullmatch(PUBLIC_CITATION_ID, marker[2]) and marker[2] not in source_urls:
                 raise RouterError('web_public_citation_marker_invalid')
             values = links([{'title': reference['title'], 'url': source[1]}])
@@ -157,6 +170,137 @@ def render_public_citations(parts, references):
     return rendered
 
 
+def _modern_public_links(body):
+    """Read bounded Markdown destinations without rewriting their source bytes."""
+    pattern = re.compile(r'\[(?:\\.|[^\]\\\r\n]){1,2048}\]'
+        r'\((?:<(?P<angle>https?://[^<>\r\n]{1,8192})>\)|(?P<plain>https?://))')
+    consumed = 0
+    for match in pattern.finditer(body):
+        if match.start() < consumed:
+            continue
+        url = match.group('angle')
+        end = match.end()
+        if url is None:
+            start = end = match.start('plain')
+            depth = 0
+            # An unescaped closing parenthesis at depth zero ends the link.
+            # Scan at most 8192 characters; _public_links also retains the
+            # 8192-byte gate. Never recurse or accept an oversized URL prefix.
+            while end < len(body) and end - start <= 8192:
+                char = body[end]
+                if char == ')' and depth == 0:
+                    break
+                if char.isspace() or ord(char) < 32 or char in '<>\\"':
+                    raise RouterError('web_public_citation_unmapped')
+                if char == '(':
+                    depth += 1
+                elif char == ')':
+                    depth -= 1
+                end += 1
+            else:
+                raise RouterError('web_public_citation_unmapped')
+            url = body[start:end]
+            end += 1
+        consumed = end
+        yield end, url
+
+
+def render_modern_public_citations(parts, references):
+    """Accept only already-rendered links bound to the current public sources.
+
+    The newer page's content string contains Markdown links while its reference
+    offsets still describe an earlier marker-bearing representation. Never
+    apply those offsets to the rendered string. A bare display marker cannot
+    identify a source; only an adjacent validated link may retain its citation.
+    """
+    if (len(parts) != 1 or not isinstance(references, list) or len(references) > 128):
+        raise RouterError('web_public_citations_invalid')
+    body = parts[0]
+    if '\ue200cite\ue202' in body or '\ue200url\ue202' in body:
+        raise RouterError('web_public_citation_unmapped')
+    if not references:
+        if ':chatgpt-content-reference' in body:
+            raise RouterError('web_public_citation_marker_invalid')
+        return parts
+    sources_by_index, grouped_sources = [], set()
+    footnote_sources = []
+    for reference in references:
+        if not isinstance(reference, dict):
+            raise RouterError('web_public_citations_invalid')
+        kind = reference.get('type')
+        expected = {'type', 'matched_text', 'start_idx', 'end_idx'} | {
+            'grouped_webpages': {'items'}, 'sources_footnote': {'sources'},
+            'url': {'title', 'item'},
+        }.get(kind, set())
+        if kind not in ('grouped_webpages', 'sources_footnote', 'url') or set(reference) != expected:
+            raise RouterError('web_public_citation_type_unsupported')
+        start, end = reference['start_idx'], reference['end_idx']
+        if type(start) is not int or type(end) is not int or not 0 <= start <= end <= 1024 * 1024 + 1:
+            raise RouterError('web_public_citation_position_invalid')
+        matched = bounded_string(reference['matched_text'], maximum=8192)
+        if kind == 'sources_footnote':
+            if matched != ' ' or end not in (start, start + 1) or footnote_sources:
+                raise RouterError('web_public_sources_footnote_invalid')
+            footnote_sources = _public_links(reference['sources'])
+            sources_by_index.append({url for _, url, _ in footnote_sources})
+        elif kind == 'grouped_webpages':
+            if not re.fullmatch(r'\ue200cite\ue202' + PUBLIC_CITATION_ID
+                    + r'(?:\ue202' + PUBLIC_CITATION_ID + r')*\ue201', matched):
+                raise RouterError('web_public_citation_marker_invalid')
+            values = _public_links(reference['items'])
+            grouped_sources.update((title, url) for title, url, _ in values)
+            sources_by_index.append({url for _, url, _ in values})
+        else:
+            marker = re.fullmatch(r'\ue200url\ue202([^\ue200\ue201\ue202]+)\ue202'
+                r'([^\ue200\ue201\ue202]+)\ue201', matched)
+            if marker is None or marker[1] != reference['title']:
+                raise RouterError('web_public_citation_marker_invalid')
+            source = _public_links([reference['item']])[0]
+            if not re.fullmatch(PUBLIC_CITATION_ID, marker[2]) and marker[2] not in _citation_url_variants(source[1]):
+                raise RouterError('web_public_citation_marker_invalid')
+            sources_by_index.append({source[1]})
+    if footnote_sources and not {(title, url) for title, url, _ in footnote_sources} <= grouped_sources:
+        raise RouterError('web_public_sources_footnote_mismatch')
+
+    links = list(_modern_public_links(body))
+    validated_urls = set().union(*sources_by_index) if sources_by_index else set()
+    for _, url in links:
+        _public_links([{'title': 'source', 'url': url}])
+        if not any(_citation_url_variants(url) & _citation_url_variants(source)
+                for source in validated_urls):
+            raise RouterError('web_public_citation_unmapped')
+
+    marker_pattern = re.compile(r':chatgpt-content-reference\{index="([0-9]{1,3})"\}')
+    markers = list(marker_pattern.finditer(body))
+    if body.count(':chatgpt-content-reference') != len(markers):
+        raise RouterError('web_public_citation_marker_invalid')
+    if references and not links and not markers:
+        raise RouterError('web_public_citation_unmapped')
+    replacements = []
+    for marker in markers:
+        # The regex bounds the page's display number to three decimal digits.
+        # Its value does not index contentReferences or a grouped source list.
+        adjacent = next((link for link in reversed(links)
+            if link[0] <= marker.start() and not body[link[0]:marker.start()].strip()), None)
+        if adjacent is not None:
+            url = adjacent[1]
+            # The rendered marker's number is a page presentation index, not
+            # a stable contentReferences array position. An adjacent link is
+            # already complete; require its URL in the validated public set.
+            if not any(_citation_url_variants(url) & _citation_url_variants(source)
+                    for source in validated_urls):
+                raise RouterError('web_public_citation_unmapped')
+            replacements.append('')
+        else:
+            # This renderer's display index is not a stable reference-array
+            # index. A bare marker cannot establish which source it cites.
+            raise RouterError('web_public_citation_unmapped')
+    rendered = body
+    for marker, replacement in reversed(list(zip(markers, replacements))):
+        rendered = rendered[:marker.start()] + replacement + rendered[marker.end():]
+    return [rendered]
+
+
 def public_web_message(message, *, citation_mode='none'):
     """Project one dated public page-message shape; preserve every text part.
 
@@ -189,7 +333,10 @@ def public_web_message(message, *, citation_mode='none'):
         raise RouterError("web_public_text_parts_required")
     parts = [bounded_string(part, maximum=MAX_EVENT_BYTES) for part in parts]
     if citation_mode == 'markdown_links_v1':
-        parts = render_public_citations(parts, message.get('public_references'))
+        if metadata.get('operator_web_renderer') == 'modern_content_references_v1':
+            parts = render_modern_public_citations(parts, message.get('public_references'))
+        else:
+            parts = render_public_citations(parts, message.get('public_references'))
     elif citation_mode != 'none' or message.get('public_references'):
         raise RouterError('web_public_citation_mode_required')
     projected = []
@@ -235,6 +382,155 @@ def workspace_telemetry(value):
                         for name, url in remotes.items())):
                 return False
     return True
+
+
+def _tool_declaration_change_kinds(before, after):
+    """Classify rejected declarations by fixed labels, without retaining values.
+
+    An identity replacement cannot establish a rename. Duplicate or malformed
+    identities cannot be paired safely, so leave their fields unclassified.
+    Counts describe source declarations, not effective permissions. The only
+    interpreted default is the adapter's absent defer_loading=False.
+    """
+    if not isinstance(before, list) or not isinstance(after, list) or len(before) > 1024 or len(after) > 1024:
+        return {'classified': False}
+
+    def indexed(values, *, nested=False):
+        result, order = {}, []
+        for value in values:
+            if not isinstance(value, dict) or not isinstance(value.get('type'), str):
+                return None
+            kind = value['type']
+            if nested:
+                # A namespace may contain only directly declared function or
+                # custom tools; never descend into an unknown nested shape.
+                if kind == 'function':
+                    if (set(value) - {'type', 'name', 'description', 'parameters',
+                            'strict', 'defer_loading'}
+                            or not isinstance(value.get('parameters'), dict)):
+                        return None
+                elif kind == 'custom':
+                    if (set(value) - {'type', 'name', 'description', 'format',
+                            'defer_loading'}
+                            or 'format' in value and not isinstance(value['format'], dict)):
+                        return None
+                else:
+                    return None
+                if ('defer_loading' in value and type(value['defer_loading']) is not bool
+                        or 'description' in value and value['description'] is not None
+                        and not isinstance(value['description'], str)):
+                    return None
+            if kind == 'tool_search':
+                if 'name' in value:
+                    return None
+                identity = (kind, '')
+            elif kind in ('function', 'custom', 'namespace') and isinstance(value.get('name'), str) and value['name']:
+                identity = (kind, value['name'])
+            else:
+                return None
+            if identity in result:
+                return None
+            result[identity] = value
+            order.append(identity)
+        return result, order
+
+    old, new = indexed(before), indexed(after)
+    if old is None or new is None:
+        return {'classified': False}
+    old_map, old_order = old
+    new_map, new_order = new
+
+    def same_field(left, right, key):
+        return ((key in left) == (key in right)
+            and (key not in left or json.dumps(left[key], ensure_ascii=False,
+                sort_keys=True, separators=(',', ':'), allow_nan=False)
+                == json.dumps(right[key], ensure_ascii=False, sort_keys=True,
+                    separators=(',', ':'), allow_nan=False)))
+
+    def same_declaration(left, right):
+        return all(same_field(left, right, key) for key in left.keys() | right.keys())
+
+    counts = {key + '_changed_count': 0 for key in ('description', 'parameters', 'strict',
+        'defer_loading', 'other')}
+    counts.update(defer_loading_true_to_false_count=0,
+        defer_loading_false_to_true_count=0, defer_loading_presence_only_count=0,
+        namespace_tools_changed_count=0, custom_format_changed_count=0,
+        tool_search_execution_changed_count=0)
+    counts.update({kind + '_changed_count': 0 for kind in
+        ('function', 'custom', 'namespace', 'tool_search')})
+    nested_pairs = []
+    for identity in old_map.keys() & new_map.keys():
+        left, right = old_map[identity], new_map[identity]
+        kind = identity[0]
+        counts[kind + '_changed_count'] += not same_declaration(left, right)
+        for key in ('description', 'parameters', 'strict'):
+            counts[key + '_changed_count'] += not same_field(left, right, key)
+        other_keys = (left.keys() | right.keys()) - {'type', 'name', 'description', 'parameters', 'strict'}
+        for field, owner, label in (
+                ('tools', 'namespace', 'namespace_tools_changed_count'),
+                ('format', 'custom', 'custom_format_changed_count'),
+                ('execution', 'tool_search', 'tool_search_execution_changed_count')):
+            if kind == owner:
+                counts[label] += not same_field(left, right, field)
+                if field == 'tools' and not same_field(left, right, field):
+                    nested_pairs.append((left.get('tools'), right.get('tools')))
+                other_keys.discard(field)
+        if not same_field(left, right, 'defer_loading'):
+            prior, current = left.get('defer_loading', False), right.get('defer_loading', False)
+            if type(prior) is bool and type(current) is bool:
+                if prior != current:
+                    counts['defer_loading_changed_count'] += 1
+                    direction = 'defer_loading_true_to_false_count' if prior else 'defer_loading_false_to_true_count'
+                    counts[direction] += 1
+                else:
+                    counts['defer_loading_presence_only_count'] += 1
+                other_keys.discard('defer_loading')
+        counts['other_changed_count'] += any(not same_field(left, right, key) for key in other_keys)
+    nested = {'bounded': True, 'identity_added_count': 0, 'identity_removed_count': 0,
+        'same_identity_changed_count': 0, 'order_only_count': 0,
+        'unclassifiable_count': 0}
+    nested_fields = dict.fromkeys(('description', 'parameters', 'strict', 'format',
+        'defer_loading_true_to_false', 'defer_loading_false_to_true',
+        'defer_loading_presence_only'), 0)
+    before_size = sum(len(left) for left, _ in nested_pairs if isinstance(left, list))
+    after_size = sum(len(right) for _, right in nested_pairs if isinstance(right, list))
+    if before_size > 1024 or after_size > 1024:
+        nested['bounded'] = False
+        nested['unclassifiable_count'] = len(nested_pairs)
+    else:
+        for left, right in nested_pairs:
+            if not isinstance(left, list) or not isinstance(right, list):
+                nested['unclassifiable_count'] += 1
+                continue
+            old_nested, new_nested = indexed(left, nested=True), indexed(right, nested=True)
+            if old_nested is None or new_nested is None:
+                nested['unclassifiable_count'] += 1
+                continue
+            old_items, old_sequence = old_nested
+            new_items, new_sequence = new_nested
+            nested['identity_added_count'] += len(new_items.keys() - old_items.keys())
+            nested['identity_removed_count'] += len(old_items.keys() - new_items.keys())
+            changed = sum(not same_declaration(old_items[key], new_items[key])
+                for key in old_items.keys() & new_items.keys())
+            nested['same_identity_changed_count'] += changed
+            for key in old_items.keys() & new_items.keys():
+                prior, current = old_items[key], new_items[key]
+                for field in ('description', 'parameters', 'strict', 'format'):
+                    nested_fields[field] += not same_field(prior, current, field)
+                if not same_field(prior, current, 'defer_loading'):
+                    old_defer, new_defer = prior.get('defer_loading', False), current.get('defer_loading', False)
+                    label = ('defer_loading_presence_only' if old_defer == new_defer else
+                        'defer_loading_true_to_false' if old_defer else 'defer_loading_false_to_true')
+                    nested_fields[label] += 1
+            nested['order_only_count'] += (old_items.keys() == new_items.keys()
+                and old_sequence != new_sequence and changed == 0)
+    if nested['same_identity_changed_count']:
+        nested['field_changes'] = nested_fields
+    return {'classified': True,
+        'identity_added_count': len(new_map.keys() - old_map.keys()),
+        'identity_removed_count': len(old_map.keys() - new_map.keys()),
+        **counts, 'namespace_nested': nested,
+        'order_changed': old_map.keys() == new_map.keys() and old_order != new_order}
 
 
 class WebModelProtocol:
@@ -317,6 +613,68 @@ class WebModelProtocol:
         """Exact original non-history controls for one browser generation."""
         return self._continuation_contract
 
+    def description_refresh_candidates(self, previous):
+        """Return visible aliases only when leaf descriptions are the sole change.
+
+        This does not authorize a refresh. The indexed transport must prove that
+        none of these schemas has been read, then validate the exact native result
+        before publishing them. Namespace descriptions and hidden declarations
+        remain bound, as do every non-description value, presence and array order.
+        """
+        def canonical(value):
+            return json.dumps(value, ensure_ascii=False, sort_keys=True,
+                separators=(',', ':'), allow_nan=False)
+
+        before, after = (json.loads(item.continuation_contract()) for item in (previous, self))
+        old_tools, new_tools = before.pop('tools', None), after.pop('tools', None)
+        if canonical(before) != canonical(after):
+            return None
+        changed = set()
+
+        def visit(old, new, namespace=None):
+            if not isinstance(old, list) or not isinstance(new, list) or len(old) != len(new):
+                return False
+            for left, right in zip(old, new):
+                if canonical(left) == canonical(right):
+                    continue
+                if not isinstance(left, dict) or not isinstance(right, dict) or left.keys() != right.keys():
+                    return False
+                if left.get('type') == 'namespace' and namespace is None:
+                    if (canonical({k: v for k, v in left.items() if k != 'tools'})
+                            != canonical({k: v for k, v in right.items() if k != 'tools'})
+                            or not visit(left.get('tools'), right.get('tools'), left.get('name'))):
+                        return False
+                elif (left.get('type') in ('function', 'custom')
+                        and isinstance(left.get('description'), str)
+                        and isinstance(right.get('description'), str)
+                        and canonical({k: v for k, v in left.items() if k != 'description'})
+                            == canonical({k: v for k, v in right.items() if k != 'description'})):
+                    changed.add((left['type'], namespace, left['name']))
+                else:
+                    return False
+            return True
+
+        if not visit(old_tools, new_tools) or not changed:
+            return None
+        sources = self.mcp_tool_sources()
+        if sources != previous.mcp_tool_sources():
+            return None
+        names = {name for name, source in sources.items()
+            if (source['type'], source['namespace'], source['name']) in changed}
+        if len(names) != len(changed):
+            return None  # No refresh of a deferred/hidden source via this path.
+        old, new = previous._prepared.get('tools', []), self._prepared.get('tools', [])
+        if len(old) != len(new):
+            return None
+        for left, right in zip(old, new):
+            if left['name'] in names:
+                if (canonical({k: v for k, v in left.items() if k != 'description'})
+                        != canonical({k: v for k, v in right.items() if k != 'description'})):
+                    return None
+            elif canonical(left) != canonical(right):
+                return None
+        return names
+
     def continuation_changes(self, previous):
         """Fixed field labels only; never values, arbitrary keys or permissions.
 
@@ -340,6 +698,26 @@ class WebModelProtocol:
             'client_metadata', 'prompt_cache_key', 'service_tier', 'max_output_tokens',
             'previous_response_id', 'temperature', 'top_p'})
         result = {'fields': fields}
+        if 'tools' in fields:
+            original, continued = before.get('tools', []), after.get('tools', [])
+            if not isinstance(original, list) or not isinstance(continued, list):
+                result['tool_declarations'] = {'bounded': False}
+            elif len(original) > 1024 or len(continued) > 1024:
+                result['tool_declarations'] = {'bounded': False,
+                    'before_count': min(len(original), 1024),
+                    'after_count': min(len(continued), 1024)}
+            else:
+                # Source descriptions, schemas, names and digests never leave
+                # this rejected turn, including in the fixed-label field count.
+                def inventory(values):
+                    return Counter(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                        separators=(',', ':'), allow_nan=False) for value in values)
+                old, new = inventory(original), inventory(continued)
+                result['tool_declarations'] = {'bounded': True,
+                    'before_count': len(original), 'after_count': len(continued),
+                    'added_count': sum((new - old).values()),
+                    'removed_count': sum((old - new).values()),
+                    'change_kinds': _tool_declaration_change_kinds(original, continued)}
         if 'client_metadata' in fields:
             left, right = before.get('client_metadata'), after.get('client_metadata')
             result['client_metadata'] = changed(left, right,

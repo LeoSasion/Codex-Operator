@@ -163,11 +163,73 @@ def current_user_preview(source):
 
 def safe_user_binding_diagnostic(shape):
     """Shared bounded observations; never retain source or submitted text."""
-    value = {key: shape[key] for key in ('supportedTextShape', 'exact', 'backslashInsertionsOnly')
+    value = {key: shape[key] for key in ('supportedTextShape', 'exact', 'backslashInsertionsOnly', 'appSeparatorOnly')
         if type(shape.get(key)) is bool}
     value.update({key: shape[key] for key in ('sourceLength', 'promptLength', 'firstDifference')
         if type(shape.get(key)) is int and -1 <= shape[key] <= 1024 * 1024})
     return value
+
+
+def safe_prompt_mismatch_shape(shape):
+    """Retain only fixed editor structure categories after a local pre-send rejection."""
+    counts = ('paragraphs', 'nodes', 'literalPastes', 'expectedNewlines', 'renderedNewlines')
+    kinds = ('nodeKinds', 'literalKinds', 'secondNodeKinds')
+    flags = ('innerTextExact', 'textContentExact', 'firstExpectedEndsCR',
+        'firstMatchesWithoutCR', 'firstStartsWithPrefix', 'firstPillMatchesName',
+        'firstNodeMatchesTailWithSpace', 'firstNodeMatchesTailNoSpace',
+        'firstNodeStartsWithSpace', 'firstNodeStartsWithNbsp',
+        'firstNodeMatchesTailWithNbsp', 'firstNodeMatchesTailWithTwoSpaces',
+        'firstMatchesWithoutSeparator', 'firstMatchesWithNbspSeparator')
+    bounded = ('paragraphCount', 'expectedLines')
+    if (not isinstance(shape, dict) or set(shape) != set(counts + kinds + flags + bounded + ('lineMatches',))
+            or any(shape.get(key) not in ('zero', 'one', 'few', 'many') for key in counts)
+            or any(type(shape.get(key)) is not int or not 0 <= shape[key] <= 9 for key in bounded)
+            or any(type(shape.get(key)) is not list or len(shape[key]) > 8
+                or any(item not in ('text', 'break', 'app_pill', 'literal', 'other') for item in shape[key])
+                for key in kinds)
+            or type(shape.get('lineMatches')) is not list or len(shape['lineMatches']) > 8
+            or any(type(item) is not bool for item in shape['lineMatches'])
+            or any(type(shape.get(key)) is not bool for key in flags)):
+        return {'valid': False}
+    return {'valid': True, **{key: shape[key] for key in counts + kinds + flags + bounded + ('lineMatches',)}}
+
+
+def safe_modern_identity_shape(shape):
+    """Retain only bounded public identity-structure flags after a failed turn."""
+    flags = ('keyPattern', 'visible', 'hidden', 'idsBounded', 'allIdsUuid',
+        'allIdsEqual', 'selectedUuid', 'selectedFirst', 'selectedLast', 'selectedAny')
+    counts = ('idsCount', 'selectedCount')
+    if (not isinstance(shape, dict) or set(shape) != {'assistantRows', 'rows'}
+            or type(shape['assistantRows']) is not int or not 0 <= shape['assistantRows'] <= 9
+            or type(shape['rows']) is not list or len(shape['rows']) > 4
+            or any(not isinstance(row, dict) or set(row) != set(flags + counts)
+                or any(type(row[key]) is not bool for key in flags)
+                or any(type(row[key]) is not int or not 0 <= row[key] <= 9 for key in counts)
+                for row in shape['rows'])):
+        return {'valid': False}
+    return {'valid': True, **shape}
+
+
+def safe_fresh_chat_control_structure(shape):
+    """Keep only fixed selector categories from a failed New chat selection."""
+    fields = {
+        'legacyLinks': {'zero', 'one', 'multiple'},
+        'legacyRootHref': {'yes', 'no', 'unknown'},
+        'legacyLabel': {'yes', 'no', 'unknown'},
+        'legacyEnabled': {'yes', 'no', 'unknown'},
+        'navButtons': {'zero', 'one', 'multiple'},
+        'namedButtons': {'zero', 'one', 'multiple'},
+        'buttonType': {'button', 'absent', 'other', 'unknown'},
+        'buttonDisabled': {'yes', 'no', 'unknown'},
+        'buttonAriaDisabled': {'yes', 'no', 'other', 'unknown'},
+        'buttonHref': {'present', 'absent', 'unknown'},
+        'buttonTarget': {'present', 'absent', 'unknown'},
+        'buttonHiddenAncestor': {'yes', 'no', 'unknown'},
+    }
+    if not isinstance(shape, dict) or set(shape) != set(fields) \
+            or any(shape.get(name) not in allowed for name, allowed in fields.items()):
+        return {'valid': False}
+    return {'valid': True, **{name: shape[name] for name in fields}}
 
 
 def safe_generation_progress(value):
@@ -447,7 +509,7 @@ class WebTextBrowserDriver:
                             and not ui_failures and not final_timeouts and not network_errors and public_interruption_code(interruption) is None,
                             'web_browser_final_identity_invalid')
                         finals.append(value['publicMessage'])
-                    if kind in ('dispatch_started', 'model_verified', 'public_user_binding', 'generation_state', 'completed', 'failed', 'exit_requested', 'cancel_requested',
+                    if kind in ('dispatch_started', 'model_verified', 'public_user_binding', 'generation_state', 'prompt_ready_gate', 'prompt_mismatch_shape', 'modern_identity_shape', 'fresh_chat_control_structure', 'completed', 'failed', 'exit_requested', 'cancel_requested',
                                 'cancel_click_attempted', 'cancel_click_unavailable', 'effort_initial_state', 'effort_step_verified',
                                 'effort_step_unavailable', 'effort_pro_unavailable', 'effort_pro_verified', 'effort_target_verified',
                                 'effort_range_unavailable'):
@@ -457,6 +519,15 @@ class WebTextBrowserDriver:
                                 and value['error'] in self.codes else None}
                         if kind == 'generation_state':
                             event['progress'] = safe_generation_progress(value.get('progress'))
+                        if kind == 'prompt_ready_gate':
+                            event['send_ready'] = value.get('sendReady') if type(value.get('sendReady')) is bool else None
+                            event['composer_exact'] = value.get('composerExact') if type(value.get('composerExact')) is bool else None
+                        if kind == 'prompt_mismatch_shape':
+                            event['shape'] = safe_prompt_mismatch_shape(value.get('shape'))
+                        if kind == 'modern_identity_shape':
+                            event['shape'] = safe_modern_identity_shape(value.get('shape'))
+                        if kind == 'fresh_chat_control_structure':
+                            event['shape'] = safe_fresh_chat_control_structure(value.get('shape'))
                         if kind == 'model_verified':
                             require(matches_selection(value, request_config), 'web_browser_selection_identity_invalid')
                             event.update(model=request_config['model'], effort=request_config['effort'],

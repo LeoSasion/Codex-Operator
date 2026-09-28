@@ -69,6 +69,33 @@ def response(protocol, *items, **changes):
 
 
 class WebModelProtocolTests(unittest.TestCase):
+    def test_description_refresh_candidates_preserve_source_presence_and_execution_contract(self):
+        tools = [FUNCTION, {'type': 'namespace', 'name': 'functions', 'tools': [EXEC]}]
+        payload = {'input': [{'role': 'user', 'content': 'original'}], 'tools': deepcopy(tools)}
+        caps = {'custom_tools': {'exec': 'wrap', 'functions.exec': 'wrap'}}
+        before = make(payload, **caps)
+        updated = deepcopy(payload)
+        updated['tools'][0]['description'] = 'new function text'
+        updated['tools'][1]['tools'][0]['description'] = 'new custom text'
+        after = make(updated, **caps)
+        snapshot = deepcopy((payload, updated))
+        self.assertEqual(after.description_refresh_candidates(before),
+            {row['name'] for row in after.mcp_tools()})
+        self.assertEqual((payload, updated), snapshot)
+        for change in ('presence', 'namespace', 'strict', 'format', 'hidden', 'reordered', 'other'):
+            with self.subTest(change=change):
+                left, right = deepcopy(payload), deepcopy(updated)
+                if change == 'presence': left['tools'][0].pop('description')
+                elif change == 'namespace': right['tools'][1]['description'] = 'new namespace text'
+                elif change == 'strict':
+                    left['tools'][0]['strict'], right['tools'][0]['strict'] = False, True
+                elif change == 'format': right['tools'][1]['tools'][0]['format'] = {'type': 'text'}
+                elif change == 'hidden':
+                    left['tools'][0]['defer_loading'] = right['tools'][0]['defer_loading'] = True
+                elif change == 'reordered': right['tools'].reverse()
+                else: right['metadata'] = {'extra': True}
+                self.assertIsNone(make(right, **caps).description_refresh_candidates(make(left, **caps)))
+
     def test_managed_mcp_route_preserves_native_named_results_and_exec(self):
         from operator_web_model import text_route
         named = [{'type': 'function_call_output', 'namespace': 'codex_app', 'name': name,
@@ -146,6 +173,20 @@ class WebModelProtocolTests(unittest.TestCase):
         self.assertEqual(events[-1]['response'], result)
         self.assertEqual([item['type'] for item in result['output']], ['message'])
         self.assertNotIn('web_search_call', json.dumps(events))
+
+    def test_internal_zero_width_sources_footnote_preserves_bound_answer(self):
+        raw = self.citation_fixture()
+        expected = public_web_message(raw, citation_mode='markdown_links_v1')
+        grouped_end = raw['public_references'][0]['end_idx']
+        footnote = raw['public_references'][1]
+        footnote.update(start_idx=grouped_end, end_idx=grouped_end)
+        self.assertEqual(public_web_message(raw, citation_mode='markdown_links_v1'), expected)
+        footnote['end_idx'] += 1
+        with self.assertRaisesRegex(RouterError, 'web_public_sources_footnote_invalid'):
+            public_web_message(raw, citation_mode='markdown_links_v1')
+        footnote.update(start_idx=-1, end_idx=-1)
+        with self.assertRaisesRegex(RouterError, 'web_public_citation_position_invalid'):
+            public_web_message(raw, citation_mode='markdown_links_v1')
 
     def test_citation_ids_are_opaque_but_spans_and_sources_stay_bound(self):
         raw = self.citation_fixture()
@@ -227,6 +268,132 @@ class WebModelProtocolTests(unittest.TestCase):
         self.assertEqual(raw, original)
         raw['public_references'][-1]['end_idx'] += 1
         self.assertEqual(public_web_message(raw, citation_mode='markdown_links_v1'), result)
+
+    def test_modern_rendered_link_binds_reference_without_rewriting_answer(self):
+        raw = self.url_fixture()
+        raw['metadata'] = {'operator_web_renderer': 'modern_content_references_v1'}
+        url = raw['public_references'][1]['item']['url']
+        raw['content']['parts'] = [
+            'Result: [official source](' + url + ') :chatgpt-content-reference{index="1"}\n']
+        original = deepcopy(raw)
+        result = public_web_message(raw, citation_mode='markdown_links_v1')
+        self.assertEqual(result['content'][0]['text'], 'Result: [official source](' + url + ') \n')
+        self.assertEqual(raw, original)
+        without_marker = deepcopy(raw)
+        without_marker['content']['parts'] = ['Result: [official source](' + url + ')\n']
+        self.assertEqual(public_web_message(without_marker,
+            citation_mode='markdown_links_v1')['content'][0]['text'],
+            without_marker['content']['parts'][0])
+        display_index = deepcopy(raw)
+        display_index['content']['parts'] = [raw['content']['parts'][0]
+            .replace('index="1"', 'index="2"')]
+        self.assertEqual(public_web_message(display_index,
+            citation_mode='markdown_links_v1')['content'][0]['text'],
+            result['content'][0]['text'])
+        plain = message(['ordinary text'])
+        plain['metadata'] = {'operator_web_renderer': 'modern_content_references_v1'}
+        plain['public_references'] = []
+        self.assertEqual(public_web_message(plain,
+            citation_mode='markdown_links_v1')['content'][0]['text'], 'ordinary text')
+        plain['content']['parts'] = ['Unannotated [link](https://example.test)']
+        self.assertEqual(public_web_message(plain,
+            citation_mode='markdown_links_v1')['content'][0]['text'], plain['content']['parts'][0])
+
+    def test_modern_parenthesized_urls_preserve_exact_links_and_source(self):
+        prefix = 'https://example.test/'
+        urls = ['https://en.wikipedia.org/wiki/Function_(mathematics)',
+            prefix + 'outer_(inner_(value))?q=(one)(two)#section_(three)',
+            prefix + 'x' * (8192 - len(prefix) - 2) + '()']
+        marker = '\ue200cite\ue202turn0search0\ue201'
+        for url in urls:
+            for angle in (False, True):
+                for display_marker in ('', ' :chatgpt-content-reference{index="2"}'):
+                    link = '[source](' + ('<' + url + '>' if angle else url) + ')'
+                    raw = message(['Before\n' + link + display_marker + '\nAfter'],
+                        metadata={'operator_web_renderer': 'modern_content_references_v1'},
+                        public_references=[{'type': 'grouped_webpages', 'matched_text': marker,
+                            'start_idx': 0, 'end_idx': len(marker),
+                            'items': [{'title': 'Source', 'url': url}]}])
+                    original = deepcopy(raw)
+                    with self.subTest(url_length=len(url), angle=angle, marker=bool(display_marker)):
+                        result = public_web_message(raw, citation_mode='markdown_links_v1')
+                        self.assertEqual(result['content'][0]['text'],
+                            'Before\n' + link + (' ' if display_marker else '') + '\nAfter')
+                        self.assertEqual(raw, original)
+
+    def test_modern_parenthesized_urls_reject_unbalanced_unbound_and_oversized(self):
+        marker = '\ue200cite\ue202turn0search0\ue201'
+        url = 'https://example.test/Function_(mathematics)'
+        references = [{'type': 'grouped_webpages', 'matched_text': marker,
+            'start_idx': 0, 'end_idx': len(marker), 'items': [{'title': 'Source', 'url': url}]}]
+        invalid = [url[:-1], url.replace('(mathematics)', '(physics)'), url + '(',
+            url + '/extra)', 'https://other.test/Function_(mathematics)',
+            'https://example.test/' + '(' * 8193 + ')' * 8193]
+        for candidate in invalid:
+            raw = message(['[source](' + candidate + ') :chatgpt-content-reference{index="2"}'],
+                metadata={'operator_web_renderer': 'modern_content_references_v1'},
+                public_references=references)
+            with self.subTest(url_length=len(candidate)), self.assertRaises(RouterError):
+                public_web_message(raw, citation_mode='markdown_links_v1')
+
+    def test_modern_display_index_is_not_reference_array_position(self):
+        source = {'title': 'Second source', 'url': 'https://example.test/second'}
+        marker = '\ue200cite\ue202turn0search0\ue201'
+        answer = '[second](' + source['url'] + ') :chatgpt-content-reference{index="2"}'
+        raw = message([answer],
+            metadata={'operator_web_renderer': 'modern_content_references_v1'},
+            public_references=[{'type': 'grouped_webpages', 'matched_text': marker,
+                'start_idx': 0, 'end_idx': len(marker),
+                'items': [{'title': 'First source', 'url': 'https://example.test/first'}, source]}])
+        self.assertEqual(public_web_message(raw,
+            citation_mode='markdown_links_v1')['content'][0]['text'],
+            '[second](' + source['url'] + ') ')
+
+    def test_modern_bound_footer_link_rejects_unmapped_inline_group(self):
+        raw = self.url_fixture()
+        raw['metadata'] = {'operator_web_renderer': 'modern_content_references_v1'}
+        source = raw['public_references'][0]['items'][0]
+        raw['content']['parts'] = ['Claim\n\n[official](' + source['url']
+            + ') :chatgpt-content-reference{index="2"}']
+        result = public_web_message(raw, citation_mode='markdown_links_v1')
+        answer = result['content'][0]['text']
+        self.assertIn('[official](' + source['url'] + ')', answer)
+        self.assertNotIn(':chatgpt-content-reference', answer)
+        bare = deepcopy(raw)
+        bare['content']['parts'] = ['Claim backed by A :chatgpt-content-reference{index="0"}\n\n'
+            + bare['content']['parts'][0]]
+        with self.assertRaisesRegex(RouterError, 'web_public_citation_unmapped'):
+            public_web_message(bare, citation_mode='markdown_links_v1')
+        two_groups = deepcopy(raw)
+        two_groups['public_references'][1] = deepcopy(raw['public_references'][0])
+        two_groups['public_references'][1]['items'][0].update(
+            title='Unrelated source B', url='https://other.test/b')
+        two_groups['content']['parts'] = [
+            'Claim backed by A :chatgpt-content-reference{index="1"}']
+        with self.assertRaisesRegex(RouterError, 'web_public_citation_unmapped'):
+            public_web_message(two_groups, citation_mode='markdown_links_v1')
+        altered = deepcopy(raw)
+        altered['public_references'][2]['sources'][0]['url'] = 'https://other.test'
+        with self.assertRaises(RouterError):
+            public_web_message(altered, citation_mode='markdown_links_v1')
+
+    def test_modern_rendered_links_reject_unbound_or_malformed_sources(self):
+        raw = self.url_fixture()
+        raw['metadata'] = {'operator_web_renderer': 'modern_content_references_v1'}
+        url = raw['public_references'][1]['item']['url']
+        raw['content']['parts'] = ['[source](' + url + ') :chatgpt-content-reference{index="1"}']
+        alterations = [
+            lambda v: v['content'].update(parts=[v['content']['parts'][0].replace(url, 'https://other.test')]),
+            lambda v: v['content'].update(parts=[v['content']['parts'][0].replace('index="1"', 'index="1000"')]),
+            lambda v: v['content'].update(parts=[v['content']['parts'][0] + ' [extra](https://other.test)']),
+            lambda v: v['content'].update(parts=[v['content']['parts'][0].replace('index="1"', 'index="x"')]),
+            lambda v: v['public_references'][1]['item'].update(url='javascript:alert(1)'),
+        ]
+        for alter in alterations:
+            changed = deepcopy(raw)
+            alter(changed)
+            with self.subTest(alter=alter), self.assertRaises(RouterError):
+                public_web_message(changed, citation_mode='markdown_links_v1')
 
     def test_url_reference_accepts_opaque_id_only_with_exact_label(self):
         raw = self.url_fixture()

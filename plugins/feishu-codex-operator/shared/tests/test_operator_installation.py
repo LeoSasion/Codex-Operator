@@ -218,8 +218,9 @@ class OwnershipTests(unittest.TestCase):
         (runtime/'sessions.json').write_bytes(b'private fixture retained')
         with socket.socket() as listener:
             listener.bind(('127.0.0.1',0)); port=listener.getsockname()[1]
-        command=[PWSH,'-NoProfile','-File',str(ROOT/'scripts/uninstall-feishu-codex-operator.ps1'),
-                 '-ProjectRoot',str(self.project),'-RouterPort',str(port)]
+        command=[PWSH,'-NoProfile','-File',str(ROOT/'scripts/codex-operator.ps1'), 'uninstall',
+                 '-ProjectRoot',str(self.project),'-RouterPort',str(port),
+                 '-CodexConfig',str(self.project/'user-config/config.toml')]
         preview=subprocess.run(command,env=env,capture_output=True,text=True,encoding='utf-8',timeout=30)
         self.assertEqual(preview.returncode,0,preview.stdout+preview.stderr)
         self.assertTrue(json.loads(preview.stdout)['ready']); self.assertTrue(runtime.exists())

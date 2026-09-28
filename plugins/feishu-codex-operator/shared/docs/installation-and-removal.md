@@ -121,6 +121,13 @@ Run `operator uninstall` to review the exact recovery plan. Finish pending
 callbacks and requests and stop the exact Operator first. If the optional global
 router entry is active, close Desktop before restoring its configuration.
 
+The unified entry accepts `uninstall -ProjectRoot <project>` and forwards
+`-CodexConfig <config.toml>` and `-RouterPort <port>` when explicitly supplied.
+These two options apply only to uninstall; otherwise the existing current-user
+config and port 4317 defaults remain. Use the installation's actual identities,
+not an arbitrary unused port to evade a running-service check. Add `-Apply`
+only after reviewing the same plan.
+
 A saved Web service must also be cleanly stopped, even when no Web cold-launch
 plan was ever created. Preflight checks it before restoring files or archiving
 the interpreter. Missing, malformed or uncertain service records block teardown.

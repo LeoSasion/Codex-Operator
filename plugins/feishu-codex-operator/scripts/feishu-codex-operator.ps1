@@ -44,10 +44,16 @@ param(
     [string]$PythonExecutable,
     [switch]$ReplaceClosedBrowser,
     [int]$DrainSeconds = 0,
-    [string]$RecoveryDigest
+    [string]$RecoveryDigest,
+    [string]$CodexConfig,
+    [ValidateRange(1,65535)][int]$RouterPort = 4317
 )
 
 $ErrorActionPreference = 'Stop'
+if (($PSBoundParameters.ContainsKey('CodexConfig') -or $PSBoundParameters.ContainsKey('RouterPort')) -and
+    ($Scope -ne 'operator' -or $Action -ne 'uninstall')) {
+    throw 'CodexConfig and RouterPort apply only to operator uninstall.'
+}
 # Native helpers emit UTF-8. A detached, redirected PowerShell child can otherwise
 # decode their JSON through the machine's legacy code page.
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -70,7 +76,7 @@ Usage:
   feishu-codex-operator.ps1 operator hooks
   feishu-codex-operator.ps1 operator upgrade [-BeeperThreadId <task_uuid>]
   feishu-codex-operator.ps1 operator desktop-entry [-StartupBundle <reviewed_bundle>]
-  feishu-codex-operator.ps1 operator uninstall [-Apply]
+  feishu-codex-operator.ps1 operator uninstall [-Apply] [-CodexConfig <path>] [-RouterPort <port>]
   feishu-codex-operator.ps1 operator recover-native [-Apply] [-Json]
   feishu-codex-operator.ps1 operator beeper-configure -BeeperThreadId <task_uuid>
   feishu-codex-operator.ps1 operator user-tasks-configure -GrantFile <owner_grant.json>
@@ -2238,7 +2244,8 @@ switch ($scopeName) {
                 & (Join-Path $PSScriptRoot 'operator_desktop_setup.ps1') -Action install -ProjectRoot (Resolve-Project) -StartupBundle $StartupBundle
             }
             'uninstall' {
-                & (Join-Path $PSScriptRoot 'uninstall-feishu-codex-operator.ps1') -ProjectRoot (Resolve-Project) -Apply:$Apply
+                & (Join-Path $PSScriptRoot 'uninstall-feishu-codex-operator.ps1') -ProjectRoot (Resolve-Project) `
+                    -Apply:$Apply -CodexConfig $CodexConfig -RouterPort $RouterPort
             }
             'recover-native' {
                 & (Join-Path $PSScriptRoot 'restore-codex-official-route.ps1') -ProjectRoot (Resolve-Project) -Apply:$Apply -Json:$Json

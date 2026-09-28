@@ -16,6 +16,7 @@ const { BrowserSurface, validateAssistancePacket, assistanceReady,
 const configPath = process.argv[2];
 let config, win, surface, timer, cancelWatch, deadlineAt, stage = "configuration", sent = false, ended = false, cancelling = false;
 let ownedConnectorQuery = null;
+let dispatchedPublicPrompt = null;
 let windowShown = 0, windowFocused = 0;
 let workerMode = false, workerRequestId = null, workerClosing = false, finishTurn = null;
 let cancelledIdleVerified = false;
@@ -184,7 +185,7 @@ function boundedControlState(state) {
   return { pageKind: ["chatgpt", "challenge", "other"].includes(state?.pageKind)
       ? state.pageKind : "unknown", composer: flag(state?.composer), modelControl,
     loginVisible: flag(state?.loginVisible), userRows: rows(state?.userCount),
-    assistantRows: rows(state?.assistantCount) };
+    assistantRows: rows(state?.assistantCount), modernRows: rows(state?.modernRowCount) };
 }
 function assistanceCloseState(destination, state, composerEmpty, phase) {
   return { phase, route: isEmptyTemporaryChatUrl(destination) ? "temporary"
@@ -306,8 +307,11 @@ async function cancelOwnedGeneration(reuseWhenIdle = false) {
   if (sent && win && !win.isDestroyed() && !config.connectorSelectionName) {
     let clicked = false;
     try {
-      const expected = config.connectorMention
-        ? "@" + config.connectorMention.name + " " + config.text : config.text;
+      // Keep the exact public app-pill representation validated at dispatch.
+      // Rebuilding the legacy @name prefix loses the current renderer's binding.
+      const expected = dispatchedPublicPrompt;
+      requireValue(typeof expected === 'string' && expected.length > 0,
+        "web_cancel_user_binding_required");
       const binding = await inPage(page.publicUserBindingShape, expected, true);
       requireValue(binding?.exact === true, "web_cancel_user_binding_required");
       clicked = await inPage(page.cancelGeneration);
@@ -322,9 +326,12 @@ async function cancelOwnedGeneration(reuseWhenIdle = false) {
           requireValue(interruptionCode(interruption) === null, "web_cancel_page_interrupted");
           const progress = await inPage(page.publicGenerationState, true);
           const controls = await inPage(page.controls);
-          const idle = progress.stopPresent === false && progress.userRows === 1
+          const oneBoundUser = controls.modernRowCount > 0
+            ? controls.userCount === 0 && controls.assistantCount === 0
+            : progress.userRows === 1 && controls.userCount === 1;
+          const idle = progress.stopPresent === false && oneBoundUser
             && controls.pageKind === "chatgpt" && controls.loginVisible === false
-            && controls.composer === true && controls.userCount === 1
+            && controls.composer === true
             && await inPage(page.composerPrefix, null) === "";
           if (!idle) { idleSince = null; return false; }
           if (idleSince === null) idleSince = Date.now();
@@ -388,6 +395,11 @@ async function inPage(fn, ...args) {
     const uniqueComposer = (${page.uniqueComposer.toString()});
     const eligibleModelButtons = (${page.eligibleModelButtons.toString()});
     const eligibleEffortContainer = (${page.eligibleEffortContainer.toString()});
+    const connectorPillState = (${page.connectorPillState.toString()});
+    const promptMismatchShape = (${page.promptMismatchShape.toString()});
+    const modernPublicItem = (${page.modernPublicItem.toString()});
+    const projectPublicReferences = (${page.projectPublicReferences.toString()});
+    const modernPublicFinal = (${page.modernPublicFinal.toString()});
     try { return { ok: true, value: (${fn.toString()})(...${JSON.stringify(args)}) }; }
     catch (error) { return { ok: false, code: /^web_[a-z_]+$/.test(error?.message)
       ? error.message : "web_page_operation_failed" }; }
@@ -648,7 +660,9 @@ app.whenReady().then(async () => {
   win.on("page-title-updated", event => event.preventDefault());
   surface.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   const guardNavigation = (event, url) => {
-    if (navigationAllowed(url, assisting || config.mode === "assist")) return;
+    const humanAssistance = assisting || config.mode === "assist";
+    if (navigationAllowed(url, humanAssistance,
+        humanAssistance && surface.revealed && win.isVisible())) return;
     event.preventDefault();
     if (workerMode && config.backgroundInput === "dom_v1" && !assisting && !sent
         && (stage === "load_fresh_page" || stage === "startup_prepare") && isPublicLoginUrl(url)) {
@@ -664,6 +678,13 @@ app.whenReady().then(async () => {
   surface.webContents.on("will-navigate", guardNavigation);
   surface.webContents.on("will-redirect", (event, url, _inPlace, isMainFrame) => {
     if (isMainFrame !== false) guardNavigation(event, url);
+  });
+  surface.webContents.on("did-navigate", () => {
+    if (!assisting && config.mode !== "assist") return;
+    try {
+      const host = new URL(surface.webContents.getURL()).hostname;
+      if (host) win.setTitle("Operator 登录辅助窗口 · " + host);
+    } catch { /* Keep the fixed title until a valid navigation completes. */ }
   });
   surface.webContents.on("render-process-gone", () => finish(1, { error: "web_renderer_lost_no_retry" }));
   const modelFilter = { urls: ['https://chatgpt.com/backend-api/*'] };
@@ -770,6 +791,7 @@ async function completeAssistance() {
   if (finalComposerError) throw finalComposerError;
   requireValue(finalComposerEmpty === true, "web_assistance_closed_before_ready");
   surface.hide();
+  win.setTitle("Operator 网页模型辅助窗口");
   await waitFor(async () => !win.isVisible() && !win.isFocused(), 3000);
   requireValue(readWorkerPacket("next.json", 1024 * 1024) === null,
     "web_worker_request_during_assistance");
@@ -860,12 +882,36 @@ async function loadFreshPage() {
   requireBackgroundWindow();
   const previous = completedPage;
   completedPage = null; // One navigation attempt only; any failure ends the worker.
-  const current = await inPage(page.publicFinal, previous.prompt, config.includeCitations === true, true);
-  requireValue(current && JSON.stringify(current) === JSON.stringify(previous.message), "web_new_chat_previous_page_changed");
-  await inPage(page.startFreshChat);
+  // A completed React turn can briefly drop its selection marker while the
+  // page settles. Read the same exact public final for a bounded interval;
+  // changed content or identity still fails before any New chat click.
+  let current = null;
+  try {
+    current = await waitFor(() => inPage(page.publicFinal,
+      previous.prompt, config.includeCitations === true, true), 3000);
+  } catch (error) {
+    if (error.message !== "web_page_state_timeout") throw error;
+  }
+  if (!current || JSON.stringify(current) !== JSON.stringify(previous.message)) {
+    record("previous_page_shape", { present: !!current,
+      sameId: !!current && current.id === previous.message.id,
+      sameContent: !!current && JSON.stringify(current.content) === JSON.stringify(previous.message.content) });
+    try { record("generation_state", { progress: await inPage(page.publicGenerationState, true) }); } catch {}
+    try { record("modern_identity_shape", { shape: await inPage(page.modernIdentityShape) }); } catch {}
+    throw new Error("web_new_chat_previous_page_changed");
+  }
+  try { await inPage(page.startFreshChat, previous.prompt, previous.message.id); }
+  catch (error) {
+    if (error?.message === "web_new_chat_control_ambiguous") {
+      // This is a second read after the failed selector check, never a click.
+      try { record("fresh_chat_control_structure", { shape: await inPage(page.freshChatControlStructure) }); } catch {}
+    }
+    throw error;
+  }
   await waitFor(async () => {
-    const state = await inPage(page.controls);
-    return state.composer && state.userCount === 0 && state.assistantCount === 0;
+    const url = surface.webContents.getURL();
+    if (!isEmptyChatHomeUrl(url) && !isEmptyTemporaryChatUrl(url)) return false;
+    return await inPage(page.emptyFreshChat);
   }, 10000);
   let destination = new URL(surface.webContents.getURL());
   requireValue(destination.origin === "https://chatgpt.com" && destination.pathname === "/" && !destination.hash,
@@ -890,7 +936,8 @@ async function runCurrentPage() {
       const state = await inPage(page.controls);
       const reason = !config.backgroundInput ? null : state.pageKind === "challenge"
         ? "web_browser_challenge_required_before_dispatch"
-        : state.loginVisible ? "web_browser_login_required_before_dispatch" : null;
+        : state.loginVisible || isPublicLoginUrl(surface.webContents.getURL())
+          ? "web_browser_login_required_before_dispatch" : null;
       if (reason !== attentionReason) { attentionReason = reason; attentionSince = Date.now(); }
       // A first-load verification/login placeholder can resolve on its own.
       // Observe it briefly; never click a challenge or change its protections.
@@ -905,7 +952,8 @@ async function runCurrentPage() {
     throw error;
   }
   const fresh = await inPage(page.controls);
-  requireValue(fresh.userCount === 0 && fresh.assistantCount === 0, "web_fresh_page_required");
+  requireValue(fresh.userCount === 0 && fresh.assistantCount === 0
+    && fresh.modernRowCount === 0, "web_fresh_page_required");
   record("page_ready", { controls: boundedControlState(fresh) });
   if (config.mode === "assist") {
     // Initial page readiness is bounded; a ready human-assistance window stays
@@ -922,6 +970,7 @@ async function runCurrentPage() {
   }
   await selectModel();
   let mention = config.connectorMention ?? null;
+  let connectorPublicPrefix = null;
   if (config.autoSelectConnector) {
     stage = "select_registered_connector";
     record("connector_access_state", { access: await inPage(page.connectorAccessState) });
@@ -933,8 +982,9 @@ async function runCurrentPage() {
     await waitFor(() => inPage(page.connectorMenuChoice, mention.name, query, false, mention.id));
     await inPage(page.connectorMenuChoice, mention.name, query, true, mention.id);
     const selected = await waitFor(() => inPage(page.selectedConnector, mention.name));
-    ownedConnectorQuery = null;
     requireValue(selected.id === mention.id, "web_connector_registered_identity_changed");
+    connectorPublicPrefix = selected.publicPrefix;
+    ownedConnectorQuery = null;
     await inPage(page.composerPrefix, mention);
     record("connector_selected", { mention, automatic: true });
   }
@@ -955,6 +1005,7 @@ async function runCurrentPage() {
     record("awaiting_connector_selection", { name: config.connectorSelectionName });
     mention = await waitFor(() => inPage(page.selectedConnector, config.connectorSelectionName),
       Math.max(1, deadlineAt - Date.now() - 2000));
+    connectorPublicPrefix = mention.publicPrefix;
     // Bind the one observed user-selected pill; never choose an app by name,
     // inspect an account store, grant permissions or fabricate a connector id.
     record("connector_selected", { mention });
@@ -984,29 +1035,53 @@ async function runCurrentPage() {
   }
   stage = "attach_prompt";
   const prefix = await inPage(page.composerPrefix, mention);
-  await inPage(page.focusComposer, prefix);
-  await insertText(config.text);
+  const currentAppPill = !!mention && connectorPublicPrefix?.startsWith('[$');
+  await inPage(page.focusComposer, prefix, currentAppPill);
+  // Replace only the checked app-pill placeholder with one explicit separator;
+  // composerMatches still requires the exact original prefix + request text.
+  await insertText((currentAppPill ? ' ' : '') + config.text);
   // A model switch can settle the editor after the send control becomes ready.
   // Observe the already inserted text briefly; never insert it a second time.
   let exactPrompt = false;
   try {
-    exactPrompt = await waitFor(async () => (await inPage(page.controls)).sendReady
-      && await inPage(page.composerMatches, config.text, prefix, mention), 2000);
+    exactPrompt = await waitFor(async () => {
+      const state = await inPage(page.controls);
+      return state.sendReady && state.userCount === 0 && state.assistantCount === 0
+        && state.modernRowCount === 0
+        && await inPage(page.composerMatches, config.text, prefix, mention);
+    }, 2000);
   } catch (error) {
     if (error.message !== "web_page_state_timeout") throw error;
   }
+  if (!exactPrompt) {
+    let sendReady = null, composerExact = null;
+    try { sendReady = (await inPage(page.controls)).sendReady === true; } catch {}
+    try { composerExact = await inPage(page.composerMatches, config.text, prefix, mention) === true; } catch {}
+    record("prompt_ready_gate", { sendReady, composerExact });
+    try { record("prompt_mismatch_shape", { shape: await inPage(page.promptMismatchShape, config.text, prefix) }); } catch {}
+  }
   requireValue(exactPrompt, "web_prompt_text_mismatch");
+  let publicPrompt = mention
+    ? (connectorPublicPrefix || "@" + mention.name + " ") + config.text : config.text;
+  dispatchedPublicPrompt = publicPrompt;
   stage = "send_once";
   sent = true; // An uncertain input is terminal. Never submit a second time.
   record("dispatch_started");
   await inPage(page.sendOnce);
-  const bindingShape = await waitFor(async () => inPage(page.publicUserBindingShape, config.text, true));
+  // The public row includes the app link. Compare it with the exact projected
+  // source message, not with the transport body alone.
+  let bindingShape = await waitFor(async () => inPage(page.publicUserBindingShape, publicPrompt, true));
+  if (currentAppPill && bindingShape?.exact === false && bindingShape.appSeparatorOnly === true
+      && connectorPublicPrefix.endsWith('\u00a0')) {
+    publicPrompt = connectorPublicPrefix.slice(0, -1) + ' ' + config.text;
+    bindingShape = await inPage(page.publicUserBindingShape, publicPrompt, true);
+  }
   record("public_user_binding", { shape: bindingShape });
+  requireValue(bindingShape?.exact === true, "web_user_turn_mismatch");
+  dispatchedPublicPrompt = publicPrompt;
   stage = "wait_public_final";
-  // The dated inline plugin pill serializes as a literal @name prefix. This
-  // exact projection is explicit; never trim or infer arbitrary message text.
-  const publicPrompt = mention
-    ? "@" + mention.name + " " + config.text : config.text;
+  // The selected app pill's exact public syntax was bound before submission;
+  // never trim or infer arbitrary message text.
   const message = await waitForPublicFinal(publicPrompt, mention?.name ?? null);
   if (config.inspectCitations === true)
     record("public_citation_shape", { shape: await inPage(page.publicCitationShape, true) });
@@ -1029,6 +1104,9 @@ async function handleFailure(error) {
     try { record("failure_controls", { controls: boundedControlState(await inPage(page.controls)) }); } catch {}
     if (sent) {
       try { record("failure_public_shape", { shape: await inPage(page.publicMessageShape) }); } catch {}
+      if (error?.message === 'web_public_message_identity_invalid') {
+        try { record("modern_identity_shape", { shape: await inPage(page.modernIdentityShape) }); } catch {}
+      }
     }
   }
   finish(1, { error: safeError(error) });
@@ -1042,18 +1120,13 @@ async function prepareWorkerPage() {
     "web_worker_request_during_preparation");
   try { await surface.loadURL("https://chatgpt.com/?temporary-chat=true"); }
   catch (error) { if (!needsAssistanceNavigation) throw error; }
-  if (needsAssistanceNavigation) {
-    assistanceRequired = true;
-    record("worker_attention_required", { reason: "web_browser_login_required_before_dispatch" });
-    return;
-  }
   let ready = false;
   try {
     ready = await waitFor(async () => {
       if (workerClosing || readWorkerPacket("shutdown.json", 256) !== null)
         throw new Error("web_host_closed");
-      const controls = await inPage(page.controls);
-      return isEmptyTemporaryChatUrl(surface.webContents.getURL()) && assistanceReady(controls);
+      if (!isEmptyTemporaryChatUrl(surface.webContents.getURL())) return false;
+      return assistanceReady(await inPage(page.controls));
     }, 65000);
   } catch (error) {
     if (error.message !== "web_page_state_timeout") throw error;
@@ -1062,14 +1135,27 @@ async function prepareWorkerPage() {
     requireBackgroundWindow();
     requireValue(readWorkerPacket("next.json", 1024 * 1024) === null,
       "web_worker_request_during_preparation");
+    // A rejected login redirect can race a valid saved-session page. The
+    // current exact empty temporary page is stronger evidence than that old
+    // navigation event; neither path has submitted a model request.
+    if (needsAssistanceNavigation) {
+      needsAssistanceNavigation = false;
+      record("startup_login_redirect_cleared");
+    }
     preparedPage = true;
     record("worker_prepared", { hidden: true, empty: true });
+    return;
+  }
+  if (needsAssistanceNavigation) {
+    assistanceRequired = true;
+    record("worker_attention_required", { reason: "web_browser_login_required_before_dispatch" });
     return;
   }
   const controls = await inPage(page.controls);
   const reason = controls.pageKind === "challenge"
     ? "web_browser_challenge_required_before_dispatch"
-    : controls.loginVisible === true ? "web_browser_login_required_before_dispatch" : null;
+    : controls.loginVisible === true || isPublicLoginUrl(surface.webContents.getURL())
+      ? "web_browser_login_required_before_dispatch" : null;
   if (reason === null) {
     record("startup_prepare_state", {
       route: isEmptyTemporaryChatUrl(surface.webContents.getURL()) ? "temporary"
@@ -1158,6 +1244,7 @@ async function workerLoop() {
     lastFailure = null;
     networkRequests.clear(); networkEventCount = 0;
     ownedConnectorQuery = null;
+    dispatchedPublicPrompt = null;
     deadlineAt = Date.now() + config.timeoutMs;
     const completed = new Promise(resolve => { finishTurn = resolve; });
     timer = setTimeout(() => finish(1, { error: "web_host_deadline_no_retry" }), config.timeoutMs);

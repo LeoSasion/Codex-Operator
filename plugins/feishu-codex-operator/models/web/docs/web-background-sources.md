@@ -54,6 +54,29 @@ Chat On Steroids 首要策略为准。2026-09-24 已移除仅用于旧验收的�
 当前 Web-only 搜索方案和通过/失败边界见[项目记忆](native-web-experience.md)，
 合并的逐次验收见[历史索引](native-web-history-20260924.md)。来源登记不是功能验收。
 
+## 2026-09-27 原生工具续接回退核验
+
+本轮为已有 Desktop 工具结果续接失败查阅参考，不改变首要/冷置策略。
+Chat On Steroids 主分支仍为上述 `750fad9`；WebCodex 已发布
+[v0.4.3](https://github.com/yyjeqhc/webcodex/releases/tag/v0.4.3)，
+codex-chatgpt-web 已发布
+[v6.1.1](https://github.com/miuuyy/codex-chatgpt-web/releases/tag/v6.1.1)。
+localmcp 最新发布仍为 v0.3.9；MCPX 候选发布为 v0.9.18，截图身份仍未确认。
+
+- [Chat On Steroids 的声明摘要](https://github.com/totec448-spec/chat-on-steroids/blob/750fad9378a0cf9e37791916b11f7ed9add645dd/src/main/plugin-refresh.ts#L29-L66)
+  用稳定对象键顺序和选定字段判断刷新。这里的插件快照维护与原生调用结果配对是不同边界；
+  不用其部分字段摘要代替本项目完整声明检查。
+- [codex-chatgpt-web 的环境更新](https://github.com/miuuyy/codex-chatgpt-web/blob/a13cd09950969f43e3b7e25c71fa43efaf5446c5/src/adapters/chatgpt-web/turn-broker.ts#L360-L375)
+  与 [按调用 ID 归还结果](https://github.com/miuuyy/codex-chatgpt-web/blob/a13cd09950969f43e3b7e25c71fa43efaf5446c5/src/adapters/chatgpt-web/index.ts#L1239-L1266)
+  分开处理，值得用于审视职责。但其 `environmentIdentity` 只比较目录、根和沙箱，
+  不比较完整工具定义；不能据此认定我们观察到的声明变化安全，也不采用其重放分支。
+
+核验后独立实现了更窄的未读说明维护：沿用既有按需 schema 分页，只刷新尚无任何读取的
+叶子说明，目录 key、完整新说明、身份、历史和读取预算保持；已读定义及执行契约变化仍
+拒绝。不需要新的目录版本协议，也没有复制上游代码、引入依赖或安装参考产品。
+上游功能说明不代替本项目验收。旧版本源码与 G1 成功记录的
+核对结论见[当前计划](native-conversation-plan.md)，不把后来失败改写成从未成功。
+
 ## 历史实现来源与验证
 
 2026-09-20 终止错误兼容：本轮依据本机原生 CLI 和实际本地 Web/router 验证独立实现。Web 自有终止错误以 HTTP 400 保留原 cause_http_status、固定原因和已转交/已返回工具计数；受管 Web 长连接返回失败事件，原生与其他上游不改写。容量仍返回 413，单独记录范围与上限，独立 provider 保持原有两项零重试配置。统一原生 provider 的 413 仍可触发客户端重试，因此 native-only 保护保持。沿用 WebCodex 原生任务/后台生命周期分工，没有复制参考项目的重试、截断或恢复逻辑；四项参考优先级不变。
@@ -223,8 +246,9 @@ composer 改为当前 turn key 的简短读取说明；完整请求由既有 `op
 隐藏视图夹具验证窗口、导航和渲染；私有进程及 loopback 测试验证 IPC、接纳、取消、
 协助和停止。真实 ChatGPT 登录、真人验证、工具审批、长时间稳定性与 Desktop 交互
 必须另留相应版本的实际证据。普通请求不会触发自动弹窗或重新发送失败请求。
-当前辅助窗口仅允许 ChatGPT 与 `auth.openai.com` 的明确导航；Google、Microsoft、
-Apple 等第三方身份提供方的跳转尚未接入，不能据此声称所有登录方式都可用。
+2026-09-17 当时的辅助窗口仅允许 ChatGPT 与 `auth.openai.com` 的明确导航；Google、
+Microsoft、Apple 跳转尚未接入。此限制已由当前显式辅助登录的 HTTPS 身份提供方导航
+取代，具体边界见[当前项目记忆](native-web-experience.md)；旧限制不是当前配置指引。
 
 2026-09-18 的 `inspect` 继续沿用 WebCodex 显式前台操作与后台进程持有的分工，
 由本项目独立实现公开回复/提示的只读文字快照。现有 `assist` 负责登录与空白聊天

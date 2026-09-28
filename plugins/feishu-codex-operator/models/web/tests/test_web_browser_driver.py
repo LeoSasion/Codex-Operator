@@ -23,12 +23,60 @@ from unittest.mock import patch
 from aiohttp import ClientSession
 from test_web_model_protocol import message, make, FUNCTION
 from operator_core.web_browser_driver import (WebTextBrowserDriver, WebMcpBrowserDriver, text_prompt,
-    child_environment, safe_generation_progress, safe_public_interruption, current_user_preview, encoded_user_json)
+    child_environment, safe_generation_progress, safe_public_interruption, safe_prompt_mismatch_shape,
+    safe_modern_identity_shape, safe_fresh_chat_control_structure,
+    current_user_preview, encoded_user_json)
 from operator_core.web_browser_session import WebBrowserSession
 from operator_core.web_mcp_transport import WebRequestCapacityError, WebMcpEndpoint, WebMcpTurn, WebResponsesBridge
 from operator_core.web_model_protocol import WebModelProtocol
 from operator_core.web_responses_provider import WebResponsesProvider
 import operator_web_model as service
+
+
+class PromptDiagnosticTests(unittest.TestCase):
+    def test_shape_accepts_only_fixed_categories_and_never_copies_text(self):
+        shape = {'paragraphs': 'one', 'nodes': 'few', 'literalPastes': 'one',
+            'expectedNewlines': 'many', 'renderedNewlines': 'many',
+            'nodeKinds': ['app_pill', 'text', 'literal'], 'literalKinds': ['text', 'break'],
+            'secondNodeKinds': [], 'paragraphCount': 1, 'expectedLines': 2,
+            'lineMatches': [False],
+            'innerTextExact': False, 'textContentExact': False,
+            'firstExpectedEndsCR': True, 'firstMatchesWithoutCR': True,
+            'firstStartsWithPrefix': True, 'firstPillMatchesName': True,
+            'firstNodeMatchesTailWithSpace': False, 'firstNodeMatchesTailNoSpace': False,
+            'firstNodeStartsWithSpace': True, 'firstNodeStartsWithNbsp': False,
+            'firstNodeMatchesTailWithNbsp': False,
+            'firstNodeMatchesTailWithTwoSpaces': False,
+            'firstMatchesWithoutSeparator': False,
+            'firstMatchesWithNbspSeparator': False}
+        self.assertEqual(safe_prompt_mismatch_shape(shape), {'valid': True, **shape})
+        self.assertEqual(safe_prompt_mismatch_shape({**shape, 'body': 'private'}), {'valid': False})
+        self.assertEqual(safe_prompt_mismatch_shape({**shape, 'nodeKinds': ['private']}), {'valid': False})
+        self.assertEqual(safe_prompt_mismatch_shape({**shape, 'innerTextExact': 'true'}), {'valid': False})
+
+    def test_modern_identity_shape_exports_only_fixed_flags(self):
+        row = {'keyPattern': True, 'visible': True, 'hidden': False,
+            'idsBounded': True, 'idsCount': 2, 'allIdsUuid': True,
+            'allIdsEqual': False, 'selectedCount': 1, 'selectedUuid': True,
+            'selectedFirst': False, 'selectedLast': True, 'selectedAny': True}
+        shape = {'assistantRows': 1, 'rows': [row]}
+        self.assertEqual(safe_modern_identity_shape(shape), {'valid': True, **shape})
+        self.assertEqual(safe_modern_identity_shape({'assistantRows': 1,
+            'rows': [{**row, 'id': 'private'}]}), {'valid': False})
+        self.assertEqual(safe_modern_identity_shape({'assistantRows': 1,
+            'rows': [{**row, 'idsCount': 10}]}), {'valid': False})
+
+    def test_fresh_chat_control_structure_rejects_page_content(self):
+        shape = {'legacyLinks': 'one', 'legacyRootHref': 'yes',
+            'legacyLabel': 'yes', 'legacyEnabled': 'yes',
+            'navButtons': 'multiple', 'namedButtons': 'one',
+            'buttonType': 'absent', 'buttonDisabled': 'no',
+            'buttonAriaDisabled': 'no', 'buttonHref': 'absent',
+            'buttonTarget': 'absent', 'buttonHiddenAncestor': 'no'}
+        self.assertEqual(safe_fresh_chat_control_structure(shape), {'valid': True, **shape})
+        self.assertEqual(safe_fresh_chat_control_structure({**shape, 'text': 'PRIVATE'}), {'valid': False})
+        self.assertEqual(safe_fresh_chat_control_structure({**shape, 'buttonType': 'PRIVATE'}), {'valid': False})
+
 
 
 class BrowserDriverTests(unittest.IsolatedAsyncioTestCase):
@@ -265,10 +313,35 @@ raise SystemExit(1)
             self.assertEqual([event['code'] for event in failures], [code if index == 0 else None])
             self.assertNotIn('DO_NOT_RETAIN', json.dumps(driver.status()))
 
+    async def test_fresh_chat_control_event_is_sanitized_on_both_browser_paths(self):
+        shape = {'legacyLinks': 'zero', 'legacyRootHref': 'unknown',
+            'legacyLabel': 'unknown', 'legacyEnabled': 'unknown',
+            'navButtons': 'multiple', 'namedButtons': 'zero',
+            'buttonType': 'unknown', 'buttonDisabled': 'unknown',
+            'buttonAriaDisabled': 'unknown', 'buttonHref': 'unknown',
+            'buttonTarget': 'unknown', 'buttonHiddenAncestor': 'unknown',
+            'pageText': 'DO_NOT_RETAIN'}
+        value = {'operator_web': 1, 'kind': 'fresh_chat_control_structure',
+            'stage': 'load_fresh_page', 'shape': shape}
+        driver = WebTextBrowserDriver(self.settings, self.root / 'fresh-chat-control-diagnostic')
+        program = 'print(' + repr(json.dumps(value)) + ')\nraise SystemExit(1)'
+        with self.spawn_fixture(program, []), self.assertRaises(ValueError):
+            await driver(self.turn())
+        self.assertEqual([event['shape'] for event in driver.events
+            if event['kind'] == 'fresh_chat_control_structure'], [{'valid': False}])
+        self.assertNotIn('DO_NOT_RETAIN', json.dumps(driver.status()))
+        base = WebTextBrowserDriver({**self.settings, 'window_mode': 'background'},
+            self.root / 'fresh-chat-session-diagnostic')
+        session = WebBrowserSession(base)
+        self.addAsyncCleanup(session.close)
+        session.event(value, {})
+        self.assertEqual(base.events[-1]['shape'], {'valid': False})
+        self.assertNotIn('DO_NOT_RETAIN', json.dumps(base.status()))
+
     async def test_user_binding_diagnostics_keep_only_bounded_counts(self):
         driver = WebTextBrowserDriver(self.settings, self.root / 'binding-diagnostic')
         event = {'operator_web': 1, 'kind': 'public_user_binding', 'shape': {
-            'exact': False, 'supportedTextShape': True, 'sourceLength': 12,
+            'exact': False, 'supportedTextShape': True, 'appSeparatorOnly': True, 'sourceLength': 12,
             'promptLength': 10, 'firstDifference': 7, 'sharedSuffix': 3,
             'prefix': 'DO_NOT_RETAIN', 'sourceNbsp': True, 'promptNbsp': -2,
             'sourceSpaces': 1024 * 1024 + 1, 'promptSpaces': 'DO_NOT_RETAIN'}}
@@ -276,7 +349,7 @@ raise SystemExit(1)
         with self.spawn_fixture(program, []), self.assertRaises(ValueError):
             await driver(self.turn())
         shapes = [event['shape'] for event in driver.events if event['kind'] == 'public_user_binding']
-        self.assertEqual(shapes, [{'exact': False, 'supportedTextShape': True,
+        self.assertEqual(shapes, [{'exact': False, 'supportedTextShape': True, 'appSeparatorOnly': True,
             'sourceLength': 12, 'promptLength': 10, 'firstDifference': 7}])
         base = WebTextBrowserDriver({**self.settings, 'window_mode': 'background'},
             self.root / 'binding-session-diagnostic')

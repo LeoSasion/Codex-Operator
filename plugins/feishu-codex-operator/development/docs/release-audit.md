@@ -7,15 +7,261 @@ counts refer to their individual runs; the current source must be checked with
 the [test instructions](testing.md). A later source-only pass never changes an
 earlier live-task result or proves that installed services were updated.
 
+2026-09-28 review follow-up: a new regression first reproduced rejection of a
+source-bound Markdown URL containing balanced parentheses. The modern citation
+reader now scans nested parentheses within the existing URL bound and preserves
+the original link bytes. Paired cases cover plain/angle destinations, optional
+display markers, the 8192-byte boundary, unbalanced and mismatched sources, and
+oversized input. The 121 focused protocol, MCP and Desktop-configuration checks
+passed. Final full regression passed 952 Python cases (942 passed, 10 existing
+environment skips) and all 123 Node checks. The initial run caught a document
+digest mismatch, corrected using the builder's existing LF normalization before
+the complete rerun; both logs remain private. The 181-file release audit passed.
+This parser repair makes no model request or installed-service change.
+
+2026-09-28 preview acceptance: three successive new inputs through the ordinary
+Desktop composer completed in the same existing GPT-6 Pro/max Web task. Each
+executed its exact new read-only command with exit zero; the second and third
+answers preserved the prior markers without rereading their files. Native
+turn durations were 23.6, 24.9 and 26.7 seconds. Saved login, fixed connection
+and citation settings were reused without assistance windows. These were
+assistant-operated composer inputs, not task-tool forwarding or owner typing.
+The earlier single-character public app-separator mismatch remains failed;
+no input was replayed. Main-window stop/reuse remains a separate acceptance
+gate, as do cross-provider switching and new-user Channels onboarding.
+
+The bounded public projection accepts only the exact selected app link,
+one ASCII-space/NBSP separator and the complete unchanged body, with a second
+exact check before proceeding. Cancellation retains that dispatched projection
+and verifies the current renderer's idle state. Read-only inspection accepts
+only the exact unique mounted modern result, without reading its reply text.
+Fixtures reject body, link, identity, mixed-renderer and ambiguous-row changes.
+Normal `preparing` status now remains distinct from unavailable setup.
+
+An extracted-package lifecycle check exposed missing `CodexConfig` and
+`RouterPort` forwarding in the unified uninstall entry. The entry now forwards
+these explicit uninstall-only options; lifecycle and ownership checks are
+unchanged. The fresh-install/restoration regression now exercises that public
+entry and verifies preserved unrelated settings and retained private runtime
+data. Legacy installations without original ownership remain blocked; a
+runtime-upgrade backup cannot supply first-install ownership.
+
+The complete source regression passed 950 Python cases (940 passed, 10
+existing environment skips) and all 123 Node checks. The 181-file inventory,
+reviewed-document/content screen, syntax audit and whitespace check passed.
+An earlier extracted snapshot passed 69 installation, upgrade, product and
+Desktop-binding cases. Package hashes and fresh-project lifecycle receipts
+remain private; none of these local checks publishes or pushes a release.
+
+2026-09-27 native-result regression repair: a new failing native read isolated
+24 changed nested descriptions, with identities, parameters, strict flags,
+formats and loading unchanged. Indexed continuation now stages complete new
+pages only for visible leaf descriptions with zero schema reads. Published
+first keys remain valid, partial/full reads stay immutable, and native
+history/call/result checks precede publication. Non-indexed requests and all
+other contract changes still fail closed; no read budget is reset. A separate
+configuration repair recognizes exact owned provider bytes when native Codex
+has appended an independent Hooks table before the closing comment. Rebind
+and disconnect preserve those independent bytes; provider edits and ambiguous
+markers still fail. Real rebind preserved every unrelated configuration byte.
+
+After an explicit saved-service refresh, a new GPT-6 Pro/max native task
+completed one actual read and its exact final marker while 250 unread
+descriptions refreshed. A distinct geometry input then returned a real failed
+command: the model combined inspection with a guessed regex that matched no
+source. Both files stayed unchanged, no test ran, and the final answer reported
+the failure. Another distinct temperature input explicitly required awaiting
+inspection before editing. In the same native task, its two commands and two
+paired results completed; only the wrong constant changed, the original test
+bytes remained exact, all five tests ran with exit zero, and the final reply
+matched. These latter inputs used assistant task-tool delivery, not the manual
+composer. They establish this read/edit/test transport, not general model
+coding reliability, all-tool acceptance or seamless provider switching.
+
+A separate new input sent to an already loaded older task reached its cached
+previous service port and failed 502 before the current service received any
+request. It was retained, not resent. Native defaults, saved login and fixed
+tunnel settings remained unchanged. Description generation provenance remains
+unconfirmed; it is not a reason to relax the binding guard or ask for login
+without a current visible requirement.
+
+The later 2026-09-27 maintenance check recovered that exact old task through
+native archive/restore, preserving its UUID, provider, directory and failed
+turn. Restore reported a load error; metadata and archived-list readback proved
+that it had already unarchived and unloaded. The operation was not repeated.
+One different file-read input then completed on the current saved service:
+one actual command, one paired result and the exact final marker in 25.8 seconds.
+The synthetic file and all global configuration bytes remained unchanged;
+Desktop was not restarted. This establishes the assistant-guided maintenance
+flow in native-web-experience, not automatic hot reload or a provider switch.
+The installed CLI was 0.158.0-alpha.2.1; its generated schema still exposes no
+immediate unload field on thread/unsubscribe. No source transport change or
+new model request was needed to inspect that schema.
+
+The focused 185-case protocol, transport, provider, browser and Desktop suite
+passed. The final full Python run completed 950 cases (940 passed, 10 existing
+skips); all 119 Node page/surface checks, the 181-file release inventory/syntax
+audit and the whitespace diff check passed. New regression cases cover all three indexed representations, complete
+new description bytes, retained schema keys, unchanged failed results, read
+and page limits, partial reads and altered history/controls. Historical G1
+success and pre-reorganization source comparison are recorded in the native
+conversation plan; no deleted-code restoration or upstream code copy was needed.
+
+2026-09-26 Web login and continuation repair: the owner's Apple sign-in had
+previously closed the auxiliary window at `web_assistance_navigation_not_allowed`.
+Visible human assistance now permits standard HTTPS identity-provider redirects
+and shows the destination host; hidden execution keeps its narrow navigation
+gate. The owner completed Apple sign-in and closed the window. The saved
+service reached `ready` without a model request and reused that login after
+subsequent explicit restarts. A fresh GPT-6 Pro/max native CLI task completed
+two different inputs: the second exact answer included the first answer's
+marker. The prior-page failure was traced to a visible assistant row whose old
+React child had been detached while its alternate remained mounted. The branch
+resolver now accepts that one-sided case only after proving the remaining
+parent is current; disconnected fixtures still fail closed. This two-turn
+sample used an isolated text-only setting, not a change to the owner's saved
+citation profile. The original `markdown_links_v1` profile was restored.
+
+The current Web renderer exposed two public references during a separate
+search sample, but its prompt also instructed the page not to use Operator.
+That turn was withheld as `web_mcp_context_not_read`; it was not a fair test
+of normal context reading. Later distinct CLI samples read all 2/2 context
+pages and exposed a newer citation representation: public content already
+contains Markdown links and numbered `chatgpt-content-reference` markers,
+while `contentReferences` offsets refer to the earlier raw-marker text. The
+old positional renderer correctly withheld those results. A temporary
+text-only diagnostic profile showed the original public content; it was
+removed, and the owner's `markdown_links_v1` profile was restored. The
+modern projection now identifies that renderer explicitly, checks source
+URLs and numbered public markers, and removes only presentation markers
+adjacent to validated links. A bare numbered marker cannot safely identify
+its source and fails closed; a two-group regression showed that treating its
+display number as a reference-array index could attach the wrong source.
+The older offset-based
+renderer remains separate. One fresh GPT-6 Pro/max CLI search task then
+completed: 2/2 context pages read, zero local tool calls, source-bound final
+returned, and its official Help Center article was independently checked
+against the answer. Other citation layouts and live Desktop UI are not
+proven. All failed inputs and their evidence remain retained; none was
+replayed. A different synthetic question unexpectedly released one native
+tool call and then failed `web_mcp_request_binding_changed` when the tool
+declarations changed; no paired result arrived. That is an unresolved
+continuation case, not a successful tool execution. The retained observation
+does not establish whether tools were added, removed or redefined. Future
+rejections now record only bounded before/after/add/remove declaration counts;
+the guard and no-retry behavior remain unchanged. After an explicit
+source-bound service refresh, a distinct GPT-6 Pro/max isolated CLI coding
+check passed three paired tool steps, the exact synthetic edit and five tests;
+the service returned to ready/idle with no assistance needed. That new success
+does not reclassify the earlier binding failure. The current source passed
+934 Python tests (10 existing skips), 114 page/surface Node tests, the
+181-file release audit and `git diff --check`. Live main-window and
+three-turn acceptance remain open.
+
+Later on 2026-09-26, a distinct native request exposed a moved public New chat
+button under the chat-history navigation. A request-free page inspection
+identified the visible, exact-text button; the selector was extended without
+relaxing the completed-page, empty-composer or unique-control gates. A new
+GPT-6 Pro/max isolated CLI coding check again passed three paired tool calls,
+the exact edit and five real tests. A fresh native task then traversed New
+chat, read all context pages and executed its one read-only command with the
+correct file result, but the next native request changed six of 27 source tool
+declarations. No paired result reached Web; the failed turn remains terminal.
+A separate GPT-5.6 Sol task called `operator_begin` with a nonmatching first
+key and read no context; the source prompt had been submitted intact. A
+GPT-6 Sol probe was rejected before Web dispatch because that route is not in
+the bound catalog. These observations are not login or verification failures.
+Fixed-category diagnostics on further new GPT-6 Pro/max tasks showed unchanged
+tool identities, order, descriptions, parameters and strict flags, excluded
+`defer_loading` flips, and located all six differences in namespace `tools`
+lists. The nested entries were not retained, so their exact change and whether
+any safe subset can be carried across a continuation remained unresolved.
+A final distinct native sample classified the nested difference: 250 same-
+identity tool definitions changed, with zero nested additions, removals or
+order-only changes. Their contents were not retained. This is not evidence for
+a monotonic-addition exception, so online probes stopped and the strict guard
+remains. None of these failed requests was replayed or treated as success.
+One private, local-only CLI/MCP fixture produced
+two Responses requests and one successful synthetic read-only tool result,
+but had 3 top-level tools and no namespaces. It cannot explain the live
+27-item/6-namespace drift; no second local attempt or Web replay was made.
+The earlier full source run passed 941 Python cases (10 existing skips),
+117 Node page/surface checks, the 181-file release audit and `git diff
+--check`. After refreshing the two edited reviewed-document hashes, the
+post-diagnostic full Python regression passed 943 cases (10 existing skips).
+
+2026-09-27 modern page binding follow-up: an independent review found that the
+new public renderer's message units were absent from the older empty-page
+counters. A retained conversation could therefore look blank after a temporary
+chat URL transition. The page now counts both row formats, and preparation,
+assistance closure, request readiness and the final send click all reject a
+retained unit. A separate synthetic mixed-turn fixture first reproduced an
+old completed assistant row being accepted for a new user row. The modern
+projection now requires both rows to share the exact observed turn object;
+otherwise it waits without releasing an answer. The page/surface tests pass
+119/119. After a request-free stop, source-bound configuration update, hidden
+restart and explicit provider rebind, one new synthetic native CLI check passed
+three paired calls, the exact edit and five executed tests. The saved service
+returned ready/idle without assistance; native defaults stayed unchanged.
+This is not live Desktop main-window or earlier declaration-drift acceptance.
+No failed request was replayed.
+
+2026-09-25 navigation bound: an Electron page load previously awaited its
+navigation promise with no deadline, so a network stall could leave the saved
+service indefinitely preparing. The browser surface now ends an uncompleted
+navigation after 60 seconds with a non-retrying fixed error; the worker is
+closed by its existing failure path and no input is replayed. A hanging-load
+fixture and the complete page/host Node suite passed 111/111 checks. This
+does not resolve the separately observed old-conversation startup route.
+
+2026-09-25 continuation follow-up: a fresh user-home native CLI task completed
+one GPT-6 Pro/max text turn with the exact marker. That isolated invocation
+selected live search only for Web; the user's global search setting stayed
+unchanged. The second distinct input in the same task failed before browser
+dispatch at the prior-page identity check, with zero new model requests or
+tool calls. The current ChatGPT page uses different public message rows and a
+sidebar New chat button, so the page adapter now checks the exact completed
+turn and waits for a confirmed empty destination before admitting another
+turn. The resulting 63 page and 47 host checks passed; the 929-case Python
+suite passed before the final bounded page-read wait, which changed no Python
+source. Live two-turn acceptance of this final source remains unverified. A
+later explicit service start failed page preparation on an unrelated old
+conversation view, and another stopped request-free instance exposed no
+visible login or human-verification control. Those observations are startup
+failures, not a reason to ask the owner to verify again. Both stopped
+instances and the earlier failed native input remain in their original
+records. No Web Desktop picker or same-task provider switch was accepted.
+
+2026-09-25 current Web repair: the saved, exact-source Web service reached a
+logged-in hidden empty page without a new assistance request. The current
+ChatGPT editor's app menu exposes a unique name before selection and an exact
+app ID in the inserted pill; it consumes the placeholder separator and encodes
+the inserted replacement as NBSP. The driver now binds that one editor form
+and the exact resulting public app-link prefix while preserving every byte of
+the native request body. A new GPT-6 Pro/max isolated CLI case passed: three
+paired `operator_call` results, the requested exact source edit, five executed
+tests with exit code 0, and the exact final reply. The preceding new cases
+remain failed at their original gates; none was replayed. Concurrent React
+assistant rows without a final selection marker are now waited out rather than
+accepted as completed. The Python suite passed 929 tests (919 passed, 10
+existing skips), and the then-current page/host suite passed 107 Node tests.
+This verifies a real Web
+to native CLI coding loop, not the main Desktop composer, live model picker,
+same-task provider switching, every model or a published release. The exact
+installed ChatGPT app was visible with its existing all-tools permission, but
+its frozen tool snapshot was not exposed for comparison and no refresh was
+performed. API credentials were unavailable in the test process and the local
+LM Studio endpoint was not running, so those live generations were not tested.
+
 2026-09-25 final source gate: the complete suite passed 925 Python cases
 (915 passed, 10 existing skips) and all 103 Node checks. After an explicit,
 backed-up legacy runtime migration of 20 code files, the current Channels
 source completed one exact Feishu user-to-bot reply: one inbox attempt and
 the expected bound task's final callback closed. This verifies that existing
-user's route, not first contact from another account. The current Web source
-remains fail-closed before browser dispatch because the managed effort slider
+user's route, not first contact from another account. That run's Web source
+remained fail-closed before browser dispatch because the managed effort slider
 is under `aria-hidden`; that attempt made zero browser dispatches and zero MCP
-calls. Current Web coding and live main-window acceptance remain unverified;
+calls. Web coding and live main-window acceptance were unverified at that run;
 the earlier successful cases below are historical evidence, not a pass for
 this source.
 
