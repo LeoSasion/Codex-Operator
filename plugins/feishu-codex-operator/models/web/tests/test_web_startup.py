@@ -89,6 +89,20 @@ class WebStartupTests(unittest.TestCase):
                 startup.start(self.path)
             start.assert_not_called()
 
+    def test_old_call_only_entry_cannot_start_without_voice_websocket_route(self):
+        self.prepare()
+        plan = startup.load(self.path)
+        state = Path(plan['router_state'])
+        old = startup.config.managed_entry_blocks(state, plan['port'])[1]
+        target = self.home/'config.toml'
+        target.write_bytes(old + b'model="native"\n')
+        self.write(state/'codex-entry.json', {'config': str(target.resolve()), 'block': old.decode()})
+        with patch.object(startup.manager, 'start') as start:
+            with self.assertRaisesRegex(startup.config.RouterError, 'legacy_router_voice_route_unprotected'):
+                startup.start(self.path)
+            start.assert_not_called()
+        self.assertTrue(startup.entry_active(plan))
+
     def test_service_start_once_then_observe_and_bind(self):
         self.prepare()
         with patch.object(startup.manager, 'start', return_value={'status':'starting'}) as start, \
@@ -228,7 +242,10 @@ class WebStartupTests(unittest.TestCase):
             result = startup.start(self.path)
         self.assertTrue(result['entry_active'])
         self.assertEqual(startup.manager.read_json(self.bundle/'activation.json')['phase'], 'activated')
-        self.assertTrue((self.home/'config.toml').read_bytes().endswith(original))
+        active = (self.home/'config.toml').read_bytes()
+        self.assertTrue(active.endswith(original))
+        self.assertEqual(active.count(b'experimental_realtime_webrtc_call_base_url'), 1)
+        self.assertEqual(active.count(b'experimental_realtime_ws_base_url'), 1)
         startup.config.deactivate(self.bundle/'router', self.home/'config.toml')
         self.assertEqual((self.home/'config.toml').read_bytes(), original)
 

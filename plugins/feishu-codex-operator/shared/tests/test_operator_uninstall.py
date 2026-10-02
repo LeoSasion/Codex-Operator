@@ -78,6 +78,27 @@ class UninstallRoutingTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(),before)
         self.assertEqual(self.stops,0)
 
+    def test_entry_preflight_keeps_lifecycle_checks_without_runtime_ownership(self):
+        journal=self.project/'.codex/operator-entry-migration/journal.json'
+        journal.parent.mkdir()
+        journal.write_text(json.dumps({'scope':'desktop_entry_only','project':str(self.project),'phase':'installed'}),encoding='utf8')
+        before=self.config.read_bytes()
+        self.active=1
+        observed=uninstall.inspect_entry(self.project,self.config,self.port)
+        self.assertEqual(observed['active_router_requests'],1)
+        self.assertTrue(observed['owned_router_entry'])
+        with closing(sqlite3.connect(self.runtime/'callbacks.sqlite3')) as db, db:
+            db.execute('create table final_callback_requests (state text)')
+            db.execute("insert into final_callback_requests values ('pending')")
+        self.assertEqual(uninstall.inspect_entry(self.project,self.config,self.port)['pending_callbacks'],1)
+        with self.assertRaisesRegex(ValueError,'restore_separate_desktop_entry_migration'):
+            uninstall.inspect(self.project,self.config,self.port)
+        self.router_script=self.project/'unowned/router.py'
+        with self.assertRaisesRegex(ValueError,'router_identity_mismatch'):
+            uninstall.inspect_entry(self.project,self.config,self.port)
+        self.assertEqual(self.config.read_bytes(),before)
+        self.assertEqual(self.stops,0)
+
     def test_detach_restores_native_bytes_and_preserves_other_runtime_registration(self):
         original=json.dumps({'schema_version':2,'runtime_dir':str(self.project/'other-runtime')}).encode()
         self.callback.write_bytes(original)
@@ -85,6 +106,26 @@ class UninstallRoutingTests(unittest.TestCase):
         self.assertTrue(result['routing_detached']); self.assertEqual(self.stops,1)
         self.assertEqual(self.config.read_bytes(),self.original)
         self.assertFalse((self.state/'codex-entry.json').exists()); self.assertEqual(self.callback.read_bytes(),original)
+
+    def test_detach_accepts_older_call_only_owned_prefix(self):
+        protected = settings.managed_entry_blocks(self.state, self.port)[1]
+        self.config.write_bytes(protected + self.original)
+        (self.state/'codex-entry.json').write_text(json.dumps({
+            'config': str(self.config), 'block': protected.decode()}), encoding='utf-8')
+        result = uninstall.detach(self.project, self.config, self.port)
+        self.assertTrue(result['routing_detached'])
+        self.assertEqual(self.config.read_bytes(), self.original)
+        self.assertFalse((self.state/'codex-entry.json').exists())
+
+    def test_detach_accepts_both_voice_routes_in_owned_prefix(self):
+        protected = settings.managed_entry_blocks(self.state, self.port)[3]
+        self.config.write_bytes(protected + self.original)
+        (self.state/'codex-entry.json').write_text(json.dumps({
+            'config': str(self.config), 'block': protected.decode()}), encoding='utf-8')
+        result = uninstall.detach(self.project, self.config, self.port)
+        self.assertTrue(result['routing_detached'])
+        self.assertEqual(self.config.read_bytes(), self.original)
+        self.assertFalse((self.state/'codex-entry.json').exists())
 
     def test_active_request_and_pending_callback_block_before_config_mutation(self):
         before=self.config.read_bytes(); self.active=1
@@ -121,6 +162,100 @@ class UninstallRoutingTests(unittest.TestCase):
         with self.assertRaises(ValueError): uninstall.detach(self.project,self.config,self.port)
         self.assertEqual(self.config.read_bytes(),changed); self.assertEqual(self.stops,0); self.assertEqual(self.paths,[])
 
+    def test_unified_candidate_config_blocks_inspect_and_detach_before_router_contact(self):
+        original = self.config.read_bytes()
+        for candidate in (b'# BEGIN OPERATOR UNIFIED CANDIDATE\n',
+                          b'model_provider = "operator_unified_candidate"\n',
+                          b'# BEGIN OPERATOR UNIFIED PROVIDER CANDIDATE\n'):
+            with self.subTest(candidate=candidate):
+                changed = original + candidate
+                self.config.write_bytes(changed)
+                for action in (uninstall.inspect, uninstall.detach):
+                    with self.assertRaisesRegex(uninstall.UnifiedCandidateConflict,
+                                                'unified_candidate_requires_review_before_uninstall'):
+                        action(self.project,self.config,self.port)
+                self.assertEqual(self.config.read_bytes(), changed)
+                self.assertEqual(self.paths, [])
+                self.assertEqual(self.stops, 0)
+
+    def test_unified_candidate_escaped_toml_identity_blocks_uninstall(self):
+        # A raw-byte marker check alone misses TOML Unicode escape sequences.
+        self.config.write_bytes(
+            b'model_provider = "operator\\u005funified_candidate"\n'
+            b'[model_providers."operator\\u005funified_candidate"]\n'
+            b'name = "OpenAI"\n')
+        for action in (uninstall.inspect, uninstall.detach):
+            with self.assertRaisesRegex(uninstall.UnifiedCandidateConflict,
+                                        'unified_candidate_requires_review_before_uninstall'):
+                action(self.project, self.config, self.port)
+        self.assertEqual(self.paths, [])
+        self.assertEqual(self.stops, 0)
+
+    def test_unified_candidate_marker_or_transaction_blocks_even_if_reverted(self):
+        original = self.config.read_bytes()
+        marker = self.config.parent/'operator-unified-disposable.json'
+        marker.write_text('{}', encoding='utf-8')
+        with self.assertRaises(uninstall.UnifiedCandidateConflict):
+            uninstall.detach(self.project,self.config,self.port)
+        marker.unlink()
+        state = self.config.parent/'operator-unified-candidate'
+        state.mkdir()
+        (state/'journal.json').write_text('{"phase":"reverted"}', encoding='utf-8')
+        with self.assertRaises(uninstall.UnifiedCandidateConflict):
+            uninstall.detach(self.project,self.config,self.port)
+        self.assertEqual(self.config.read_bytes(),original)
+        self.assertEqual(self.paths,[])
+        self.assertEqual(self.stops,0)
+
+    def test_unified_activation_plan_or_uncertainty_blocks_before_router_contact(self):
+        original = self.config.read_bytes()
+        state = self.config.parent/'operator-unified-activation'
+        state.mkdir()
+        for record in (None, 'plan.json', 'arm.json', 'attempt.json',
+                       'completion.json', 'marker-release/intent.json'):
+            if record is not None:
+                path = state/record
+                path.parent.mkdir(parents=True,exist_ok=True)
+                path.write_bytes(b'{}')
+            with self.subTest(record=record):
+                for action in (uninstall.inspect, uninstall.detach):
+                    with self.assertRaisesRegex(uninstall.UnifiedCandidateConflict,
+                                                'unified_activation_requires_review_before_uninstall'):
+                        action(self.project,self.config,self.port)
+                self.assertEqual(self.config.read_bytes(),original)
+                self.assertEqual(self.paths,[])
+                self.assertEqual(self.stops,0)
+
+    def test_unified_activation_cli_preserves_fixed_failure_code(self):
+        state = self.config.parent/'operator-unified-activation'
+        state.mkdir()
+        (state/'journal.json').write_bytes(b'{"phase":"prepared_not_armed"}')
+        result = subprocess.run([sys.executable, '-B', str(ROOT/'scripts/operator_uninstall.py'),
+                                 'inspect', '--project-root', str(self.project),
+                                 '--codex-config', str(self.config), '--port', str(self.port)],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode,1)
+        self.assertEqual(json.loads(result.stdout),
+                         {'error':'uninstall_preflight_or_detach_failed',
+                          'reason':'unified_activation_requires_review_before_uninstall',
+                          'retried':False})
+        self.assertEqual(self.paths,[])
+        self.assertEqual(self.stops,0)
+
+    def test_unified_candidate_cli_preserves_fixed_failure_code(self):
+        self.config.write_bytes(self.config.read_bytes() + b'operator_unified_candidate')
+        result = subprocess.run([sys.executable, '-B', str(ROOT/'scripts/operator_uninstall.py'),
+                                 'inspect', '--project-root', str(self.project),
+                                 '--codex-config', str(self.config), '--port', str(self.port)],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode,1)
+        self.assertEqual(json.loads(result.stdout),
+                         {'error':'uninstall_preflight_or_detach_failed',
+                          'reason':'unified_candidate_requires_review_before_uninstall',
+                          'retried':False})
+        self.assertEqual(self.paths,[])
+        self.assertEqual(self.stops,0)
+
     def web_startup_fixture(self):
         bundle=self.project/'.codex/operator-web-startup'
         (bundle/'router').mkdir(parents=True)
@@ -148,7 +283,8 @@ class UninstallRoutingTests(unittest.TestCase):
     def test_no_web_state_needs_no_optional_web_dependencies(self):
         result=subprocess.run([sys.executable,'-I','-S','-B','-c',
             'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); '
-            'import operator_uninstall; operator_uninstall.inspect_web_startup(Path(sys.argv[2]),Path(sys.argv[3]))',
+            'import operator_uninstall; operator_uninstall.inspect_unified_candidate(Path(sys.argv[3])); '
+            'operator_uninstall.inspect_web_startup(Path(sys.argv[2]),Path(sys.argv[3]))',
             str(ROOT/'scripts'),str(self.project),str(self.config)],
             capture_output=True,text=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)

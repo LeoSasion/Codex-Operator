@@ -11,6 +11,8 @@ from run_tests import prepare_test_imports as _prepare_test_imports
 _prepare_test_imports(_OPERATOR_PLUGIN_ROOT)
 
 from dataclasses import replace
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
 import sys
@@ -36,14 +38,17 @@ class WebDesktopTests(unittest.TestCase):
         self.target = self.home / 'config.toml'
         self.original = b'\xef\xbb\xbfmodel = "native-example"\r\n# preserved comment\r\n[features]\r\nplugins = true\r\n'
         self.target.write_bytes(self.original)
+        self.settings = self.root / 'settings.json'
+        self.settings.write_text('{}', encoding='utf8')
         self.binding = {'profile_sha256': desktop.digest(b'{}'), 'session_sha256': 'a' * 64}
         self.route = replace(manager.service.text_route(tools=True), api_base='http://127.0.0.1:54321/v1',
             web_binding=WebServiceBinding(**self.binding, token='private-local-test-token'))
         for name, value in (
-                ('load_profile', lambda profile: (profile, {})),
+                ('load_profile', lambda profile: (profile, {'settings': {
+                    'path': str(self.settings), 'sha256': manager.digest(self.settings.read_bytes())}})),
                 ('route_preview', lambda profile: self.binding),
                 ('resolve_route', lambda profile, expected: self.route),
-                ('resolve_routes', lambda profile, expected: (self.route,)),
+                ('resolve_routes', lambda profile, expected, **kwargs: (self.route,)),
                 ('current_record', lambda profile: {'attempt': 'fixture'}),
                 ('state_path', lambda profile, record: profile),
                 ('session_snapshot', lambda state, record: (None, self.binding['session_sha256'])),
@@ -53,6 +58,24 @@ class WebDesktopTests(unittest.TestCase):
 
     def prepare(self):
         return desktop.prepare(self.profile, self.home)
+
+    def test_native_observer_home_mismatch_blocks_prepare_connect_rebind_without_writes(self):
+        other_home = self.root / 'other-home'; other_home.mkdir()
+        wrong = {'transport': 'mcp_v1', 'native_cancellation_mode': 'app_server_metadata_v1',
+            'native_cancellation_home': str(other_home)}
+        snapshot = lambda: {p.relative_to(self.root): p.read_bytes()
+            for p in self.root.rglob('*') if p.is_file()}
+        for action in (desktop.prepare, desktop.connect, desktop.rebind):
+            self.settings.write_text(json.dumps(wrong), encoding='utf8')
+            before = snapshot()
+            with self.assertRaisesRegex(ValueError, 'web_desktop_native_home_mismatch'):
+                action(self.profile, self.home)
+            self.assertEqual(snapshot(), before)
+            self.settings.write_text(json.dumps({**wrong, 'native_cancellation_home': str(self.home)}), encoding='utf8')
+            if action is desktop.prepare:
+                desktop.prepare(self.profile, self.home)
+            elif action is desktop.connect:
+                desktop.connect(self.profile, self.home)
 
     def test_prepare_has_no_host_mutation_and_repeat_reuses_one_trial(self):
         first = self.prepare()
@@ -104,6 +127,41 @@ class WebDesktopTests(unittest.TestCase):
         self.assertFalse(report['desktop_acceptance'])
         self.assertIn(first['provider'], current['model_providers'])
         self.assertNotIn('profiles', current)
+
+    def test_connect_and_rebind_reject_unbound_service_without_writes(self):
+        self.prepare()
+        snapshot = lambda: {p.relative_to(self.root): p.read_bytes()
+            for p in self.root.rglob('*') if p.is_file()}
+        def reject(profile, expected, *, require_bound_session=False):
+            self.assertTrue(require_bound_session)
+            raise ValueError('web_manager_session_binding_required')
+        before = snapshot()
+        with patch.object(desktop, 'resolve_routes', side_effect=reject):
+            with self.assertRaisesRegex(ValueError, 'session_binding_required'):
+                desktop.connect(self.profile, self.home)
+        self.assertEqual(snapshot(), before)
+        desktop.connect(self.profile, self.home)
+        before = snapshot()
+        with patch.object(desktop, 'resolve_routes', side_effect=reject):
+            with self.assertRaisesRegex(ValueError, 'session_binding_required'):
+                desktop.rebind(self.profile, self.home)
+        self.assertEqual(snapshot(), before)
+
+    def test_cli_preserves_only_known_binding_gate_diagnostic(self):
+        for message in ('web_manager_session_binding_required', 'PRIVATE_UNKNOWN_ERROR'):
+            output = io.StringIO()
+            with patch.object(sys, 'argv', ['operator_web_desktop', 'desktop-connect',
+                    '--profile', str(self.profile), '--codex-home', str(self.home)]), \
+                    patch.object(desktop, 'connect', side_effect=ValueError(message)), redirect_stdout(output):
+                self.assertEqual(desktop.main(), 1)
+            report = json.loads(output.getvalue())
+            self.assertEqual(report['status'], 'unavailable')
+            if message.startswith('web_manager_'):
+                self.assertEqual(report['code'], message)
+                self.assertEqual(report['next_action'], 'start')
+            else:
+                self.assertNotIn('code', report)
+                self.assertNotIn(message, output.getvalue())
 
     def test_explicit_rebind_keeps_provider_and_restores_original_after_service_restart(self):
         self.prepare(); desktop.connect(self.profile, self.home)

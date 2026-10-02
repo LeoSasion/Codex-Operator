@@ -319,19 +319,29 @@ function hostHarness(configOverride = {}) {
       return result;
     }
     async executeJavaScript(source) {
-      if (source.includes("function controls(")) return { ok: true, value: { ...fixture.state } };
-      if (source.includes("function startupControlStructure(")) return { ok: true, value: fixture.structure };
-      if (source.includes("function composerPrefix(")) return { ok: true, value: fixture.draft };
-      if (source.includes("function publicUserBindingShape(")) {
-        const args = JSON.parse(source.match(/\)\(\.\.\.(\[[^\n]*\])\) \}; \}/)[1]);
-        return { ok: true, value: { exact: fixture.bindingExact !== false
-          && (fixture.expectedPrompt === undefined || args[0] === fixture.expectedPrompt) } };
-      }
       if (source.includes("function cancelGeneration(")) {
         fixture.operations.push("cancelGeneration");
+        if (fixture.cancelPageContext) return vm.runInNewContext(source, fixture.cancelPageContext);
         if (fixture.stopAvailable === false) return { ok: true, value: false };
         fixture.stopPresent = fixture.keepGenerating === true;
         return { ok: true, value: true };
+      }
+      if (source.includes("function controls(")) return { ok: true, value: { ...fixture.state } };
+      if (source.includes("function startupControlStructure(")) return { ok: true, value: fixture.structure };
+      if (source.includes("function composerPrefix(")) return { ok: true, value: fixture.draft };
+      if (source.includes("function capturePublicDispatchBinding(")) {
+        const args = JSON.parse(source.match(/\)\(\.\.\.(\[[^\n]*\])\) \}; \}/)[1]);
+        const exact = fixture.bindingExact !== false
+          && (fixture.expectedPrompt === undefined || args[0] === fixture.expectedPrompt);
+        return {ok:true,value:{prompt:args[0],userId:exact ? fixture.userId ?? 'fixture-user' : null,
+          shape:{exact},modern:false,requestBinding:null}};
+      }
+      if (source.includes("function publicUserBindingShape(")) {
+        const args = JSON.parse(source.match(/\)\(\.\.\.(\[[^\n]*\])\) \}; \}/)[1]);
+        const exact = fixture.bindingExact !== false
+          && (fixture.expectedPrompt === undefined || args[0] === fixture.expectedPrompt);
+        return { ok: true, value: args[2] === true
+          ? (exact ? fixture.userId ?? 'fixture-user' : null) : {exact} };
       }
       if (source.includes("function publicInterruptionState("))
         return { ok: true, value: { sessionExpired: false, approvalCards: fixture.approval ? 1 : 0,
@@ -421,6 +431,7 @@ test("a prepared temporary URL cannot admit retained modern conversation rows", 
   try {
     await observed(h, () => h.outputs.some(x => x.kind === 'worker_prepared'));
     h.fixture.state.modernRowCount = 2;
+    h.fixture.state.pageKind = 'other'; // A conversation title is not page identity.
     await assert.rejects(h.invoke('loadFreshPage()'), /web_prepared_page_changed/);
     assert.equal(h.outputs.some(x => x.kind === 'dispatch_started'), false);
     assert.equal(h.context.__host.surface.webContents.calls.filter(([kind]) => kind === 'load').length, 1);
@@ -584,7 +595,8 @@ test("bound cancellation retains one hidden worker only after stop and stable pa
     h.fixture.stopPresent = true;
     h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
     h.invoke(`runCurrentPage = async function () {
-      stage = 'wait_public_final'; sent = true; dispatchedPublicPrompt = config.text; record('dispatch_started');
+      stage = 'wait_public_final'; sent = true; dispatchedPublicPrompt = config.text;
+      dispatchedUserId = 'fixture-user'; record('dispatch_started');
       if (config.text === 'next independent input') return finish(0, {model: config.model,
         effortIndex: 2, publicMessage: {content: {parts: ['next answer']}}});
       await waitFor(() => false, 5000);
@@ -608,9 +620,71 @@ test("bound cancellation retains one hidden worker only after stop and stable pa
   } finally { h.cleanup(); }
 });
 
+test("legacy one-shot native input retains its bound best-effort Stop without worker reuse", async () => {
+  const h = hostHarness();
+  try {
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
+    h.fixture.state.userCount = 1;
+    h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
+    h.context.__host.surface.window.visible = true;
+    await h.invoke(`config.backgroundInput = false; workerMode = false;
+      sent = true; dispatchedPublicPrompt = 'legacy explicit input'; dispatchedUserId = 'fixture-user';
+      cancelOwnedGeneration(false);`);
+    assert.deepEqual(h.fixture.operations.filter(x => x === 'cancelGeneration'), ['cancelGeneration']);
+    assert.equal(h.outputs.some(x => x.cancelledIdleVerified === true), false);
+    assert.equal(h.outputs.find(x => x.kind === 'failed').error, 'web_cancelled_no_retry');
+  } finally { h.cleanup(); }
+});
+
+test('host Stop rechecks the actual page after its earlier identity observation without retrying', async () => {
+  const {stopControlSelector} = require(operatorTestScript('web_browser_page.cjs'));
+  for (const change of ['none', 'identity', 'source', 'route']) {
+    const h = hostHarness();
+    try {
+      await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
+      h.fixture.state.userCount = 1;
+      h.fixture.stopPresent = true;
+      h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
+      let clicks = 0;
+      const root = {tag: 3, return: null, stateNode: {}};
+      root.stateNode.current = root;
+      const id = change === 'identity' ? 'different-user' : 'fixture-user';
+      const source = change === 'source' ? 'different request' : 'exact cancellation input';
+      const fiber = {memoizedProps: {message: {id, author: {role: 'user'},
+        content: {content_type: 'text', parts: [source]}}}, return: root};
+      root.child = fiber;
+      const user = {getAttribute: () => id, __reactFiber$fixture: fiber};
+      const composer = {textContent: '', getClientRects: () => [{}], getAttribute: () => 'true'};
+      const stop = {getClientRects: () => [{}], getAttribute: () => null, closest: () => null,
+        disabled: false, click: () => clicks++};
+      h.fixture.cancelPageContext = {URL, location: {href: change === 'route'
+        ? 'https://chatgpt.com/plugins' : 'https://chatgpt.com/?temporary-chat=true'},
+        document: {title: 'ChatGPT', querySelectorAll: selector => selector === '#prompt-textarea' ? [composer]
+          : selector === '[data-message-author-role="user"]' ? [user]
+          : selector === stopControlSelector() ? [stop] : []}};
+      h.invoke(`runCurrentPage = async function () {
+        stage = 'wait_public_final'; sent = true; dispatchedPublicPrompt = config.text;
+        dispatchedUserId = 'fixture-user'; record('dispatch_started');
+        await waitFor(() => false, 5000);
+      }`);
+      h.put('next.json', {id: 'f'.repeat(32), text: 'exact cancellation input'});
+      await observed(h, () => h.outputs.some(x => x.kind === 'dispatch_started'));
+      h.put('cancel.json', {id: 'f'.repeat(32)});
+      await observed(h, () => h.outputs.some(x => Object.hasOwn(x, 'exitCode')));
+      assert.equal(clicks, change === 'none' ? 1 : 0, change);
+      assert.deepEqual(h.fixture.operations.filter(x => x === 'cancelGeneration'), ['cancelGeneration']);
+      assert.equal(h.outputs.filter(x => x.kind === 'dispatch_started').length, 1);
+      assert.equal(h.outputs.find(x => x.kind === 'failed').error, 'web_cancelled_no_retry');
+      if (change !== 'none') assert.equal(h.outputs.find(x => x.kind === 'cancel_click_unavailable').error,
+        change === 'route' ? 'web_cancel_page_binding_required' : 'web_cancel_user_binding_required');
+      assert.equal(h.outputs.some(x => x.cancelledIdleVerified === true), false);
+    } finally {h.cleanup();}
+  }
+});
+
 test("cancellation cannot reuse mismatched, busy, draft, permission or unconfirmed pages", async () => {
   for (const change of [
-    {bindingExact: false}, {stopAvailable: false}, {keepGenerating: true}, {draft: 'private draft'},
+    {bindingExact: false}, {userId: 'different-user'}, {stopAvailable: false}, {keepGenerating: true}, {draft: 'private draft'},
     {approval: true}, {visible: true}, {wrongCancel: true}, {noReuse: true},
   ]) {
     const h = hostHarness();
@@ -620,7 +694,8 @@ test("cancellation cannot reuse mismatched, busy, draft, permission or unconfirm
       h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
       h.context.__host.surface.window.visible = change.visible === true;
       h.invoke(`runCurrentPage = async function () {
-        stage = 'wait_public_final'; sent = true; dispatchedPublicPrompt = config.text; record('dispatch_started');
+        stage = 'wait_public_final'; sent = true; dispatchedPublicPrompt = config.text;
+        dispatchedUserId = 'fixture-user'; record('dispatch_started');
         await waitFor(() => false, 5000);
       }`);
       h.put('next.json', {id: 'a'.repeat(32), text: 'one input'});
@@ -631,6 +706,9 @@ test("cancellation cannot reuse mismatched, busy, draft, permission or unconfirm
       h.advanceTime(3000);
       await observed(h, () => h.outputs.some(x => Object.hasOwn(x, 'exitCode')));
       assert.equal(h.outputs.some(x => x.cancelledIdleVerified === true), false);
+      if (change.bindingExact === false || change.userId)
+        assert.equal(h.outputs.find(x => x.kind === 'cancel_click_unavailable')?.error,
+          'web_cancel_user_binding_required');
       assert.equal(h.outputs.filter(x => x.kind === 'dispatch_started').length, 1);
       assert.ok(h.fixture.operations.filter(x => x === 'cancelGeneration').length <= 1);
       assert.equal(h.outputs.some(x => x.kind === 'assistance_opened'), false);
@@ -650,6 +728,7 @@ test("current app-pill cancellation binds its dispatched public prompt and moder
     h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
     h.invoke(`runCurrentPage = async function () {
       dispatchedPublicPrompt = ${JSON.stringify(h.fixture.expectedPrompt)};
+      dispatchedUserId = 'fixture-user';
       stage = 'wait_public_final'; sent = true; record('dispatch_started');
       await waitFor(() => false, 5000);
     }`);
@@ -663,6 +742,102 @@ test("current app-pill cancellation binds its dispatched public prompt and moder
     assert.equal(h.outputs.some(x => Object.hasOwn(x, 'exitCode')), false);
     assert.equal(h.outputs.filter(x => x.kind === 'failed').length, 1);
   } finally { h.cleanup(); }
+});
+
+test("a virtualized user cancellation carries its private binding and cannot reuse an unrelated turn", async () => {
+  for (const matches of [true, false]) {
+    const h = hostHarness();
+    try {
+      await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
+      Object.assign(h.fixture.state, {userCount: 0, assistantCount: 0, modernRowCount: 1});
+      h.fixture.bindingExact = false;
+      h.fixture.stopPresent = true;
+      h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
+      h.invoke(`const existingPageRead = inPage;
+        let privateBindingReads = 0;
+        inPage = async (fn,...args) => {
+          if (fn === page.publicBoundUserIdentity) {
+            requireValue(args[0] === config.text && args[1] === dispatchedUserId
+              && args[2] === dispatchedRequestBinding,'web_binding_changed');
+            privateBindingReads++;
+            return ${matches} ? dispatchedUserId : null;
+          }
+          if (fn === page.cancelGeneration) requireValue(args[0] === config.text && args[1] === dispatchedUserId
+            && args[2] === dispatchedRequestBinding && args[3] === null, 'web_binding_changed');
+          return existingPageRead(fn,...args);
+        };
+        runCurrentPage = async function () {
+          dispatchedPublicPrompt = config.text;
+          dispatchedUserId = '11111111-1111-4111-8111-111111111111';
+          dispatchedRequestBinding = {kind:'modern_fresh_document_v1',userId:dispatchedUserId,prompt:config.text,
+            conversationId:'22222222-2222-4222-8222-222222222222',nonce:workerRequestId};
+          stage = 'wait_public_final'; sent = true; record('dispatch_started');
+          await waitFor(() => false,5000);
+        };`);
+      h.put('next.json', {id: 'b'.repeat(32), text: 'new exact virtualized cancellation'});
+      await observed(h, () => h.outputs.some(x => x.kind === 'dispatch_started'));
+      h.put('cancel.json', {id: 'b'.repeat(32), reuse_when_idle: true});
+      await observed(h, () => h.outputs.some(x => x.kind === 'worker_idle' && x.requestId));
+      assert.equal(h.outputs.find(x => x.kind === 'worker_idle' && x.requestId).cancelledIdleVerified, matches);
+      assert.equal(h.fixture.operations.filter(x => x === 'cancelGeneration').length, matches ? 1 : 0);
+      assert.equal(h.invoke('privateBindingReads > 0'), true);
+      assert.equal(h.outputs.some(x => JSON.stringify(x).includes('11111111-1111-4111-8111-111111111111')), false);
+    } finally {h.cleanup();}
+  }
+});
+
+test("cancel idle timeout records its fixed failed gate without exposing page data", async () => {
+  for (const [state, code] of [
+    [{pageKind: 'challenge'}, 'web_cancel_idle_page_kind'],
+    [{userCount: 0}, 'web_cancel_idle_user_shape_changed'],
+    [{loginVisible: true}, 'web_cancel_idle_login_visible'],
+    [{composer: false}, 'web_cancel_idle_composer_missing'],
+  ]) {
+    const h = hostHarness();
+    try {
+      await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
+      Object.assign(h.fixture.state, {userCount: 1}, state);
+      h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
+      h.invoke(`runCurrentPage = async function () {
+        stage = 'wait_public_final'; sent = true; dispatchedPublicPrompt = config.text;
+        dispatchedUserId = 'fixture-user';
+        record('dispatch_started'); await waitFor(() => false, 5000);
+      }`);
+      h.put('next.json', {id: 'e'.repeat(32), text: 'new diagnostic input'});
+      await observed(h, () => h.outputs.some(x => x.kind === 'dispatch_started'));
+      h.put('cancel.json', {id: 'e'.repeat(32), reuse_when_idle: true});
+      await observed(h, () => h.outputs.some(x => x.kind === 'cancel_click_attempted'));
+      h.advanceTime(2100);
+      await observed(h, () => h.outputs.some(x => x.kind === 'cancel_idle_unverified'));
+      assert.equal(h.outputs.find(x => x.kind === 'cancel_idle_unverified').error, code);
+      assert.equal(h.outputs.some(x => x.cancelledIdleVerified === true), false);
+      assert.deepEqual(h.fixture.operations.filter(x => x === 'cancelGeneration'), ['cancelGeneration']);
+    } finally { h.cleanup(); }
+  }
+});
+
+test("a ChatGPT title cannot make login or plugin pages reusable after cancellation", async () => {
+  for (const url of ['https://chatgpt.com/auth/login', 'https://chatgpt.com/plugins']) {
+    const h = hostHarness();
+    try {
+      await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
+      h.fixture.state.userCount = 1;
+      h.context.__host.surface.webContents.url = url;
+      h.invoke(`runCurrentPage = async function () {
+        stage = 'wait_public_final'; sent = true; dispatchedPublicPrompt = config.text;
+        dispatchedUserId = 'fixture-user';
+        record('dispatch_started'); await waitFor(() => false, 5000);
+      }`);
+      h.put('next.json', {id: 'f'.repeat(32), text: 'new route fixture'});
+      await observed(h, () => h.outputs.some(x => x.kind === 'dispatch_started'));
+      h.put('cancel.json', {id: 'f'.repeat(32), reuse_when_idle: true});
+      await observed(h, () => h.outputs.some(x => x.kind === 'cancel_click_unavailable'));
+      assert.equal(h.outputs.find(x => x.kind === 'cancel_click_unavailable').error,
+        'web_cancel_page_binding_required');
+      assert.deepEqual(h.fixture.operations.filter(x => x === 'cancelGeneration'), []);
+      assert.equal(h.outputs.some(x => x.cancelledIdleVerified === true), false);
+    } finally { h.cleanup(); }
+  }
 });
 
 test("dispatch binds one exact app separator projection without reinserting or resending the body", async () => {
@@ -683,10 +858,10 @@ test("dispatch binds one exact app separator projection without reinserting or r
           if (fn.name === 'selectedConnector') return {id:config.connectorMention.id, publicPrefix:head+'\\u00a0'};
           if (fn.name === 'composerPrefix') return 'Operator ';
           if (fn.name === 'sendOnce') { fixtureSends++; return; }
-          if (fn.name === 'publicUserBindingShape') {
+          if (fn.name === 'capturePublicDispatchBinding') {
             const expected = head + (${JSON.stringify(variant)} === 'nbsp' ? '\\u00a0' : ' ') + config.text;
-            return {exact: !['changed','false-classification'].includes(${JSON.stringify(variant)}) && args[0] === expected,
-              appSeparatorOnly: ['space','false-classification'].includes(${JSON.stringify(variant)})};
+            return {prompt:expected,userId:'fixture-user',modern:false,requestBinding:null,
+              shape:{exact: !['changed','false-classification'].includes(${JSON.stringify(variant)})}};
           }
           return true;
         };
@@ -701,10 +876,140 @@ test("dispatch binds one exact app separator projection without reinserting or r
       const passed = ['nbsp', 'space'].includes(variant);
       assert.equal(h.outputs.some(x => x.kind === 'completed' && x.requestId), passed);
       assert.equal(h.invoke('fixtureFinalPrompt !== null'), passed);
-      if (passed) assert.equal(h.invoke('dispatchedPublicPrompt'), h.invoke('fixtureFinalPrompt'));
+      if (passed) {
+        assert.equal(h.invoke('dispatchedPublicPrompt'), h.invoke('fixtureFinalPrompt'));
+        assert.equal(h.invoke('dispatchedUserId'), 'fixture-user');
+      }
       else assert.equal(h.outputs.find(x => x.kind === 'failed').error, 'web_user_turn_mismatch');
     } finally { h.cleanup(); }
   }
+});
+
+test('a fast virtualized dispatch cannot bypass its managed binding or make a late controls read',async()=>{
+  for(const retainBinding of [true,false]) {
+    const h=hostHarness();
+    try {
+      await observed(h,()=>h.outputs.some(x=>x.kind==='worker_ready'));
+      h.invoke(`globalThis.fixtureSends=0; globalThis.fixtureFinalRead=false;
+        loadFreshPage=async function(){};
+        selectModel=async function(){verifiedSelection={model:config.model,effortIndex:2};};
+        insertText=async function(){};
+        inPage=async function(fn,...args){
+          if(fn.name==='controls') {
+            if(fixtureSends) throw Error('late control read lost original source');
+            return {composer:true,modelButtonCount:1,userCount:0,assistantCount:0,modernRowCount:0,sendReady:true};
+          }
+          if(fn.name==='sendOnce'){fixtureSends++;return;}
+          if(fn.name==='capturePublicDispatchBinding') {
+            requireValue(args[0]===config.text && args[1]===workerRequestId,'web_binding_changed');
+            const userId='11111111-1111-4111-8111-111111111111';
+            return {prompt:args[0],userId,shape:{exact:true},modern:true,
+              requestBinding:${retainBinding} ? {kind:'modern_fresh_document_v1',userId,prompt:args[0],
+                conversationId:'temporary opaque key',nonce:args[1]} : null};
+          }
+          return true;
+        };
+        waitForPublicFinal=async function(prompt){
+          fixtureFinalRead=true;
+          requireValue(dispatchedRequestBinding?.prompt===prompt && dispatchedRequestBinding.nonce===workerRequestId,
+            'web_binding_changed');
+          return {id:'fixture',content:{parts:['answer']}};
+        };`);
+      h.put('next.json',{id:'c'.repeat(32),text:'different exact rapid reply source'});
+      await observed(h,()=>h.outputs.some(x=>x.kind==='worker_idle' && x.requestId));
+      assert.equal(h.invoke('fixtureSends'),1);
+      assert.equal(h.invoke('fixtureFinalRead'),retainBinding);
+      assert.equal(h.outputs.some(x=>x.kind==='completed' && x.requestId),retainBinding);
+      if(!retainBinding) assert.equal(h.outputs.find(x=>x.kind==='failed').error,'web_user_identity_unavailable');
+      const diagnostics=JSON.stringify(h.outputs);
+      assert.equal(diagnostics.includes('temporary opaque key'),false);
+      assert.equal(diagnostics.includes('different exact rapid reply source'),false);
+    } finally {h.cleanup();}
+  }
+});
+
+test("a changed user identity after Stop cannot retain the cancelled worker", async () => {
+  const h = hostHarness();
+  try {
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
+    h.fixture.state.userCount = 1;
+    h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
+    h.invoke(`const originalPage = inPage;
+      inPage = async function (fn, ...args) {
+        if (fn.name === 'publicUserBindingShape' && globalThis.fixtureStopped)
+          return 'different-user';
+        const result = await originalPage(fn, ...args);
+        if (fn.name === 'cancelGeneration') globalThis.fixtureStopped = true;
+        return result;
+      };
+      runCurrentPage = async function () {
+        sent = true; dispatchedPublicPrompt = config.text; dispatchedUserId = 'fixture-user';
+        stage = 'wait_public_final'; record('dispatch_started'); await waitFor(() => false, 5000);
+      };`);
+    h.put('next.json', {id: 'c'.repeat(32), text: 'same text must not conceal another user identity'});
+    await observed(h, () => h.outputs.some(x => x.kind === 'dispatch_started'));
+    h.put('cancel.json', {id: 'c'.repeat(32), reuse_when_idle: true});
+    await observed(h, () => h.outputs.some(x => x.kind === 'cancel_idle_unverified'));
+    assert.equal(h.outputs.find(x => x.kind === 'cancel_idle_unverified').error,
+      'web_cancel_user_binding_required');
+    assert.deepEqual(h.fixture.operations.filter(x => x === 'cancelGeneration'), ['cancelGeneration']);
+    assert.equal(h.outputs.some(x => x.cancelledIdleVerified === true), false);
+  } finally { h.cleanup(); }
+});
+
+test("the exact dispatched user identity survives presentation URL and title changes", async () => {
+  const h = hostHarness();
+  try {
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
+    h.fixture.state.userCount = 1;
+    h.fixture.state.pageKind = 'other';
+    h.invoke(`const originalPage = inPage;
+      inPage = async function (fn, ...args) {
+        const result = await originalPage(fn, ...args);
+        if (fn.name === 'cancelGeneration') surface.webContents.url = 'https://chatgpt.com/c/private-fixture#changed';
+        return result;
+      };
+      runCurrentPage = async function () {
+        sent = true; dispatchedPublicPrompt = config.text; dispatchedUserId = 'fixture-user';
+        surface.webContents.url = 'https://chatgpt.com/c/private-fixture';
+        stage = 'wait_public_final'; record('dispatch_started'); await waitFor(() => false, 5000);
+      };`);
+    h.put('next.json', {id: 'c'.repeat(32), text: 'private matching prompt'});
+    await observed(h, () => h.outputs.some(x => x.kind === 'dispatch_started'));
+    h.put('cancel.json', {id: 'c'.repeat(32), reuse_when_idle: true});
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_idle' && x.requestId));
+    assert.equal(h.outputs.find(x => x.kind === 'worker_idle' && x.requestId).cancelledIdleVerified, true);
+    assert.deepEqual(h.fixture.operations.filter(x => x === 'cancelGeneration'), ['cancelGeneration']);
+    assert.equal(/fixture-user|private-fixture|private matching prompt/.test(JSON.stringify(h.outputs)), false);
+  } finally { h.cleanup(); }
+});
+
+test("plugin navigation after the one Stop click cannot retain the cancelled worker", async () => {
+  const h = hostHarness();
+  try {
+    await observed(h, () => h.outputs.some(x => x.kind === 'worker_ready'));
+    h.fixture.state.userCount = 1;
+    h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
+    h.invoke(`const originalPage = inPage;
+      inPage = async function (fn, ...args) {
+        const result = await originalPage(fn, ...args);
+        if (fn.name === 'cancelGeneration') surface.webContents.url = 'https://chatgpt.com/plugins';
+        return result;
+      };
+      runCurrentPage = async function () {
+        sent = true; dispatchedPublicPrompt = config.text;
+        dispatchedUserId = 'fixture-user';
+        stage = 'wait_public_final'; record('dispatch_started'); await waitFor(() => false, 5000);
+      };`);
+    h.put('next.json', {id: 'c'.repeat(32), text: 'new stop navigation fixture'});
+    await observed(h, () => h.outputs.some(x => x.kind === 'dispatch_started'));
+    h.put('cancel.json', {id: 'c'.repeat(32), reuse_when_idle: true});
+    await observed(h, () => h.outputs.some(x => x.kind === 'cancel_idle_unverified'));
+    assert.equal(h.outputs.find(x => x.kind === 'cancel_idle_unverified').error,
+      'web_cancel_page_binding_required');
+    assert.deepEqual(h.fixture.operations.filter(x => x === 'cancelGeneration'), ['cancelGeneration']);
+    assert.equal(h.outputs.some(x => x.cancelledIdleVerified === true), false);
+  } finally { h.cleanup(); }
 });
 
 test("a racing answer cannot complete a turn already owned by cancellation", async () => {
@@ -714,7 +1019,8 @@ test("a racing answer cannot complete a turn already owned by cancellation", asy
     h.fixture.state.userCount = 1;
     h.context.__host.surface.webContents.url = 'https://chatgpt.com/?temporary-chat=true';
     h.invoke(`runCurrentPage = async function () {
-      stage = 'wait_public_final'; sent = true; dispatchedPublicPrompt = config.text; record('dispatch_started');
+      stage = 'wait_public_final'; sent = true; dispatchedPublicPrompt = config.text;
+      dispatchedUserId = 'fixture-user'; record('dispatch_started');
       await waitFor(() => cancelling, 5000);
       completedPage = {prompt: config.text, message: {text: 'racing answer'}};
       finish(0, {model: config.model, effortIndex: 2, publicMessage: {text: 'racing answer'}});

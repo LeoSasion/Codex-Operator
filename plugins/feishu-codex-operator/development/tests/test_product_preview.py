@@ -95,15 +95,69 @@ class ProductOverviewTests(unittest.TestCase):
         self.assertEqual(web['state'], 'needs_review')
         self.assertEqual(web['next_action'], 'models web desktop-rebind')
 
+    def test_ready_web_without_session_receipt_guides_explicit_reuse(self):
+        self.configured()
+        calls = []
+        def inspect(p, scope, action):
+            calls.append((scope, action))
+            if action == 'status':
+                return {'status': 'ready', 'active': False, 'configuration_current': True,
+                    'session_bound': False}
+            return {'status': 'prepared'}
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        value = product.project_overview(self.root, self.home, inspect)
+        web = value['components']['models']['providers']['web']
+        self.assertEqual(web['state'], 'needs_registration')
+        self.assertEqual(web['next_action'], 'models web start')
+        self.assertNotIn(('web', 'desktop-status'), calls)
+        self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+
+    def test_native_routing_does_not_attest_redirected_named_openai(self):
+        for config, environment, expected in [
+                (None, {'OPENAI_BASE_URL': 'http://127.0.0.1:12345/v1'}, 'custom'),
+                ('model = "gpt-example"\n', {'OPENAI_BASE_URL': 'http://127.0.0.1:12345/v1'}, 'custom'),
+                ('[model_providers.openai]\nbase_url = "http://127.0.0.1:12345/v1"\n', {}, 'custom'),
+                ('openai_base_url = ""\n', {}, 'custom'),
+                ('model_providers = "invalid"\n', {}, 'unknown'),
+                ('model = "gpt-example"\n[model_providers.other]\nbase_url = "http://127.0.0.1:12345/v1"\n', {}, 'official_direct'),
+                ('model = "gpt-example"\n', {'OPENAI_BASE_URL': ''}, 'official_direct'),
+                (None, {}, 'default')]:
+            with self.subTest(config=config, expected=expected), patch.dict(product.os.environ, environment, clear=True):
+                path = self.home / 'config.toml'
+                if config is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_text(config, encoding='utf8')
+                before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+                value = product.project_overview(self.root, self.home, lambda *args: self.fail('Unexpected service check'))
+                self.assertEqual(value['native_routing'], expected)
+                self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+                self.assertNotIn('12345', json.dumps(value))
+
     def test_changed_and_active_states_do_not_suggest_restart(self):
         self.configured()
         for state, expected in [({'status': 'ready', 'active': False, 'configuration_current': False}, 'changed'),
-                ({'status': 'ready', 'active': True}, 'busy'),
+                ({'status': 'ready', 'active': True, 'session_bound': False}, 'busy'),
                 ({'status': 'stopped', 'start_available': False}, 'needs_review')]:
             value = product.project_overview(self.root, self.home,
                 lambda *a: {'configuration_current': True, **state})
             self.assertEqual(value['components']['models']['providers']['web']['state'], expected)
             self.assertNotEqual(value['components']['models']['providers']['web']['next_action'], 'models web start')
+            if expected == 'changed':
+                self.assertIn('核对原登记与空闲状态',
+                    value['components']['models']['providers']['web']['next_action'])
+                self.assertIn('无需重新登录',
+                    value['components']['models']['providers']['web']['next_action'])
+
+    def test_failed_web_service_is_not_hidden_by_source_mismatch(self):
+        self.configured()
+        value = product.project_overview(self.root, self.home,
+            lambda *a: {'status': 'unavailable', 'active': False,
+                'configuration_current': False})
+        web = value['components']['models']['providers']['web']
+        self.assertEqual(web['state'], 'unavailable')
+        self.assertIn('后台当前不可用', web['summary'])
+        self.assertIn('不要重发失败请求', web['next_action'])
 
     def test_assistance_and_transitions_are_not_reported_as_ready_or_broken(self):
         self.configured()
@@ -308,6 +362,51 @@ param([string]$Scope,[string]$Action,[string]$ProjectRoot,[switch]$Json)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)['status'], 'not_configured')
         self.assertEqual(list(self.root.rglob('*')), before)
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows entry')
+    def test_native_models_facade_status_is_read_only(self):
+        state = self.root / 'native registration'
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        result = subprocess.run([shutil.which('pwsh'), '-NoProfile', '-File',
+            str(ROOT/'scripts/codex-operator.ps1'), 'models', 'native', 'status',
+            '--state', str(state), '--home', str(self.root), '-Json'],
+            capture_output=True, encoding='utf8', timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        value = json.loads(result.stdout)
+        self.assertEqual(value['status'], 'absent')
+        self.assertEqual(value['inference_requests'], 0)
+        self.assertFalse(value['global_config_changed'])
+        self.assertFalse(state.exists())
+        self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows entry')
+    def test_desktop_pair_status_and_preview_are_read_only_through_public_entry(self):
+        before = {str(p):p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        for action, expected in [('status', 'not_installed'), ('preview', 'launcher_preparation_required')]:
+            result = subprocess.run([shutil.which('pwsh'), '-NoProfile', '-File',
+                str(ROOT/'scripts/codex-operator.ps1'), 'models', 'desktop-pair', action,
+                '-ProjectRoot', str(self.root), '-Json'], capture_output=True, encoding='utf8', timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+            self.assertEqual(json.loads(result.stdout)['status'], expected)
+            self.assertFalse(json.loads(result.stdout)['configuration_changed'])
+        self.assertEqual({str(p):p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows entry')
+    def test_desktop_pair_facade_forwards_exact_action_project_and_home(self):
+        source = self.root/'entry fixture'; source.mkdir()
+        shutil.copyfile(ROOT/'scripts/codex-operator.ps1', source/'codex-operator.ps1')
+        (source/'feishu-codex-operator.ps1').write_text("throw 'legacy entry must not run'", encoding='utf8')
+        (source/'operator_desktop_setup.ps1').write_text('''
+param([string]$Action,[string]$ProjectRoot,[string]$CodexHome)
+@{action=$Action;project=$ProjectRoot;home=$CodexHome}|ConvertTo-Json -Compress
+''', encoding='utf8')
+        for action, expected in [('preview','preview-pair'),('status','pair-status'),('install','install-pair'),('restore','restore-pair')]:
+            result = subprocess.run([shutil.which('pwsh'), '-NoProfile', '-File',
+                str(source/'codex-operator.ps1'), 'models', 'desktop-pair', action,
+                '-ProjectRoot', str(self.root), '-CodexHome', str(self.home)],
+                capture_output=True, encoding='utf8', timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+            self.assertEqual(json.loads(result.stdout), {'action':expected,'project':str(self.root),'home':str(self.home)})
 
     @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows entry')
     def test_channel_uninstall_cannot_remove_the_product(self):

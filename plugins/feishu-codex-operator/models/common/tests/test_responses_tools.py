@@ -61,6 +61,21 @@ def response(*items, status="completed"):
 
 
 class CapabilitiesTests(unittest.TestCase):
+    def test_function_history_requires_explicit_bounded_json_codec(self):
+        self.assertEqual(ResponsesCapabilities.parse(CAPABILITIES).history_function_tools, ())
+        selected = {"exec_command": "json_object_v1", "functions.exec_command": "json_object_v1"}
+        caps = ResponsesCapabilities.parse({**CAPABILITIES, "history_function_tools": selected})
+        self.assertEqual(caps.history_function_tools, tuple(sorted(selected.items())))
+        for value in (None, [], True, {"": "json_object_v1"}, {"a.b.exec_command": "json_object_v1"},
+                      {"exec_command": "auto"}, {"exec_command": {}},
+                      {"n" * 65: "json_object_v1"},
+                      {"tool_" + str(i): "json_object_v1" for i in range(257)}):
+            with self.subTest(value=value), self.assertRaisesRegex(RouterError, "history_function"):
+                ResponsesCapabilities.parse({**CAPABILITIES, "history_function_tools": value})
+        with self.assertRaisesRegex(RouterError, "function_capability_required_for_history"):
+            ResponsesCapabilities.parse({**CAPABILITIES, "function_tools": False,
+                "custom_tools": {}, "codex_tool_mode": "standard", "history_function_tools": selected})
+
     def test_named_function_outputs_require_exact_explicit_codec(self):
         self.assertEqual(ResponsesCapabilities.parse(CAPABILITIES).named_function_outputs, ())
         for names in (("send_message_to_thread",), ("create_thread",),
@@ -380,6 +395,68 @@ class ToolAdapterTests(unittest.TestCase):
                             self.assertEqual(payload, before)
                             with self.assertRaises(UpstreamProtocolError):
                                 restore_response(response({**upstream, "call_id": "new_call"}), context)
+
+    def test_function_history_without_current_tools_preserves_source_and_never_enables_calls(self):
+        for namespace in (None, "functions"):
+            key = (namespace + "." if namespace else "") + "exec_command"
+            item = {"type": "function_call", "id": "fc_history", "name": "exec_command",
+                "call_id": "history_one", "arguments": '{ "cmd": "synthetic\\n中文😀", "keep": 1 }',
+                "status": "completed", "fixture_metadata": {"keep": [None, "source"]}}
+            output = {"type": "function_call_output", "call_id": "history_one", "name": "exec_command",
+                "output": [{"type": "input_text", "text": "one\r\n😀", "keep": 1},
+                           {"type": "input_text", "text": "second\\part"}]}
+            if namespace is not None:
+                item["namespace"] = output["namespace"] = namespace
+            declaration = {"type": "function", "name": "exec_command", "parameters": {"type": "object"}}
+            tools = [declaration] if namespace is None else [{"type": "namespace", "name": namespace,
+                                                             "tools": [declaration]}]
+            caps = {"history_function_tools": {key: "json_object_v1"}, "text_tool_outputs": "json_string"}
+            ordinary, _ = prepare({"tools": tools, "input": [item, output]}, **caps)
+            for tool_field in ({}, {"tools": []}):
+                for choice in ("auto", "none"):
+                    payload = {**tool_field, "tool_choice": choice, "input": [item, output]}
+                    before = deepcopy(payload)
+                    wire, context = prepare(payload, **caps)
+                    self.assertEqual(payload, before)
+                    self.assertEqual(wire.get("tools"), payload.get("tools"))
+                    self.assertEqual(wire["tool_choice"], choice)
+                    self.assertEqual(wire["input"], ordinary["input"])
+                    self.assertEqual(wire["input"][0]["arguments"], item["arguments"])
+                    self.assertEqual(json.loads(wire["input"][1]["output"]), output["output"])
+                    self.assertEqual(context.history_calls, {"history_one"})
+                    self.assertEqual((context.specs, context.upstream, context.visible_names),
+                                     ({}, {}, frozenset()))
+                    with self.assertRaises(UpstreamProtocolError):
+                        restore_response(response({**wire["input"][0], "call_id": "new_call"}), context)
+
+    def test_function_history_keeps_unknown_incomplete_malformed_and_conflicting_calls_rejected(self):
+        item = {"type": "function_call", "name": "exec_command", "call_id": "one", "arguments": '{}'}
+        output = {"type": "function_call_output", "call_id": "one", "output": "original result"}
+        caps = {"history_function_tools": {"exec_command": "json_object_v1"}, "text_tool_outputs": "json_string"}
+        with self.assertRaisesRegex(RouterError, "undeclared_tool_call"):
+            prepare({"tools": [], "input": [item, output]})
+        cases = [([FUNCTION], [item, output]), ([{**FUNCTION, "defer_loading": True}], [item, output]),
+                 ([], [{**item, "namespace": "functions"}, output]),
+                 ([], [{**item, "namespace": ""}, output]),
+                 ([], [{**item, "name": "unknown"}, output]),
+                 ([], [{**item, "type": "custom_tool_call"}, output]),
+                 ([], [{**item, "status": "in_progress"}, output]),
+                 ([], [{**item, "call_id": None}, output]), ([], [item]), ([], [output]),
+                 ([], [item, output, output]), ([], [item, item, output]),
+                 ([], [item, {**output, "call_id": "other"}]),
+                 ([], [item, {**output, "name": "other"}]),
+                 ([], [item, {**output, "namespace": "functions"}]),
+                 ([], [item, {**output, "type": "custom_tool_call_output"}]),
+                 ([], [{**item, "encrypted_content": "opaque"}, output]),
+                 ([], [item, {**output, "output": [{"type": "input_image", "image_url": "synthetic"}]}])]
+        cases += [([], [{**item, "arguments": value}, output]) for value in
+                  (None, "", "null", "[]", '1', '{"a":1,"a":2}', '{"a":NaN}',
+                   '{"a":"' + 'x' * (2 * 1024 * 1024) + '"}')]
+        for tools, history in cases:
+            with self.subTest(tools=tools), self.assertRaises(RouterError):
+                prepare({"tools": tools, "input": history}, **caps)
+        with self.assertRaisesRegex(RouterError, "required_tool_choice_without_tools"):
+            prepare({"tools": [], "tool_choice": "required", "input": [item, output]}, **caps)
 
     def test_history_codec_does_not_accept_unknown_incomplete_or_conflicting_history(self):
         item = {"type": "custom_tool_call", "name": "exec", "call_id": "one", "input": CODE}

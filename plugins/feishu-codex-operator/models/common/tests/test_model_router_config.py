@@ -9,18 +9,252 @@ from run_tests import prepare_test_imports as _prepare_test_imports
 _prepare_test_imports(_OPERATOR_PLUGIN_ROOT)
 
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
+import tomllib
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(_OPERATOR_PLUGIN_ROOT / "scripts"))
 from operator_core import model_router_config as config
 from operator_core.model_registry import RouterError
+import operator_model_router as router
+
+
+class ContractUpdateTests(unittest.TestCase):
+    def setUp(self):
+        from copy import deepcopy
+        from test_responses_tools import ROUTE
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = Path(self.tmp.name)
+        self.old = deepcopy(ROUTE)
+        self.other = {**deepcopy(ROUTE), "slug": "api/untouched"}
+        config.initialize(self.state)
+        config.register_routes(self.state, [self.old, self.other])
+        self.target = self.state / "registry.json"
+        self.before = self.target.read_bytes()
+        self.row = deepcopy(self.old)
+        self.row["responses"]["reasoning_summary"] = True
+        self.preview = config.update_contracts(self.state, [self.row])
+
+    def apply(self, rows=None, **kwargs):
+        return config.update_contracts(self.state, rows or [self.row], apply=True,
+            expected_sha256=self.preview["registry_sha256"],
+            expected_candidate_sha256=self.preview["candidate_sha256"],
+            guard=kwargs.pop("guard", Mock()), **kwargs)
+
+    def test_preview_is_read_only_and_apply_keeps_original_and_other_row(self):
+        self.assertEqual(self.target.read_bytes(), self.before)
+        self.assertEqual(sorted(p.name for p in self.state.iterdir()), ["registry.json", "token"])
+        guard = Mock()
+        result = self.apply(guard=guard)
+        self.assertEqual(guard.call_count, 2)
+        self.assertTrue(result["applied"])
+        self.assertEqual((self.state / result["backup_name"]).read_bytes(), self.before)
+        self.assertEqual(json.loads(self.target.read_bytes())["models"], [self.row, self.other])
+        self.assertEqual(result["changed_slugs"], [self.row["slug"]])
+        self.assertFalse((self.state / "registry-edit.lock").exists())
+
+    def test_summary_regression_is_fixed_only_in_updated_contract(self):
+        from operator_core.responses_tool_adapter import prepare_request
+        from operator_core.responses_capabilities import ResponsesCapabilities
+        payload = {"input": "fixture", "reasoning": {"summary": "detailed"}}
+        with self.assertRaisesRegex(RouterError, "reasoning_summary_not_supported"):
+            prepare_request(payload, ResponsesCapabilities.parse(self.old["responses"]), ("low", "max"))
+        self.apply()
+        row = json.loads(self.target.read_bytes())["models"][0]
+        prepared, _ = prepare_request(payload, ResponsesCapabilities.parse(row["responses"]), ("low", "max"))
+        self.assertEqual(prepared["reasoning"], payload["reasoning"])
+
+    def test_explicit_contract_restore_keeps_later_unrelated_registration(self):
+        result = self.apply()
+        later = {**self.other, "slug": "api/later"}
+        config.register_route(self.state, later)
+        saved = json.loads((self.state / result["backup_name"]).read_bytes())
+        original_row = saved["models"][0]
+        preview = config.update_contracts(self.state, [original_row])
+        config.update_contracts(self.state, [original_row], apply=True,
+            expected_sha256=preview["registry_sha256"],
+            expected_candidate_sha256=preview["candidate_sha256"], guard=Mock())
+        self.assertEqual(json.loads(self.target.read_bytes())["models"], [self.old, self.other, later])
+        self.assertEqual((self.state / result["backup_name"]).read_bytes(), self.before)
+
+    def test_identity_edits_missing_rows_and_duplicate_batch_are_refused(self):
+        changes = {"model": "different", "api_base": "http://127.0.0.1:2/v1",
+                   "api_key_env": "OTHER_KEY", "context_window": 8192,
+                   "reasoning_efforts": ["low"], "display_name": "changed"}
+        for key, value in changes.items():
+            with self.subTest(field=key), self.assertRaisesRegex(RouterError, "contract_update_identity_changed"):
+                config.update_contracts(self.state, [{**self.row, key: value}])
+        for rows in ([{**self.row, "slug": "api/missing"}], [self.row, self.row], []):
+            with self.subTest(rows=len(rows)), self.assertRaises(RouterError):
+                config.update_contracts(self.state, rows)
+        self.assertEqual(self.target.read_bytes(), self.before)
+
+    def test_preview_binds_both_current_and_candidate_bytes(self):
+        self.target.write_bytes(self.before + b"\n")
+        with self.assertRaisesRegex(RouterError, "registry_changed_since_contract_preview"):
+            self.apply()
+        self.assertEqual(self.target.read_bytes(), self.before + b"\n")
+        self.target.write_bytes(self.before)
+        with self.assertRaisesRegex(RouterError, "candidate_changed_since_contract_preview"):
+            self.apply([self.old])
+        self.assertEqual(self.target.read_bytes(), self.before)
+
+    def test_verified_label_cannot_survive_a_changed_contract(self):
+        current = {**self.old, "display_name": "Fixture [verified]"}
+        self.target.write_text(json.dumps({"version": 2, "models": [current]}))
+        before = self.target.read_bytes()
+        updated = {**self.row, "display_name": current["display_name"]}
+        with self.assertRaisesRegex(RouterError, "contract_update_verified_label_requires_review"):
+            config.update_contracts(self.state, [updated])
+        self.assertEqual(self.target.read_bytes(), before)
+        self.assertEqual(config.update_contracts(self.state, [current])["changed_slugs"], [])
+
+    def test_batch_is_atomic_and_cannot_enable_passthrough_adaptation(self):
+        from copy import deepcopy
+        second = deepcopy(self.other)
+        second["responses"]["reasoning_summary"] = True
+        second["context_window"] = 8192
+        with self.assertRaisesRegex(RouterError, "contract_update_identity_changed"):
+            config.update_contracts(self.state, [self.row, second])
+        self.assertEqual(self.target.read_bytes(), self.before)
+        second["context_window"] = self.other["context_window"]
+        rows = [self.row, second]
+        preview = config.update_contracts(self.state, rows)
+        result = config.update_contracts(self.state, rows, apply=True,
+            expected_sha256=preview["registry_sha256"],
+            expected_candidate_sha256=preview["candidate_sha256"], guard=Mock())
+        self.assertEqual(result["changed_slugs"], [self.row["slug"], second["slug"]])
+        self.assertEqual(json.loads(self.target.read_bytes())["models"], rows)
+        self.target.write_text(json.dumps({"version": 2, "models": [{**self.old, "responses": None}]}))
+        before = self.target.read_bytes()
+        with self.assertRaisesRegex(RouterError, "contract_update_requires_existing_adapted_registration"):
+            config.update_contracts(self.state, [self.row])
+        self.assertEqual(self.target.read_bytes(), before)
+
+    def test_missing_guard_active_entry_and_busy_lifecycle_cannot_write(self):
+        with self.assertRaisesRegex(RouterError, "contract_update_stopped_guard_required"):
+            self.apply(guard=None)
+        with self.assertRaisesRegex(RouterError, "fixture_busy"):
+            self.apply(guard=Mock(side_effect=RouterError("fixture_busy")))
+        (self.state / "codex-entry.json").write_text("{}")
+        with self.assertRaisesRegex(RouterError, "deactivate_before_contract_update"):
+            self.apply()
+        self.assertEqual(self.target.read_bytes(), self.before)
+
+    def test_concurrent_changes_and_backup_conflict_are_retained(self):
+        def race(_):
+            if guard.call_count == 2:
+                self.target.write_bytes(self.before + b"\n")
+        guard = Mock(side_effect=race)
+        with self.assertRaisesRegex(RouterError, "registry_changed_during_contract_update"):
+            self.apply(guard=guard)
+        self.assertEqual(self.target.read_bytes(), self.before + b"\n")
+        self.target.write_bytes(self.before)
+        backup = next(self.state.glob("contract-update-before-*.json"))
+        backup.write_bytes(b"changed backup")
+        with self.assertRaisesRegex(RouterError, "contract_update_backup_conflict"):
+            self.apply()
+        self.assertEqual(backup.read_bytes(), b"changed backup")
+        self.assertEqual(self.target.read_bytes(), self.before)
+
+    def test_locked_update_and_failed_atomic_write_preserve_original(self):
+        lock = self.state / "registry-edit.lock"
+        lock.write_bytes(b"other writer")
+        with self.assertRaises(FileExistsError):
+            self.apply()
+        self.assertEqual(lock.read_bytes(), b"other writer")
+        lock.unlink()
+        with patch.object(config, "atomic_write", side_effect=OSError("fixture write failure")):
+            with self.assertRaises(OSError): self.apply()
+        self.assertEqual(self.target.read_bytes(), self.before)
+        self.assertEqual(next(self.state.glob("contract-update-before-*.json")).read_bytes(), self.before)
+        self.assertFalse(lock.exists())
+
+    def test_unchanged_contract_does_not_reformat_or_write_backup(self):
+        preview = config.update_contracts(self.state, [self.old])
+        result = config.update_contracts(self.state, [self.old], apply=True,
+            expected_sha256=preview["registry_sha256"],
+            expected_candidate_sha256=preview["candidate_sha256"], guard=Mock())
+        self.assertFalse(result["applied"])
+        self.assertEqual(self.target.read_bytes(), self.before)
+        self.assertEqual(list(self.state.glob("contract-update-before-*")), [])
+
+    def test_cli_preview_is_offline_and_apply_reserves_port(self):
+        import io
+        from contextlib import redirect_stdout
+        import operator_core.responses_labels as labels
+        request = self.state / "updates.json"
+        request.write_text(json.dumps([self.row]))
+        argv = ["router", "update-contracts", "--state-dir", str(self.state),
+                "--registration", str(request)]
+        with patch.object(sys, "argv", argv), redirect_stdout(io.StringIO()) as output, \
+                patch.object(router, "reserve_inactive_port") as reserve:
+            router.main()
+        reserve.assert_not_called()
+        self.assertEqual(json.loads(output.getvalue()), self.preview)
+        argv += ["--apply", "--expected-registry-sha256", self.preview["registry_sha256"],
+                 "--expected-candidate-sha256", self.preview["candidate_sha256"]]
+        with patch.object(sys, "argv", argv), redirect_stdout(io.StringIO()), \
+                patch.object(labels, "assert_registry_edit_stopped") as guard, \
+                patch.object(router, "reserve_inactive_port") as reserve:
+            router.main()
+        reserve.assert_called_once_with(4317)
+        self.assertEqual(guard.call_count, 2)
+        self.assertEqual(json.loads(self.target.read_bytes())["models"][0], self.row)
 
 
 class RouterConfigTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows detached service launch")
+    def test_router_start_detaches_from_desktop_console(self):
+        from operator_core.model_registry import ModelRegistry
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            child = Mock()
+            child.poll.return_value = None
+            with patch.object(router.settings, "url"), \
+                    patch.object(ModelRegistry, "load"), \
+                    patch.object(router, "selected_web_profile", return_value=None), \
+                    patch.object(router, "control", side_effect=[OSError(), {"status": "ready", "diagnostics": {
+                        "native_enabled": True, "native_search_identity": None}}]), \
+                    patch.object(router.subprocess, "Popen", return_value=child) as spawn:
+                self.assertEqual(router.start(state, 4317)["status"], "ready")
+            flags = spawn.call_args.kwargs["creationflags"]
+            self.assertEqual(flags, router.subprocess.CREATE_NO_WINDOW
+                             | router.subprocess.CREATE_NEW_PROCESS_GROUP
+                             | router.subprocess.CREATE_BREAKAWAY_FROM_JOB)
+            self.assertTrue(spawn.call_args.kwargs["close_fds"])
+
+    def test_fresh_router_start_refuses_existing_or_wrong_process(self):
+        from operator_core.model_registry import ModelRegistry
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            with patch.object(router.settings, "url"), \
+                    patch.object(ModelRegistry, "load"), \
+                    patch.object(router, "selected_web_profile", return_value=None), \
+                    patch.object(router, "control", return_value={"status": "ready"}), \
+                    patch.object(router.subprocess, "Popen") as spawn:
+                with self.assertRaisesRegex(RouterError, "router_existing_service_requires_review"):
+                    router.start(state, 4317, require_fresh=True)
+            spawn.assert_not_called()
+            child = Mock(pid=1234)
+            child.poll.return_value = None
+            with patch.object(router.settings, "url"), \
+                    patch.object(ModelRegistry, "load"), \
+                    patch.object(router, "selected_web_profile", return_value=None), \
+                    patch.object(router, "web_profile_identity", return_value=None), \
+                    patch.object(router, "control", side_effect=[OSError(),
+                        {"status": "ready", "pid": 5678, "diagnostics": {"web_profile_identity": None}}]), \
+                    patch.object(router.subprocess, "Popen", return_value=child):
+                with self.assertRaisesRegex(RouterError, "router_fresh_service_identity_mismatch"):
+                    router.start(state, 4317, require_fresh=True)
+            child.terminate.assert_called_once()
+            child.wait.assert_called_once_with(timeout=5)
+
     def test_v2_append_preserves_legacy_routes_and_refuses_replacement(self):
         from test_responses_tools import ROUTE
         with tempfile.TemporaryDirectory() as directory:
@@ -166,9 +400,143 @@ class RouterConfigTests(unittest.TestCase):
             with patch.object(config, "health", return_value={"status": "ready"}):
                 config.activate(state, 4317, target)
                 config.activate(state, 4317, target)
+            active = target.read_bytes()
+            self.assertEqual(active.count(b"experimental_realtime_webrtc_call_base_url"), 1)
+            self.assertEqual(active.count(b"experimental_realtime_ws_base_url"), 1)
+            parsed = tomllib.loads(active.decode())
+            self.assertEqual(parsed[config.VOICE_ROUTE_KEY], config.OFFICIAL_VOICE_BASE_URL)
+            self.assertEqual(parsed[config.VOICE_WS_ROUTE_KEY], config.OFFICIAL_VOICE_BASE_URL)
+            self.assertEqual(json.loads((state / "codex-entry.json").read_text())["block"].encode()
+                             + before, active)
             target.write_bytes(target.read_bytes() + b'bar = false\r\n')
             config.deactivate(state, target)
             self.assertEqual(before + b'bar = false\r\n', target.read_bytes())
+
+    def test_existing_official_voice_route_is_preserved_as_user_owned(self):
+        with tempfile.TemporaryDirectory() as root:
+            state, target = Path(root) / "state", Path(root) / "config.toml"
+            config.initialize(state)
+            original = (b'# Keep this setting\r\n'
+                        + b'experimental_realtime_webrtc_call_base_url = '
+                        + json.dumps(config.OFFICIAL_VOICE_BASE_URL).encode() + b' # user comment\r\n'
+                        + b'[features]\r\nfoo = true\r\n')
+            target.write_bytes(original)
+            with patch.object(config, "health", return_value={"status": "ready"}):
+                config.activate(state, 4317, target)
+                config.activate(state, 4317, target)
+            active = target.read_bytes()
+            self.assertEqual(active.count(b"experimental_realtime_webrtc_call_base_url"), 1)
+            self.assertEqual(active.count(b"experimental_realtime_ws_base_url"), 1)
+            self.assertTrue(active.endswith(original))
+            owned = json.loads((state / "codex-entry.json").read_text())["block"]
+            self.assertNotIn(config.VOICE_ROUTE_KEY, owned)
+            self.assertIn(config.VOICE_WS_ROUTE_KEY, owned)
+            config.deactivate(state, target)
+            self.assertEqual(target.read_bytes(), original)
+
+    def test_existing_official_ws_route_is_preserved_as_user_owned(self):
+        with tempfile.TemporaryDirectory() as root:
+            state, target = Path(root) / "state", Path(root) / "config.toml"
+            config.initialize(state)
+            original = (config.VOICE_WS_ROUTE_KEY + " = "
+                        + json.dumps(config.OFFICIAL_VOICE_BASE_URL) + " # user comment\n").encode()
+            target.write_bytes(original)
+            with patch.object(config, "health", return_value={"status": "ready"}):
+                config.activate(state, 4317, target)
+                config.activate(state, 4317, target)
+            active = target.read_bytes()
+            self.assertEqual(active.count(config.VOICE_WS_ROUTE_KEY.encode()), 1)
+            self.assertEqual(active.count(config.VOICE_ROUTE_KEY.encode()), 1)
+            self.assertTrue(active.endswith(original))
+            owned = json.loads((state / "codex-entry.json").read_text())["block"]
+            self.assertIn(config.VOICE_ROUTE_KEY, owned)
+            self.assertNotIn(config.VOICE_WS_ROUTE_KEY, owned)
+            config.deactivate(state, target)
+            self.assertEqual(target.read_bytes(), original)
+
+    def test_existing_both_official_voice_routes_remain_user_owned(self):
+        with tempfile.TemporaryDirectory() as root:
+            state, target = Path(root) / "state", Path(root) / "config.toml"
+            config.initialize(state)
+            original = (config.VOICE_ROUTE_KEY + " = " + json.dumps(config.OFFICIAL_VOICE_BASE_URL)
+                        + " # call\n" + config.VOICE_WS_ROUTE_KEY + " = "
+                        + json.dumps(config.OFFICIAL_VOICE_BASE_URL) + " # ws\n").encode()
+            target.write_bytes(original)
+            with patch.object(config, "health", return_value={"status": "ready"}):
+                config.activate(state, 4317, target)
+                config.activate(state, 4317, target)
+            owned = json.loads((state / "codex-entry.json").read_text())["block"]
+            self.assertNotIn(config.VOICE_ROUTE_KEY, owned)
+            self.assertNotIn(config.VOICE_WS_ROUTE_KEY, owned)
+            config.deactivate(state, target)
+            self.assertEqual(target.read_bytes(), original)
+
+    def test_conflicting_voice_route_stops_before_activation_side_effects(self):
+        with tempfile.TemporaryDirectory() as root:
+            state, target = Path(root) / "state", Path(root) / "config.toml"
+            config.initialize(state)
+            for key, error in ((config.VOICE_ROUTE_KEY, "existing_voice_route_requires_explicit_migration"),
+                               (config.VOICE_WS_ROUTE_KEY, "existing_voice_ws_route_requires_explicit_migration")):
+                with self.subTest(key=key):
+                    original = (key + ' = "https://voice.example/v1"\n').encode()
+                    target.write_bytes(original)
+                    with patch.object(config, "health") as health, patch.object(config, "ensure_recovery_shortcut") as recovery:
+                        with self.assertRaisesRegex(RouterError, error):
+                            config.activate(state, 4317, target)
+                        health.assert_not_called()
+                        recovery.assert_not_called()
+                    self.assertEqual(target.read_bytes(), original)
+                    self.assertFalse((state / "codex-entry.json").exists())
+
+    def test_legacy_active_entry_stays_removable_without_claiming_voice_protection(self):
+        with tempfile.TemporaryDirectory() as root:
+            state, target = Path(root) / "state", Path(root) / "config.toml"
+            config.initialize(state)
+            legacy_blocks = config.managed_entry_blocks(state, 4317)[:2]
+            original = b'model = "native"\n'
+            for legacy in legacy_blocks:
+                with self.subTest(block=legacy):
+                    target.write_bytes(legacy + original)
+                    (state / "codex-entry.json").write_text(json.dumps({
+                        "config": str(target.resolve()), "block": legacy.decode()}))
+                    with patch.object(config, "health") as health, patch.object(config, "ensure_recovery_shortcut") as recovery:
+                        with self.assertRaisesRegex(RouterError, "legacy_router_voice_route_unprotected"):
+                            config.activate(state, 4317, target)
+                        health.assert_not_called()
+                        recovery.assert_not_called()
+                    self.assertEqual(target.read_bytes(), legacy + original)
+                    config.deactivate(state, target)
+                    self.assertEqual(target.read_bytes(), original)
+
+    def test_changed_managed_voice_line_blocks_rollback(self):
+        with tempfile.TemporaryDirectory() as root:
+            state, target = Path(root) / "state", Path(root) / "config.toml"
+            config.initialize(state)
+            target.write_bytes(b'model="native"\n')
+            with patch.object(config, "health", return_value={"status": "ready"}):
+                config.activate(state, 4317, target)
+            changed = target.read_bytes().replace(
+                (config.VOICE_WS_ROUTE_KEY + ' = ' + json.dumps(config.OFFICIAL_VOICE_BASE_URL)).encode(),
+                (config.VOICE_WS_ROUTE_KEY + ' = "https://voice.example/v1"').encode())
+            target.write_bytes(changed)
+            with self.assertRaisesRegex(RouterError, "managed_config_changed"):
+                config.deactivate(state, target)
+            self.assertEqual(target.read_bytes(), changed)
+            self.assertTrue((state / "codex-entry.json").exists())
+
+    def test_malformed_or_extended_entry_journal_is_not_adopted(self):
+        with tempfile.TemporaryDirectory() as root:
+            state, target = Path(root) / "state", Path(root) / "config.toml"
+            config.initialize(state)
+            target.write_bytes(b'model="native"\n')
+            protected = config.managed_entry_blocks(state, 4317)[3].decode()
+            for journal in ({"config": str(target.resolve()), "block": []},
+                            {"config": str(target.resolve()), "block": protected, "extra": True}):
+                with self.subTest(journal=journal):
+                    (state / "codex-entry.json").write_text(json.dumps(journal))
+                    with self.assertRaisesRegex(RouterError, "existing_router_journal_conflict"):
+                        config.activation_preflight(state, 4317, target)
+                    self.assertEqual(target.read_bytes(), b'model="native"\n')
 
     def test_existing_route_is_never_overwritten(self):
         with tempfile.TemporaryDirectory() as root:

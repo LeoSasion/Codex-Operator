@@ -17,6 +17,8 @@ process/supervisor.rs; no Runner or third-party execution engine is embedded.
 """
 import argparse
 import asyncio
+from dataclasses import replace
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -30,7 +32,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, ProxyHandler, HTTPRedirectHandler, build_opener
 
 from operator_core.model_registry import ModelRegistry
-from operator_core.web_model_catalog import MODELS, PREFIX
+from operator_core.web_model_catalog import MODELS, PREFIX, route_context_window
 from operator_core.responses_tool_adapter import loads
 from operator_core.web_browser_driver import WebTextBrowserDriver, WebMcpBrowserDriver, private_directory
 from operator_core.web_browser_session import WebBrowserSession
@@ -52,7 +54,8 @@ def text_route(*, tools=False, model='gpt-5.6-sol'):
     definition = MODELS[model]
     row = {'slug': PREFIX + model, 'display_name': definition['display_name'],
         'model': model, 'api_base': 'http://127.0.0.1:1/v1', 'api_key_env': '',
-        'context_window': 16000, 'reasoning_efforts': definition['reasoning_efforts'], 'responses': {
+        'context_window': route_context_window(model, definition),
+        'reasoning_efforts': definition['reasoning_efforts'], 'responses': {
             'protocol': 'responses-tools-v1', 'function_tools': True,
             # Explicit native Desktop codecs; they only represent declarations
             # and history. Codex still owns every execution and permission.
@@ -72,7 +75,9 @@ def text_route(*, tools=False, model='gpt-5.6-sol'):
             'reasoning_input': True, 'reasoning_summary': True, 'previous_response_id': False,
             'text_verbosity': False, 'codex_tool_mode': 'standard',
             'completed_output_policy': 'require_message_or_tool'}}
-    return ModelRegistry({'version': 2, 'models': [row]}, {'models': [{}]}).routes[row['slug']]
+    route = ModelRegistry({'version': 2, 'models': [row]}, {'models': [{}]}).routes[row['slug']]
+    return replace(route, web_context_window_verified=(
+        definition.get('context_window', {}).get('status') == 'verified'))
 
 
 def text_routes(*, tools=False):
@@ -87,11 +92,70 @@ def read_json(path, limit=65536):
     return loads(raw)
 
 
-def write_json(path, value, *, defer_busy_replace=False):
+STATUS_SNAPSHOT_BYTES = 65536
+LEGACY_STATUS_SNAPSHOT_BYTES = 131072
+
+
+def json_bytes(value):
+    return json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf-8')
+
+
+def status_snapshot_value(raw, *, bound_error='web_service_file_too_large'):
+    """Read the complete old observation without changing its retained bytes.
+
+    Only the exact historical writer's whitespace may exceed the ordinary
+    bound. The complete compact representation must still fit that bound.
+    This is not a larger record, browser packet or model-context allowance.
+    """
+    require(len(raw) <= LEGACY_STATUS_SNAPSHOT_BYTES, bound_error)
+    value = loads(raw)
+    require(isinstance(value, dict), 'web_service_status_invalid')
+    if len(raw) > STATUS_SNAPSHOT_BYTES:
+        try:
+            legacy = json_bytes(value)
+            compact = json.dumps(value, ensure_ascii=False, allow_nan=False,
+                separators=(',', ':')).encode('utf-8')
+        except (TypeError, ValueError, UnicodeError, OverflowError):
+            require(False, bound_error)
+        require(raw == legacy and len(compact) <= STATUS_SNAPSHOT_BYTES, bound_error)
+    return value
+
+
+def read_status_bytes(path):
+    require(path.is_file() and not path.is_symlink(), 'web_service_regular_file_required')
+    with path.open('rb') as stream:
+        raw = stream.read(LEGACY_STATUS_SNAPSHOT_BYTES + 1)
+    status_snapshot_value(raw)
+    return raw
+
+
+def read_status_json(path):
+    return status_snapshot_value(read_status_bytes(path))
+
+
+def bounded_status_snapshot(value):
+    """Budget only the rolling browser-event projection, never its source deque."""
+    result = dict(value)
+    browser = value.get('browser')
+    if isinstance(browser, dict) and isinstance(browser.get('events'), list):
+        events = list(browser['events'])
+        result['browser'] = {**browser, 'events': events}
+        require('browser_events_omitted' not in value, 'web_service_status_invalid')
+        result['browser_events_omitted'] = 0
+        while len(json_bytes(result)) > STATUS_SNAPSHOT_BYTES and events:
+            del events[0]
+            result['browser_events_omitted'] += 1
+    require(len(json_bytes(result)) <= STATUS_SNAPSHOT_BYTES, 'web_service_file_too_large')
+    return result
+
+
+def write_json(path, value, *, defer_busy_replace=False, maximum_bytes=None):
     # Readers on Windows can temporarily deny replacement. A unique owned
     # staging file must be removed even then, so a failed publication cannot
     # poison later writes or hide the original failure during shutdown.
-    raw = json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf-8')
+    raw = json_bytes(value)
+    if maximum_bytes is not None:
+        require(len(raw) <= maximum_bytes, 'web_service_file_too_large')
     descriptor, name = tempfile.mkstemp(prefix='.' + path.name + '.', suffix='.pending', dir=path.parent)
     pending = Path(name)
     try:
@@ -120,11 +184,12 @@ class ServiceSnapshots:
         self.pending = {}
 
     def queue(self, name, value):
-        self.pending[name] = value
+        self.pending[name] = bounded_status_snapshot(value) if name == 'status.json' else value
 
     def flush(self):
         for name, value in list(self.pending.items()):
-            if write_json(self.state / name, value, defer_busy_replace=True):
+            if write_json(self.state / name, value, defer_busy_replace=True,
+                    maximum_bytes=STATUS_SNAPSHOT_BYTES if name == 'status.json' else None):
                 del self.pending[name]
 
 
@@ -244,6 +309,25 @@ def selected_lifecycle(config):
     lifecycle = config.get('browser_lifecycle', default)
     require(lifecycle in ('per_turn', 'session_v1'), 'web_browser_lifecycle_invalid')
     return lifecycle
+
+
+def selected_native_cancellation(config):
+    mode = config.get('native_cancellation_mode', 'none')
+    require(mode in ('none', 'app_server_metadata_v1') and (mode == 'none'
+        or config.get('transport') == 'mcp_v1' and selected_lifecycle(config) == 'session_v1'),
+        'web_native_cancellation_mode_invalid')
+    return mode
+
+
+def selected_native_cancellation_home(config):
+    mode = selected_native_cancellation(config)
+    if mode == 'none':
+        require('native_cancellation_home' not in config, 'web_native_cancellation_home_invalid')
+        return None
+    from operator_core.web_native_interruption import checked_native_home
+    # The service strips CODEX_HOME from browser children. Omitted legacy
+    # settings deliberately keep the OS user's default, never an inferred home.
+    return checked_native_home(config.get('native_cancellation_home', Path.home() / '.codex'))
 
 
 def stop_request(path, instance):
@@ -382,6 +466,12 @@ async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME, *, prepare_h
     require(mode in ('text_only', 'mcp_v1') and (mode == 'mcp_v1') == ('mcp' in config),
         'web_service_transport_invalid')
     lifecycle = selected_lifecycle(config)
+    native_cancellation = selected_native_cancellation(config)
+    native_home = selected_native_cancellation_home(config)
+    native_observer = None
+    if native_cancellation == 'app_server_metadata_v1':
+        from operator_core.web_native_interruption import observe_interruption
+        native_observer = partial(observe_interruption, codex_home=native_home)
     assistance = config.get('startup_assistance', False)
     require(type(assistance) is bool and (not assistance or lifecycle == 'session_v1'),
         'web_startup_assistance_invalid')
@@ -398,7 +488,8 @@ async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME, *, prepare_h
         connection_type = WebOpenAITunnel if config['mcp'].get('mode') == 'openai_tunnel_v1' else WebMcpConnection
         connection = connection_type(config['mcp'], endpoint, state)
     driver_config = {k: v for k, v in config.items()
-        if k not in ('browser_lifecycle', 'startup_assistance', 'transport', 'mcp')}
+        if k not in ('browser_lifecycle', 'startup_assistance', 'transport', 'mcp',
+            'native_cancellation_mode', 'native_cancellation_home')}
     base_browser = (WebMcpBrowserDriver(driver_config, state / 'requests', endpoint=endpoint,
         user_preview_mode='last_source_user_v1',
         connector=None, pending_connection=True) if connection is not None else
@@ -410,6 +501,7 @@ async def serve(settings, state, lifetime=DEFAULT_SERVICE_LIFETIME, *, prepare_h
         routes=text_routes(tools=connection is not None),
         timeout=browser.config['timeoutMs'] / 1000 + 15,
         citation_mode=config.get('citation_mode', 'none'),
+        native_interruption_observer=native_observer,
         check_call=(lambda *_: require(connection.ready, 'web_connection_unavailable'))
             if connection is not None else lambda *_: require(False, 'web_text_calls_unavailable'))
     provider = WebResponsesProvider(bridge)
@@ -657,7 +749,7 @@ def main():
                     'assistance_id': assistance_id, 'next': 'close_read_only_preview' if args.action == 'inspect'
                     else 'complete_login_or_verification_then_close_window'}))
             else:
-                details = read_json(args.state / 'status.json')
+                details = read_status_json(args.state / 'status.json')
                 require(details.get('instance') == session['instance'], 'web_service_status_identity_changed')
                 print(json.dumps({'status': details['state'], **health,
                     'readiness': details['readiness'], 'needs_assistance': details['needs_assistance'],

@@ -17,9 +17,11 @@ Install the local Marketplace from the extracted release, select **Codex-Operato
 
 > 使用 $codex-operator 帮我配置所需模块，复用已有登录，只让我处理必须本人完成的操作。
 
-The unified entry is `scripts/codex-operator.ps1`. Run `status` to inspect both areas without model requests or configuration writes. Use `channels` and `models`; the Web Provider entry is `models web`.
+The unified entry is `scripts/codex-operator.ps1`. Run `status` to inspect both areas without model requests or configuration writes. Use `channels` and `models`; the Web Provider entry is `models web`. API and local [native profiles](models/common/docs/native-models.md) use `models native` for preparation, installation, status and restoration, keeping the official default unchanged.
 
-In Feishu, `/model` reads the bound task's settings, `/model list` lists validated official models, and `/model luna low` selects the model for the next new business message. `/model cancel` removes a pending choice. Beeper keeps its own model. API, Local and Web switching through this command remains pending.
+The reviewed Windows [mode entry](models/common/docs/mode-entry-window.md) opens a native/extension choice. Extension mode has its own home and chat list, with custom models in the Codex conversation menu; native mode retains the official configuration. The current package passed GLM/DeepSeek continuation, standalone search and actual shortcut switching. Local and Web backends require their own acceptance. Known-version initialization avoids repeated welcome preferences without copying login or bypassing permissions.
+
+In Feishu, `/model` reads the bound task's settings. `/model list` lists validated official models and provides an exact command for selecting a model for the next new business message. Use the full model ID when multiple generations share a name. `/model cancel` removes a pending choice. Beeper keeps its own model. API, Local and Web switching through this command remains pending.
 
 This preview does not enable global model routing. Independent Web provider registration does not by itself integrate the main-window picker; a new Web task still needs assisted setup. Cold page loading can time out, and long-history/complex-tool reliability remains limited. Failed requests are retained and are not replayed automatically.
 

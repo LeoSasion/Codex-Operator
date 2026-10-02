@@ -11,6 +11,7 @@ from run_tests import prepare_test_imports as _prepare_test_imports
 _prepare_test_imports(_OPERATOR_PLUGIN_ROOT)
 
 import json
+from copy import deepcopy
 from pathlib import Path
 import sys
 import tempfile
@@ -192,6 +193,47 @@ class McpEvidenceTests(unittest.TestCase):
         self.assertEqual(result['operator_call_replies_prepared'],2)
         self.assertEqual(result['operator_call_rejections'],[])
         self.assertNotIn('upstream_denial',result)
+
+    def test_indexed_local_page_write_is_counted_without_claiming_cloud_receipt(self):
+        events=[('received','rpc','operator_begin',None),
+            ('reply_prepared','serialize','operator_begin',None),
+            ('local_response_write_completed','socket','operator_begin',None)]
+        after=self.health(events,requests=1,sequence=1)
+        for row in after['mcp']['events'][1:]:
+            row.update(section='context',index=0,total=14)
+        result=check.mcp_evidence(self.health(),after,1)
+        self.assertEqual(result['status'],'complete')
+        self.assertEqual(result['operator_begin_received'],1)
+        self.assertEqual(result['operator_begin_local_writes_completed'],1)
+        self.assertEqual(result['operator_begin_local_writes_failed'],0)
+        self.assertEqual(result['scope'],'local_mcp_receive_only')
+        self.assertNotIn('cloud_receipt',result)
+        self.assertNotIn('remote_delivery',result)
+
+    def test_local_page_write_failure_stays_distinct_and_malformed_rows_fail_closed(self):
+        events=[('received','rpc','operator_begin',None),
+            ('reply_prepared','serialize','operator_begin',None),
+            ('local_response_write_failed','socket','operator_begin',None)]
+        after=self.health(events,requests=1,sequence=1)
+        for row in after['mcp']['events'][1:]:
+            row.update(section='schema',index=2,total=3)
+        result=check.mcp_evidence(self.health(),after,1)
+        self.assertEqual((result['operator_begin_local_writes_completed'],
+            result['operator_begin_local_writes_failed']), (0,1))
+        malformed=[
+            {'index':True}, {'index':3}, {'total':25}, {'section':'private'},
+            {'tool':'operator_call'}, {'method':'ping'}, {'stage':'rpc'},
+            {'code':'web_mcp_other_rejection'}, {'extra':'private'},
+        ]
+        for replacement in malformed:
+            with self.subTest(replacement=replacement):
+                bad=deepcopy(after)
+                bad['mcp']['events'][-1].update(replacement)
+                self.assertEqual(check.mcp_evidence(self.health(),bad,1)['status'],
+                    'unavailable')
+        missing=deepcopy(after)
+        del missing['mcp']['events'][-1]['total']
+        self.assertEqual(check.mcp_evidence(self.health(),missing,1)['status'],'unavailable')
 
     def test_protocol_rejection_is_distinct_from_native_execution(self):
         events=[('received','rpc','operator_call',None),

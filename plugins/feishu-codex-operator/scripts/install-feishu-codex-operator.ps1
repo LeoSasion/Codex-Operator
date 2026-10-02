@@ -325,6 +325,7 @@ function Write-RuntimeManifest {
         'operator_core/responses_tool_adapter.py',
         'operator_core/responses_events.py',
         'operator_core/web_model_protocol.py',
+        'operator_core/web_native_interruption.py',
         'operator_core/web_mcp_transport.py',
         'operator_core/web_responses_provider.py',
         'operator_core/web_browser_driver.py',
@@ -336,6 +337,7 @@ function Write-RuntimeManifest {
         'operator_web_acceptance.py',
         'operator_web_desktop.py',
         'operator_web_entry.ps1',
+        'operator_native_models.py',
         'operator_product.py',
         'operator_python.psm1',
         'codex-operator.ps1',
@@ -391,6 +393,7 @@ Test-OperatorProcess
 if (-not $SkipDesktopEntry -and -not $HooksOnly) {
     . (Join-Path $PSScriptRoot 'operator_desktop_setup.ps1') -ProjectRoot $project -Library
     Show-OperatorInstallationNotice
+    Assert-OperatorDesktopExperiencePreflight -ProjectRoot $project
 }
 Start-OperatorInstallation -ProjectRoot $project -LinkPaths @(Get-OperatorDesktopPaths -IncludeLegacy)
 New-Item -ItemType Directory -Force -Path $runtime, $hooksRoot | Out-Null
@@ -432,6 +435,7 @@ if ($HooksOnly) {
     'operator_core\responses_tool_adapter.py',
     'operator_core\responses_events.py',
     'operator_core\web_model_protocol.py',
+    'operator_core\web_native_interruption.py',
     'operator_core\web_mcp_transport.py',
     'operator_core\web_responses_provider.py',
     'operator_core\web_browser_driver.py',
@@ -443,6 +447,7 @@ if ($HooksOnly) {
     'operator_web_acceptance.py',
     'operator_web_desktop.py',
     'operator_web_entry.ps1',
+    'operator_native_models.py',
         'operator_product.py',
         'operator_python.psm1',
         'codex-operator.ps1',
@@ -497,4 +502,4 @@ if (Test-Path -LiteralPath $health -PathType Leaf) {
 
 Write-Output "Installed Codex-Operator runtime 4.2.0-alpha.138 into $runtime"
 Write-Output 'The Operator remains stopped. Configure the minimal Beeper UUID, register Final Callback routing, review Hooks in Desktop settings, then start it.'
-if (-not $SkipDesktopEntry) { Install-OperatorDesktopEntry -ProjectRoot $project | ConvertTo-Json }
+if (-not $SkipDesktopEntry) { Install-OperatorDesktopExperience -ProjectRoot $project | ConvertTo-Json }

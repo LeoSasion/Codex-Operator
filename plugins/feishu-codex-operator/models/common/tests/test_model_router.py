@@ -50,6 +50,31 @@ def registry(*routes):
     return ModelRegistry({"version": 1, "models": list(routes)}, BEEPER)
 
 
+class FreshRouterWitnessTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows venv launcher')
+    def test_accepts_only_one_current_venv_child(self):
+        import operator_model_router as router
+
+        launcher = {'pid': 101, 'birth': '1000',
+                    'executable': str(Path(sys.executable).resolve())}
+        service = {'pid': 102, 'birth': '1001',
+                   'executable': str(Path(sys._base_executable).resolve())}
+        identities = {101: launcher, 102: service}
+        with patch('operator_web_service.process_identity', side_effect=lambda pid: identities.get(pid)), \
+                patch('operator_web_service.parent_pid', return_value=101) as parent:
+            self.assertTrue(router.fresh_service_process(101, 102))
+            parent.assert_called_once_with(102)
+            self.assertFalse(router.fresh_service_process(101, 103))
+            for change in ({'birth': '999'}, {'executable': str(Path(sys.executable).with_name('unrelated.exe'))}):
+                with self.subTest(change=change):
+                    identities[102] = {**service, **change}
+                    self.assertFalse(router.fresh_service_process(101, 102))
+            identities[102] = service
+            with patch('operator_web_service.parent_pid', return_value=999):
+                self.assertFalse(router.fresh_service_process(101, 102))
+            self.assertFalse(router.fresh_service_process(101, True))
+
+
 class RegistryTests(unittest.TestCase):
     def test_merge_preserves_native_and_does_not_mutate_inputs(self):
         original = deepcopy(CATALOG)
@@ -156,6 +181,40 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
         self.env.stop()
         await self.client.close()
         await self.upstream.close()
+
+    async def test_codex_backend_alias_preserves_native_and_auxiliary_routes(self):
+        alias = self.router.codex_backend_prefix
+        response = await self.client.get(alias + "/models", headers=self.headers)
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["models"][0], CATALOG["models"][0])
+        body = b'{"model":"native-test","input":"exact native bytes","stream":true}'
+        response = await self.client.post(alias + "/responses", data=body, headers=self.headers)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(self.received[-1][0], body)
+        self.assertEqual(self.endpoints[-1], "/responses")
+        for endpoint, data in (("alpha/search", b"opaque-search"),
+                               ("images/generations", b"opaque-image-request"),
+                               ("images/edits", b"opaque-multipart-request")):
+            with self.subTest(endpoint=endpoint):
+                response = await self.client.post(alias + "/" + endpoint, data=data,
+                                                  headers=self.headers)
+                self.assertEqual(response.status, 200)
+                self.assertEqual(self.received[-1][0], data)
+                self.assertEqual(self.endpoints[-1], "/" + endpoint)
+        for path in (alias + "/realtime/calls", alias + "/responses/other",
+                     "/" + "b" * 64 + "/backend-api/codex/responses"):
+            with self.subTest(path=path):
+                response = await self.client.post(path, data=body, headers=self.headers)
+                self.assertEqual(response.status, 404)
+
+    async def test_codex_backend_alias_uses_native_websocket(self):
+        alias = self.router.codex_backend_prefix
+        async with self.client.ws_connect(alias + "/responses", headers=self.headers) as socket:
+            request = '{"type":"response.create","model":"native-test","input":[]}'
+            await socket.send_str(request)
+            reply = await socket.receive(timeout=3)
+            self.assertEqual(reply.data, request)
+        self.assertEqual(self.handshakes, ["/responses"])
 
     async def test_local_failures_have_safe_standard_errors_and_no_retry(self):
         cases = [(RuntimeError("private prompt secret"), "internal"),
@@ -727,6 +786,82 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
             if event['type'] == 'response.completed':
                 return event['response']
         self.fail('missing terminal')
+
+    async def test_managed_web_waits_beyond_ordinary_read_timeout_http_and_socket(self):
+        from test_web_model_protocol import message
+        from dataclasses import replace
+        async def browser(turn):
+            turn.begin(turn.key)
+            await asyncio.sleep(.24)
+            return message(['unchanged delayed Web answer'])
+        provider, _, route = await self.provider(browser)
+        ordinary = {**ROUTE, 'api_base':route.api_base, 'model':route.model,
+                    'reasoning_efforts':['high']}
+        await self.client.close()
+        with patch('operator_core.model_router.UPSTREAM_READ_SECONDS', .08), \
+                patch('operator_core.model_router.MANAGED_WEB_READ_SECONDS', .6), \
+                patch.dict(os.environ,{'ROUTER_TEST_KEY':provider.token}):
+            self.router = ModelRouter(registry(ordinary), TOKEN,
+                                      web_profile=Path('selected-fixture'))
+            self.client = TestClient(TestServer(self.router.app()))
+            await self.client.start_server()
+            self.addAsyncCleanup(self.client.close)
+            self.prefix = self.router.prefix
+            await self.publish(route)
+            for socket in (False, True):
+                with self.subTest(socket=socket):
+                    payload = self.payload('web-socket' if socket else 'web-http')
+                    if socket:
+                        async with self.client.ws_connect(self.prefix+'/responses') as ws:
+                            result = await self.ws_response(ws,payload)
+                    else:
+                        response = await self.client.post(self.prefix+'/responses',json=payload)
+                        self.assertEqual(response.status,200,await response.text())
+                        result = await response.json()
+                    self.assertEqual(result['output'][0]['content'][0]['text'],
+                                     'unchanged delayed Web answer')
+                    payload = {**self.payload('ordinary-socket' if socket else 'ordinary-http'),
+                               'model':ordinary['slug']}
+                    if socket:
+                        async with self.client.ws_connect(self.prefix+'/responses') as ws:
+                            await ws.send_json({'type':'response.create',**payload})
+                            terminal = await asyncio.wait_for(ws.receive(),5)
+                            self.assertEqual((terminal.type,terminal.data),(aiohttp.WSMsgType.CLOSE,1011))
+                    else:
+                        response = await self.client.post(self.prefix+'/responses',json=payload)
+                        self.assertEqual(response.status,502)
+                        self.assertEqual((await response.json())['error']['code'],
+                                         'router_timeout_no_retry')
+                    self.assertEqual(self.router.session.timeout.sock_read,.08)
+            self.assertEqual(provider.requests,4) # Each new request is dispatched once.
+
+    async def test_native_http_keeps_session_read_timeout(self):
+        received = []
+        async def native(request):
+            received.append(await request.json())
+            await asyncio.sleep(.24)
+            return web.json_response({'unchanged':'native fixture'})
+        app = web.Application()
+        app.router.add_post('/responses',native)
+        upstream = TestServer(app)
+        await upstream.start_server()
+        self.addAsyncCleanup(upstream.close)
+        await self.client.close()
+        with patch('operator_core.model_router.UPSTREAM_READ_SECONDS', .08), \
+                patch('operator_core.model_router.MANAGED_WEB_READ_SECONDS', .6):
+            self.router = ModelRouter(registry(),TOKEN)
+            self.router.native_base = str(upstream.make_url('')).rstrip('/')
+            self.client = TestClient(TestServer(self.router.app()))
+            await self.client.start_server()
+            self.addAsyncCleanup(self.client.close)
+            payload = {'model':'native-test','input':[{'role':'user','content':'native exact input'}]}
+            headers = {'Authorization':'Bearer NATIVE_FIXTURE'}
+            self.router.native_models[self.router.account(headers)] = {'native-test'}
+            response = await self.client.post(self.router.prefix+'/responses',json=payload,headers=headers)
+            self.assertEqual(response.status,502)
+            self.assertEqual((await response.json())['error']['code'],'router_timeout_no_retry')
+            self.assertEqual(received,[payload])
+            self.assertEqual(self.router.session.timeout.sock_read,.08)
 
     async def test_real_bridge_http_tools_results_native_auth_isolation_no_double_adaptation(self):
         from test_web_model_protocol import message

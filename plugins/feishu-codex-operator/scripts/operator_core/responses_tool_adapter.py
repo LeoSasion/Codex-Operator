@@ -134,6 +134,20 @@ class HistoricalCustomTool:
         return bounded_string(value, nonempty=True, field="custom_tool.input")
 
 
+@dataclass(frozen=True)
+class HistoricalFunctionTool:
+    """An exact opted-in completed function history, never an executable tool."""
+    name: str
+    namespace: str | None
+    upstream_name: str
+    upstream_type: str = "function"
+    kind: str = "function"
+
+    @property
+    def key(self):
+        return self.kind, self.namespace, self.name
+
+
 def tool_alias(kind, namespace, name):
     if namespace is not None:
         suffix = hashlib.sha256(dumps((kind, namespace, name)).encode()).hexdigest()[:12]
@@ -173,6 +187,17 @@ class RequestContext:
                     mode = self.capabilities.custom_mode(name, namespace)
                     return HistoricalCustomTool(name, namespace, tool_alias(kind, namespace, name),
                                                 "function" if mode == "wrap" else "custom", fmt)
+        if spec is None and not self.specs and kind == "function" and isinstance(name, str):
+            namespace = item.get("namespace")
+            if namespace is None or isinstance(namespace, str) and namespace:
+                key = (namespace + "." if namespace is not None else "") + name
+                if dict(self.capabilities.history_function_tools).get(key) == "json_object_v1":
+                    if item.get("status") not in (None, "completed"):
+                        raise RouterError("unfinished_tool_call")
+                    # Client text compaction omits current definitions. Preserve
+                    # only explicitly registered, paired history with normal JSON
+                    # validation below; add nothing to the executable maps.
+                    return HistoricalFunctionTool(name, namespace, tool_alias(kind, namespace, name))
         if spec is None:
             # Classify a rejected historical identity without returning names,
             # source, arguments or definitions. Never repair or infer a match.

@@ -23,7 +23,7 @@ from unittest.mock import patch
 from aiohttp import ClientSession
 from test_web_model_protocol import message, make, FUNCTION
 from operator_core.web_browser_driver import (WebTextBrowserDriver, WebMcpBrowserDriver, text_prompt,
-    child_environment, safe_generation_progress, safe_public_interruption, safe_prompt_mismatch_shape,
+    child_environment, safe_generation_progress, safe_public_turn_state, safe_public_identity_structure, safe_public_interruption, safe_prompt_mismatch_shape,
     safe_modern_identity_shape, safe_fresh_chat_control_structure,
     current_user_preview, encoded_user_json)
 from operator_core.web_browser_session import WebBrowserSession
@@ -34,6 +34,44 @@ import operator_web_model as service
 
 
 class PromptDiagnosticTests(unittest.TestCase):
+    def test_public_identity_structure_rejects_raw_values_and_unknown_fields(self):
+        shape = {'role':'assistant', 'userBubbles':0, 'visibleUserBubbles':0, 'bubbleBound':None, 'renderAncestors':[],
+            'groups':{name:{'present':False,'unknownFields':0,'fields':[]} for name in
+                ('item','turn','entry','entryUserMessage','entryUserItem','turnUserMessage','itemParentMessage',
+                 'itemNode','turnParent','entryParent','entryUserMessageNode','entryMessageNode')}}
+        shape['groups']['turn'] = {'present':True,'unknownFields':1,
+            'fields':[['parentMessageId','string',True,False]]}
+        self.assertEqual(safe_public_identity_structure(shape), {'valid':True,**shape})
+        for changed in ({**shape,'raw_id':'private'}, {**shape,'userBubbles':True},
+            {**shape,'renderAncestors':[{'depth':0,'fields':[['allMessages','array',1,0,0,1,1,True]]}]},
+            {**shape,'renderAncestors':[{'depth':0,'fields':[['entries','array','private',0,0,1,1,True]]}]},
+            {**shape,'groups':{**shape['groups'],'account':{}}},
+            {**shape,'groups':{**shape['groups'],'turn':{'present':True,'unknownFields':0,
+                'fields':[['parentMessageId','private',True,False]]}}},
+            {**shape,'groups':{**shape['groups'],'turn':{'present':True,'unknownFields':0,
+                'fields':[['parentMessageId','string',True,False,'private']]}}}):
+            self.assertEqual(safe_public_identity_structure(changed), {'valid':False})
+
+    def test_public_turn_state_keeps_unknown_separate_and_rejects_private_fields(self):
+        state = dict.fromkeys(('sourceExact', 'userIdentityExact', 'sameTurnObject', 'sameUnitTurn',
+            'assistantCompleted', 'assistantFinalPhase', 'latestIdentityExact', 'sourceIdentityExact',
+            'turnCompleted', 'workCompleted', 'turnIdentityListValid', 'turnBoundUserPresent',
+            'turnBoundUserFirst', 'turnAssistantLast', 'turnInitialPrefixExact',
+            'requestRecordPresent', 'requestDocumentExact', 'requestRootExact', 'requestArmed',
+            'requestBound', 'requestInvalid', 'requestUserIdentityExact', 'requestSourceExact',
+            'conversationIdentityUuid', 'conversationIdentityBounded', 'conversationIdentityExact',
+            'requestTemporaryDocument', 'conversationIdentityEmpty',
+            'pendingAssistantIdentityAvailable', 'pendingAssistantConversationExact', 'pendingAssistantTurnIdentityExact'))
+        state.update(legacyUserRows=0, legacyAssistantRows=0, modernUserRows=1, modernAssistantRows=1,
+            userSource='available', assistantSource='unavailable', sourceExact=True, userIdentityExact=True)
+        self.assertEqual(safe_public_turn_state(state), {'valid': True, **state})
+        for changes in ({'modernUserRows': True}, {'modernUserRows': 10001}, {'modernAssistantRows': -1},
+                {'sourceExact': 'private'}, {'userSource': 'private'}, {'message_id': 'private'},
+                {'content': 'private'}, {'turnCompleted': 1}):
+            with self.subTest(changes=changes):
+                self.assertEqual(safe_public_turn_state({**state, **changes}), {'valid': False})
+        self.assertEqual(safe_public_turn_state(None), {'valid': False})
+
     def test_shape_accepts_only_fixed_categories_and_never_copies_text(self):
         shape = {'paragraphs': 'one', 'nodes': 'few', 'literalPastes': 'one',
             'expectedNewlines': 'many', 'renderedNewlines': 'many',
@@ -337,6 +375,57 @@ raise SystemExit(1)
         session.event(value, {})
         self.assertEqual(base.events[-1]['shape'], {'valid': False})
         self.assertNotIn('DO_NOT_RETAIN', json.dumps(base.status()))
+
+    async def test_public_turn_diagnostics_are_sanitized_by_both_driver_lifecycles(self):
+        state = dict.fromkeys(('sourceExact', 'userIdentityExact', 'sameTurnObject', 'sameUnitTurn',
+            'assistantCompleted', 'assistantFinalPhase', 'latestIdentityExact', 'sourceIdentityExact',
+            'turnCompleted', 'workCompleted', 'turnIdentityListValid', 'turnBoundUserPresent',
+            'turnBoundUserFirst', 'turnAssistantLast', 'turnInitialPrefixExact',
+            'requestRecordPresent', 'requestDocumentExact', 'requestRootExact', 'requestArmed',
+            'requestBound', 'requestInvalid', 'requestUserIdentityExact', 'requestSourceExact',
+            'conversationIdentityUuid', 'conversationIdentityBounded', 'conversationIdentityExact',
+            'requestTemporaryDocument', 'conversationIdentityEmpty',
+            'pendingAssistantIdentityAvailable', 'pendingAssistantConversationExact', 'pendingAssistantTurnIdentityExact'))
+        state.update(legacyUserRows=0, legacyAssistantRows=0, modernUserRows=1, modernAssistantRows=1,
+            userSource='available', assistantSource='unavailable', sourceExact=True, userIdentityExact=True)
+        for invalid in (False, True):
+            value = {'kind': 'public_turn_state', 'operator_web': 1, 'stage': 'wait_public_final',
+                'state': {**state, **({'id': 'DO_NOT_RETAIN'} if invalid else {})}}
+            driver = WebTextBrowserDriver(self.settings, self.root / ('turn-diagnostic-' + str(invalid)))
+            with self.spawn_fixture('print(' + repr(json.dumps(value)) + ')', []), self.assertRaises(ValueError):
+                await driver(self.turn())
+            expected = {'valid': False} if invalid else {'valid': True, **state}
+            self.assertEqual([e['state'] for e in driver.events if e['kind'] == 'public_turn_state'], [expected])
+            base = WebTextBrowserDriver({**self.settings, 'window_mode': 'background'},
+                self.root / ('turn-session-diagnostic-' + str(invalid)))
+            session = WebBrowserSession(base)
+            self.addAsyncCleanup(session.close)
+            session.event(value, {})
+            self.assertEqual(base.events[-1]['state'], expected)
+            self.assertNotIn('DO_NOT_RETAIN', json.dumps(driver.status()))
+            self.assertNotIn('DO_NOT_RETAIN', json.dumps(base.status()))
+
+    async def test_identity_structure_is_sanitized_in_both_browser_lifecycles(self):
+        shape = {'role':'assistant','userBubbles':0,'visibleUserBubbles':0,'bubbleBound':None, 'renderAncestors':[],
+            'groups':{name:{'present':False,'unknownFields':0,'fields':[]} for name in
+                ('item','turn','entry','entryUserMessage','entryUserItem','turnUserMessage','itemParentMessage',
+                 'itemNode','turnParent','entryParent','entryUserMessageNode','entryMessageNode')}}
+        for invalid in (False,True):
+            value = {'kind':'public_identity_structure','operator_web':1,'stage':'wait_public_final',
+                'shape':{**shape,**({'id':'DO_NOT_RETAIN'} if invalid else {})}}
+            driver = WebTextBrowserDriver(self.settings,self.root/('structure-diagnostic-'+str(invalid)))
+            with self.spawn_fixture('print('+repr(json.dumps(value))+')',[]),self.assertRaises(ValueError):
+                await driver(self.turn())
+            expected = {'valid':False} if invalid else {'valid':True,**shape}
+            self.assertEqual([e['shape'] for e in driver.events if e['kind']=='public_identity_structure'],[expected])
+            base = WebTextBrowserDriver({**self.settings,'window_mode':'background'},
+                self.root/('structure-session-'+str(invalid)))
+            session = WebBrowserSession(base)
+            self.addAsyncCleanup(session.close)
+            session.event(value,{})
+            self.assertEqual(base.events[-1]['shape'],expected)
+            self.assertNotIn('DO_NOT_RETAIN',json.dumps(driver.status()))
+            self.assertNotIn('DO_NOT_RETAIN',json.dumps(base.status()))
 
     async def test_user_binding_diagnostics_keep_only_bounded_counts(self):
         driver = WebTextBrowserDriver(self.settings, self.root / 'binding-diagnostic')
@@ -736,6 +825,36 @@ print(json.dumps({'operator_web':1,'kind':'completed','model':'gpt-5.6-sol','eff
             with self.assertRaisesRegex(ValueError, 'invalid_upstream_tool_response_no_retry'):
                 await turn.invoke(turn.key, 'never-widen-none', 'inspect', {'value':'still no grant'})
             self.assertEqual((turn.calls, turn.released_calls), (0, 0))
+
+    async def test_no_task_tools_still_requires_read_only_transport_context(self):
+        endpoint = WebMcpEndpoint(indexed_protocol='mcp_context_records_v3',
+            begin_result_mode='structured_begin_v1')
+        await endpoint.start(); self.addAsyncCleanup(endpoint.stop)
+        connector = {'id': 'plugin:asdk_app_' + 'b'*32, 'name': 'Operator fixture'}
+        driver = WebMcpBrowserDriver(self.settings, self.root/'no-task-tools', endpoint=endpoint,
+            connector=connector, user_preview_mode='last_source_user_v1')
+        payload = {**self.payload(), 'tools': [FUNCTION], 'tool_choice': 'none'}
+        payload['input'][-1]['content'] = 'Do not use task tools or search. Reply exactly BASIC_OK.'
+        protocol = make(payload)
+        turn = WebMcpTurn(protocol); endpoint.turn = turn
+        self.addCleanup(turn.close)
+        prompt = driver.request_config(turn)['text']
+        self.assertIn('operator_begin is a required read-only transport step', prompt)
+        self.assertIn('including when the user asks for no task tools or search', prompt)
+        self.assertIn('Honor the source request and user instructions when deciding whether to call operator_call', prompt)
+        self.assertFalse(turn.begun)
+        with self.assertRaisesRegex(ValueError, 'web_mcp_context_not_read'):
+            turn.finish(message(['BASIC_OK']))
+        key = turn.key
+        while key:
+            page = turn.begin(key)
+            self.assertEqual(page['section'], 'context')
+            key = page['next_read_key']
+        self.assertTrue(turn.observation()['request_read'])
+        turn.finish(message(['BASIC_OK']))
+        response, _ = await turn.next_response()
+        self.assertEqual(response['output'][0]['content'][0]['text'], 'BASIC_OK')
+        self.assertEqual((turn.calls, turn.released_calls, turn.results), (0, 0, 0))
 
     async def test_current_user_header_requires_explicit_preview_and_structured_context_modes(self):
         for wire in ('mcp_catalog_pages_v2','mcp_context_records_v3'):

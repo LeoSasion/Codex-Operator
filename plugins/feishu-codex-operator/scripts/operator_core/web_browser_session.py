@@ -15,9 +15,10 @@ import re
 import secrets
 import subprocess
 
-from .web_browser_driver import (child_environment, desktop_session_state, safe_effort_diagnostic, safe_effort_range_diagnostic, safe_generation_progress, safe_model_network, safe_user_binding_diagnostic, safe_prompt_mismatch_shape, safe_modern_identity_shape, safe_fresh_chat_control_structure,
+from .web_browser_driver import (child_environment, desktop_session_state, safe_effort_diagnostic, safe_effort_range_diagnostic, safe_generation_progress, safe_public_turn_state, safe_public_identity_structure, safe_model_network, safe_user_binding_diagnostic, safe_prompt_mismatch_shape, safe_modern_identity_shape, safe_fresh_chat_control_structure,
     rejected_http_status, rejected_network_error, safe_public_interruption, public_interruption_code, rejected_ui_code, public_final_timeout)
 from .web_mcp_transport import WebRequestCapacityError, WebBrowserAssistanceRequired, WebDesktopUnavailable, WebBrowserHttpError, WebBrowserNetworkError, WebBrowserUiError, WebBrowserFinalTimeout, require
+from .responses_capabilities import RouterError
 from .responses_tool_adapter import loads
 from .web_model_catalog import matches_selection
 
@@ -31,11 +32,12 @@ ASSISTANCE_CLOSE_FIELDS = {
     'loginVisible': {'yes', 'no', 'unknown'},
     'userRows': {'zero', 'nonzero', 'unknown'},
     'assistantRows': {'zero', 'nonzero', 'unknown'},
+    'modernRows': {'zero', 'nonzero', 'unknown'},
     'composerEmpty': {'yes', 'no', 'unchecked'},
 }
 STARTUP_PREPARE_FIELDS = {key: ASSISTANCE_CLOSE_FIELDS[key] for key in (
     'route', 'pageKind', 'composer', 'modelControl', 'loginVisible',
-    'userRows', 'assistantRows')}
+    'userRows', 'assistantRows', 'modernRows')}
 STARTUP_STRUCTURE_FIELDS = {
     'readyState': {'loading', 'interactive', 'complete', 'unknown'},
     'legacyEditorCount': {'zero', 'one', 'multiple'},
@@ -188,14 +190,26 @@ class WebBrowserSession:
         """Observe one empty public page without admitting or sending model input."""
         require(self.startup_prepare and self.launches == 0 and self.current is None,
             'web_startup_prepare_invalid')
-        self.check_environment()
+        preflight = True
         try:
+            self.check_environment()
+            preflight = False
             await self.start()
             await wait_owned_future(self.prepared, 80)
         except BaseException as error:
             if isinstance(error, Exception) and not self.closed:
-                self.record_startup_failure(fallback_stage='launch' if self.child is None
-                    else 'startup_wait')
+                if preflight and not self.startup_failure_recorded:
+                    # No worker futures exist yet. Retain only local fixed
+                    # causes, then close the session without launching it.
+                    code = str(error) if isinstance(error, RouterError) and str(error) in (
+                        'web_desktop_locked_before_dispatch',
+                        'web_desktop_unavailable_before_dispatch',
+                        'web_browser_source_changed') else 'web_session_worker_failed_no_retry'
+                    self.base.events.append({'kind': 'startup_failed', 'stage': 'preflight', 'code': code})
+                    self.startup_failure_recorded = True
+                else:
+                    self.record_startup_failure(fallback_stage='launch' if self.child is None
+                        else 'startup_wait')
             await self.close()
             raise
 
@@ -259,7 +273,7 @@ class WebBrowserSession:
 
     def event(self, value, current):
         kind = value.get('kind')
-        if kind not in ('model_verified', 'dispatch_started', 'public_user_binding', 'window_state', 'generation_state', 'prompt_ready_gate', 'prompt_mismatch_shape', 'modern_identity_shape', 'fresh_chat_control_structure', 'previous_page_shape', 'public_interruption_state', 'fresh_chat_navigation', 'model_network_state',
+        if kind not in ('model_verified', 'dispatch_started', 'public_user_binding', 'window_state', 'generation_state', 'public_turn_state', 'public_identity_structure', 'prompt_ready_gate', 'prompt_mismatch_shape', 'modern_identity_shape', 'fresh_chat_control_structure', 'previous_page_shape', 'public_interruption_state', 'fresh_chat_navigation', 'model_network_state',
                 'completed', 'failed', 'cancel_requested', 'cancel_click_attempted', 'cancel_click_unavailable',
                 'cancel_idle_unverified', 'effort_initial_state', 'effort_step_verified',
                 'effort_step_unavailable', 'effort_pro_unavailable', 'effort_pro_verified', 'effort_target_verified',
@@ -302,6 +316,10 @@ class WebBrowserSession:
             event['state'] = current['interruption']
         elif kind == 'generation_state':
             event['progress'] = safe_generation_progress(value.get('progress'))
+        elif kind == 'public_turn_state':
+            event['state'] = safe_public_turn_state(value.get('state'))
+        elif kind == 'public_identity_structure':
+            event['shape'] = safe_public_identity_structure(value.get('shape'))
         elif kind == 'fresh_chat_navigation':
             require(value.get('mode') == 'ui_new_chat_v1' and value.get('temporary') is True
                 and all(type(value.get(k)) is int and value[k] == 0 for k in ('userRows', 'assistantRows')),
@@ -601,8 +619,18 @@ class WebBrowserSession:
             raise
         except Exception as error:
             self.base.failed += 1
+            # A local source-digest check is a fixed pre-dispatch failure, not
+            # untrusted browser/page text. Keep the worker terminal but make
+            # this exact stale-service cause visible in private status.
+            if isinstance(error, RouterError) and str(error) == 'web_browser_source_changed':
+                code = 'web_browser_source_changed'
+            elif isinstance(error, (WebDesktopUnavailable, WebBrowserAssistanceRequired,
+                    WebBrowserHttpError, WebBrowserNetworkError, WebBrowserUiError, WebBrowserFinalTimeout)):
+                code = str(error)
+            else:
+                code = 'rejected'
             self.base.events.append({'attempt': self.base.attempts, 'kind': 'driver_failed',
-                'code': str(error) if isinstance(error, (WebDesktopUnavailable, WebBrowserAssistanceRequired, WebBrowserHttpError, WebBrowserNetworkError, WebBrowserUiError, WebBrowserFinalTimeout)) else 'rejected'})
+                'code': code})
             raise
         finally:
             if not succeeded and not retained_for_assistance and not retained_after_cancel and not retained_after_preflight:

@@ -3,6 +3,7 @@ import argparse
 from contextlib import closing
 import hashlib
 import json
+import tomllib
 import os
 from pathlib import Path
 import socket
@@ -12,6 +13,83 @@ from urllib.request import Request, ProxyHandler, build_opener
 
 import routing_cli
 from operator_core import model_router_config as settings
+
+
+class UnifiedCandidateConflict(ValueError):
+    """Fixed, content-free uninstall blocker for the disposable route trial."""
+
+
+def _unified_artifact_present(path):
+    try:
+        path.lstat()  # Also detects dangling links and Windows junctions.
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise UnifiedCandidateConflict('unified_candidate_requires_review_before_uninstall') from exc
+    return True
+
+
+def inspect_unified_candidate(config):
+    # A Channels-only exit does not need optional unified modules. Any saved
+    # archive, including a linked or incomplete one, needs an exact receipt.
+    home = config.parent
+    if _unified_artifact_present(home/'operator-unified-workflow-renewal'):
+        from operator_unified_workflow_renew import status as workflow_renewal_status
+        if workflow_renewal_status(home)['status'] != 'workflows_retained':
+            raise UnifiedCandidateConflict('unified_workflow_renewal_requires_review_before_uninstall')
+    if _unified_artifact_present(home/'operator-unified-failed-archive'):
+        from operator_unified_failed_archive import archive_status as failed_archive_status
+        if failed_archive_status(home)['status'] != 'failed_originals_retained':
+            raise UnifiedCandidateConflict('unified_failed_archive_requires_review_before_uninstall')
+    if _unified_artifact_present(home/'operator-unified-retired-archive'):
+        from operator_unified_retire import archive_status as retired_archive_status
+        if retired_archive_status(home)['status'] != 'retained':
+            raise UnifiedCandidateConflict('unified_retired_archive_requires_review_before_uninstall')
+    archive = home/'operator-unified-prepared-archive'
+    if _unified_artifact_present(archive):
+        try:
+            from operator_unified_supersede import archive_status
+            if archive_status(home)['status'] != 'superseded_witnessed':
+                raise ValueError('archive not witnessed')
+        except Exception as exc:
+            raise UnifiedCandidateConflict('unified_prepared_archive_requires_review_before_uninstall') from exc
+    # The retained one-shot plan is separate ownership. Only its exact terminal
+    # retirement receipt, checked against recovered native state, clears this
+    # gate; neither a restored config nor an entry journal alone does so.
+    activation = home/'operator-unified-activation'
+    if _unified_artifact_present(activation):
+        try:
+            from operator_unified_retire import verify_retired
+            if verify_retired(activation/'plan.json')['status'] != 'retired_witnessed':
+                raise ValueError('retirement not witnessed')
+        except Exception as exc:
+            raise UnifiedCandidateConflict('unified_activation_requires_review_before_uninstall') from exc
+    for path in (home/'operator-unified-disposable.json',
+                 home/'operator-unified-candidate'):
+        if _unified_artifact_present(path):
+            raise UnifiedCandidateConflict('unified_candidate_requires_review_before_uninstall')
+    if config.is_symlink() or getattr(config, 'is_junction', lambda: False)():
+        raise UnifiedCandidateConflict('unified_candidate_requires_review_before_uninstall')
+    if not config.exists():
+        return
+    if not config.is_file():
+        raise UnifiedCandidateConflict('unified_candidate_requires_review_before_uninstall')
+    try:
+        with config.open('rb') as stream:
+            raw = stream.read(1024 * 1024 + 1)
+    except OSError as exc:
+        raise UnifiedCandidateConflict('unified_candidate_requires_review_before_uninstall') from exc
+    if (len(raw) > 1024 * 1024 or b'OPERATOR UNIFIED' in raw
+            or b'operator_unified_candidate' in raw):
+        raise UnifiedCandidateConflict('unified_candidate_requires_review_before_uninstall')
+    try:
+        parsed = tomllib.loads(raw.decode('utf-8-sig'))
+    except (UnicodeError, tomllib.TOMLDecodeError) as exc:
+        raise UnifiedCandidateConflict('unified_candidate_requires_review_before_uninstall') from exc
+    providers = parsed.get('model_providers')
+    if (parsed.get('model_provider') == 'operator_unified_candidate'
+            or isinstance(providers, dict) and 'operator_unified_candidate' in providers):
+        raise UnifiedCandidateConflict('unified_candidate_requires_review_before_uninstall')
 
 
 def assert_port_free(port):
@@ -46,9 +124,6 @@ def service(state, port, *, stop=False, expected=None):
 
 
 def inspect(project, config, port):
-    # The separately owned Web entry must be detached before archiving its
-    # interpreter/runtime. Never mistake the legacy 4317 listener for that route.
-    inspect_web_startup(project, config)
     migration = project/'.codex/operator-entry-migration/journal.json'
     if migration.exists():
         from operator_web_service import checked_path, read_json
@@ -57,6 +132,16 @@ def inspect(project, config, port):
         if (record.get('scope') != 'desktop_entry_only' or record.get('project') != str(project)
                 or record.get('phase') != 'restored'):
             raise ValueError('restore_separate_desktop_entry_migration_before_uninstall')
+    return inspect_entry(project, config, port)
+
+
+def inspect_entry(project, config, port):
+    """Entry restoration preflight, with no assertion of runtime ownership."""
+    inspect_unified_candidate(config)
+    inspect_mode_entries(project)
+    # The separately owned Web entry must be detached before archiving its
+    # interpreter/runtime. Never mistake the legacy 4317 listener for that route.
+    inspect_web_startup(project, config)
     trial = project/'.codex/operator-web-service/desktop/current.json'
     if trial.exists():
         from operator_web_desktop import status as desktop_status
@@ -72,8 +157,9 @@ def inspect(project, config, port):
     owned_entry = entry.exists()
     if owned_entry:
         journal = settings.read_registration(entry)
-        expected = {'config':str(config.resolve()), 'block':settings.BEGIN + 'openai_base_url = ' + json.dumps(settings.url(state,port)) + '\n' + settings.END}
-        if journal != expected or not config.read_bytes().startswith(journal['block'].encode()):
+        expected = ({'config':str(config.resolve()), 'block':block.decode()}
+                    for block in settings.managed_entry_blocks(state,port))
+        if journal not in expected or not config.read_bytes().startswith(journal['block'].encode()):
             raise ValueError('router_entry_ownership_conflict')
     try:
         assert_port_free(port)
@@ -88,6 +174,32 @@ def inspect(project, config, port):
             'router_identity':None if router['status']=='stopped' else (router['service'], router['pid']),
             'owned_callback_registration':callback['matches_runtime'],
             'other_callback_registration_preserved':callback['configured'] and not callback['matches_runtime']}
+
+
+def inspect_mode_entries(project):
+    """Every isolated Desktop/router must be known stopped before runtime removal."""
+    parent = project / '.codex/operator-mode-entry'
+    if not _unified_artifact_present(parent):
+        return
+    # Import only when saved mode state exists; Channels-only teardown needs no aiohttp.
+    import operator_mode_entry as mode
+    try:
+        mode.checked_path(parent, directory=True)
+        for root in parent.iterdir():
+            mode.checked_path(root, directory=True)
+            descriptor = mode.load(root, check_source=False)
+            mode.require(descriptor['project'] == str(project), 'uninstall_project_changed')
+            mode.require(mode.active_desktop(root) is None, 'close_extension_before_uninstall')
+            attempt = mode.router_attempt(root)
+            if attempt is not None:
+                running = mode.decode(mode.read(attempt / 'running.json'))
+                stopped = mode.decode(mode.read(attempt / 'stopped.json'))
+                mode.require(stopped.get('server_confirmed_request_free') is True
+                    and stopped.get('process') == running.get('process')
+                    and not mode.process_matches(running.get('process')), 'stop_extension_router_before_uninstall')
+            assert_port_free(descriptor['port'])
+    except (OSError, ValueError, KeyError, TypeError):
+        raise ValueError('isolated_mode_requires_stopped_review_before_uninstall') from None
 
 
 def inspect_web_startup(project, config):
@@ -131,6 +243,12 @@ def inspect_web_startup(project, config):
     activation = bundle/'activation.json'
     if activation.exists() and read_json(activation).get('phase') != 'cancelled':
         raise ValueError('cancel_web_startup_activation_before_uninstall')
+    retirement_artifacts = (bundle/'legacy-activation-retirement.json',
+        bundle/'legacy-activation-original.json', bundle/'legacy-activation-retired.json')
+    if any(path.exists() or path.is_symlink() for path in retirement_artifacts):
+        from operator_web_activation_retire import retirement_status
+        if retirement_status(bundle/'web-startup.json') != 'retired':
+            raise ValueError('review_web_activation_retirement_before_uninstall')
     if not profile.exists():
         raise ValueError('web_startup_uninstall_profile_missing')
 
@@ -155,15 +273,21 @@ def detach(project, config, port):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=['inspect','detach'])
+    parser.add_argument('action',choices=['inspect','inspect-entry','detach'])
     parser.add_argument('--project-root',required=True,type=Path)
     parser.add_argument('--codex-config',required=True,type=Path)
     parser.add_argument('--port',type=int,default=4317)
     args = parser.parse_args()
     try:
         if not 1024 <= args.port <= 65535: raise ValueError('invalid_router_port')
-        operation = inspect if args.action=='inspect' else detach
+        if args.codex_config.is_symlink() or getattr(args.codex_config, 'is_junction', lambda: False)():
+            raise UnifiedCandidateConflict('unified_candidate_requires_review_before_uninstall')
+        operation = {'inspect': inspect, 'inspect-entry': inspect_entry, 'detach': detach}[args.action]
         print(json.dumps(operation(args.project_root.resolve(),args.codex_config.resolve(),args.port)))
+    except UnifiedCandidateConflict as exc:
+        print(json.dumps({'error':'uninstall_preflight_or_detach_failed',
+                          'reason':str(exc),'retried':False}))
+        raise SystemExit(1)
     except Exception:
         # Never print config contents, tokens, callback material or credentialed URLs.
         print(json.dumps({'error':'uninstall_preflight_or_detach_failed','retried':False}))

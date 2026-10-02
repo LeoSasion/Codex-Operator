@@ -33,6 +33,14 @@
   restoration first; legacy runtime ownership remains explicitly unresolved.
   Migration neither activates routing nor proves cold launch/Desktop acceptance.
 
+- A legacy runtime cutover may explicitly bind one completed dead-Web recovery
+  receipt when the manager reports configured with no current instance. Validate
+  the selected receipt, retained originals, archived marker and complete recovery
+  history, then recheck current profile/source and absent processes and listener.
+  Keep the ordinary stopped-service path unchanged. This is separate evidence of
+  absence, never a clean-stop claim or first-install ownership; do not manufacture
+  a stopped record, start services to satisfy maintenance, or replay old requests.
+
 - An owner-requested saved Web cold-launch plan binds exact source/profile,
   Python, workflow and dedicated empty registry identities. Preparation/status
   never start services or change native settings. Explicit service-start may
@@ -381,8 +389,25 @@
   delete missing models or change approvals during discovery. First initialization
   must explain current-user Desktop/Start menu shortcut changes, original-file
   retention, taskbar limitations and the safe uninstall sequence before writing.
-  Project-owned launchers and new Desktop/Start menu shortcuts use the explicit
-  name `Codex拓展入口`; never impersonate the official executable or shortcut name.
+  Fresh installs use the owner's two desktop names and full build-date ownership
+  defined in `shared/docs/installation-and-removal.md` under Desktop entry pair.
+  They require the default native home. Legacy journals and the internal launcher
+  retain `Codex拓展入口`; changed builds use a private compiled candidate and exact
+  digest-bound preview. Legacy-to-pair migration preserves all prior receipts,
+  renames the Desktop shortcut in place without changing its file identity and
+  retains the Start menu entity. Its independent origin/build chain never creates
+  first-install runtime ownership. Verify old restoration materials and current
+  workflow before writes; retain failed transactions without retry. Restore the
+  pair before the older migration, keeping fixed launchers/helpers for pins.
+  Explicit unused prepared-plan withdrawal may archive only the exact untouched
+  prepared journal and full original directory with native protection intact.
+  Bind current native config/cache/entry identities and preserve later user
+  settings; freeze the protection marker and current snapshots through the
+  witnessed move. Armed/attempted/failed plans and partial archives remain
+  terminal for review. This changes no routing, services or Desktop state and
+  does not attest to a running Desktop's cached route or authorize plan replay.
+  Isolated pair tests do not establish real Desktop or mode-switch acceptance.
+  Never impersonate the official executable or infer a native route from a name.
   Existing journaled names remain valid only for reviewed migration and recovery.
   An owner-requested initialization may then configure those entry points without
   another prompt. It does not activate global routing or infer a local-model

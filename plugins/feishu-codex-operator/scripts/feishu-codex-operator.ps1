@@ -1014,6 +1014,7 @@ function Get-InstalledOperatorManifestIssues {
         'operator_core/responses_tool_adapter.py',
         'operator_core/responses_events.py',
         'operator_core/web_model_protocol.py',
+        'operator_core/web_native_interruption.py',
         'operator_core/web_mcp_transport.py',
         'operator_core/web_responses_provider.py',
         'operator_core/web_browser_driver.py',
@@ -1025,6 +1026,7 @@ function Get-InstalledOperatorManifestIssues {
         'operator_web_acceptance.py',
         'operator_web_desktop.py',
         'operator_web_entry.ps1',
+        'operator_native_models.py',
         'operator_product.py',
         'operator_python.psm1',
         'codex-operator.ps1',
@@ -2236,9 +2238,10 @@ switch ($scopeName) {
             'init' {
                 . (Join-Path $PSScriptRoot 'operator_desktop_setup.ps1') -ProjectRoot (Resolve-Project) -StartupBundle $StartupBundle -Library
                 Show-OperatorInstallationNotice
+                Assert-OperatorDesktopExperiencePreflight -ProjectRoot (Resolve-Project)
                 Start-OperatorInstallation -ProjectRoot (Resolve-Project) -LinkPaths @(Get-OperatorDesktopPaths -IncludeLegacy)
                 Invoke-AgentsInit
-                Install-OperatorDesktopEntry -ProjectRoot (Resolve-Project) -StartupBundle $StartupBundle | ConvertTo-Json
+                Install-OperatorDesktopExperience -ProjectRoot (Resolve-Project) -StartupBundle $StartupBundle | ConvertTo-Json
             }
             'desktop-entry' {
                 & (Join-Path $PSScriptRoot 'operator_desktop_setup.ps1') -Action install -ProjectRoot (Resolve-Project) -StartupBundle $StartupBundle

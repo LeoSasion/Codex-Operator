@@ -91,6 +91,9 @@ Channels 首版只实现飞书，不声称其他 IM 已可用。先读 [快速�
   LiteLLM，不转换 Chat Completions。涉及此功能先读 `../../models/common/docs/model-router.md`。
   registry v2 按明确能力适配外部工具，v1/null 保留透传；代码与调用 ID 不改写，
   工具调用仅在成功终态完整校验后交付。探测、隔离 CLI 执行和真实 Desktop 验收分别记录。
+  现有登记与已验证源码合同不一致时，先用 `update-contracts` 只读预览；仅在既有停用、
+  空回调和端口检查通过后，绑定原登记与候选摘要显式更新。它只改 `responses`，保留原件；
+  不改型号、容量或档位，不重试旧请求。参数与恢复边界见上述路由文档。
   能力复用、注册前检查和多轮评测再读 `../../models/common/docs/responses-acceptance.md`；
   私有 profile/receipt 不随发布复制。只读补丁计划与实际文件写入审批分开验收。
   全局入口启用与安装分开；常驻生命周期、原生辅助工具及真实 Desktop 下拉/默认值
@@ -108,6 +111,11 @@ Channels 首版只实现飞书，不声称其他 IM 已可用。先读 [快速�
 
 ## 按任务读取资料
 
+- 添加或撤回 API、本地模型：先读[原生模型接入](../../models/common/docs/native-models.md)，
+  使用 `models native prepare|install|status|restore` 为准确模型配置独立原生 profile 和目录。
+  先核对当前 CLI 对文件式 profile 的支持、端点与密钥引用；保留官方默认、已有 profile 与权限。
+  旧 `[profiles.name]` 表不能作为当前接入方式。不要仅追加混合目录后声称 Desktop 能切换 provider；
+  配置加载、列表可见、真实路由、工具执行与主窗口验收分别记录。API 密钥不发到对话中。
 - 原生体验、Web 模型、工具连接、配置引导或后台生命周期：先读
   [长期项目记忆](../../models/web/docs/native-web-experience.md) 与
   [原生对话改进计划](../../models/web/docs/native-conversation-plan.md)。2026-09-20 最新方向以
@@ -126,6 +134,10 @@ Channels 首版只实现飞书，不声称其他 IM 已可用。先读 [快速�
   [Beeper E2E lessons](../../channels/feishu/docs/beeper-e2e-lessons.md)。保留失败样本，不重放；
   成功必须是同一飞书消息经 Final Callback 收到精确关联回复，不能用 Desktop 输出替代。
 - 安装、迁移或升级：读 [README](../../README.md) 和 [Upgrade](../../upgrade-operator.md)。
+  桌面双入口的命名、日期含义、原生恢复与发布验收只维护在
+  [安装与恢复指南](../../shared/docs/installation-and-removal.md#desktop-entry-pair)。
+  桌面双入口已实现，支持经审查的旧入口迁移；保留原归属记录，实机冷启动、退出后重开
+  和模型连续对话仍需分别验收。
 - ChatGPT Web 后台连接、Tunnel ID 或运行密钥配置：先读
   [固定连接与对话引导](../../models/web/docs/web-fixed-tunnel.md)，按其中用户步骤逐步带操作。
   管理已配置的后台服务时读[原生 Web 体验方案](../../models/web/docs/native-web-experience.md)，
@@ -142,6 +154,13 @@ Channels 首版只实现飞书，不声称其他 IM 已可用。先读 [快速�
   将该后台接入模型路由时，按原生 Web 体验方案使用显式 `--web-profile` 与
   `bind-web` 内存绑定。摘要回执不含密钥；不要手填端口、复制 session 凭据、
   自动重启现有路由，或把目录追加当作 Desktop 列表/工具任务验收。
+  升级已经成功启用的统一入口，先按[受控升级交接](../../models/common/docs/unified-cold-launch.md#replacing-a-witnessed-activation-during-an-explicit-upgrade)
+  准备并核验 `prepare-upgrade` 的完整私有清单，再协调用户退出。旧成功记录、用户后来选定的
+  模型和显示偏好须保留；失败或不确定的启动不能重置重试。不要让用户先退出，再临时准备恢复。
+  2026-09-30 所有者要求避免升级时无反馈地等待：交接必须先确认独立后台和可见维护状态窗口，
+  再请用户退出；明确窗口关闭不一定代表应用退出，等待可延期且有截止时间。超时、检查失败、
+  官方恢复与升级完成分开报告，不让用户猜状态、反复退出或自行结束进程。具体行为与发布验收
+  统一见上述受控交接文档；未完成真实退出闭环前不声称发布就绪。
   用户要求验证编码能力时，可使用 `models web verify`：只在新合成项目中做一次有界真实
   CLI 读取、精确修正与实际测试。失败保留，不重放；回执须区分工具执行与 Desktop
   体验。它会调用网页模型；普通 `status` 等只读检查不能暗中调用它。
@@ -150,6 +169,12 @@ Channels 首版只实现飞书，不声称其他 IM 已可用。先读 [快速�
   只读核对模型目录与提供方（不等于运行中菜单或路由验收），`desktop-disconnect`
   撤回准确片段。服务换代时先以 `desktop-status` 确认 `stale`，核对当前服务
   ready/idle 后显式 `desktop-rebind`，保留原 provider 名称与任务，保存原配置。
+  用户明确要求以所选 Web 型号新建任务时，助手先核对保存后台 ready/idle、独立
+  provider 已连接、项目位置和准确型号/强度，再通过原生 App Server 的
+  `thread/start.modelProvider` 创建专用任务，以新输入调用一次 `turn/start`，
+  核对落盘的提供方、实际模型和回合结果后打开该任务的准确 UUID。空任务在首轮落盘前
+  不能视为可续用；普通 `create_thread` 不提供 provider 选择，不能替代这一步。
+  这仍是助手引导的专用任务入口，不宣称主窗口新任务模型菜单已经支持 Web。
   rebind 只更新保存配置，已加载任务可能仍缓存旧地址。对已授权维护的准确空闲任务，按
   [原生任务重载](../../models/web/docs/native-web-experience.md#reload-an-idle-web-task)
   由助手使用原生归档/恢复工具处理同一 UUID，并读回实际状态；不重建任务、不重启 Desktop。
@@ -158,6 +183,11 @@ Channels 首版只实现飞书，不声称其他 IM 已可用。先读 [快速�
   核对原生任务最终内容和服务证据。任务工具转交与用户亲自在输入框发送属于不同验收范围，
   不能混称。旧长任务若在 Web 索引上下文容量处返回 413，保留历史与失败回合；
   旧版 64 MiB 原生 HTTP 正文修复不适用于 48 KiB/24 页/40 读取的 Web 容量限制。
+  如环境提供 Windows Computer Use 且用户已授权操作，可在准确任务的普通 Desktop
+  输入框代发一次全新测试消息：先观察任务标题、历史及输入框，确认草稿后只发送一次，
+  再分别核对窗口可见结果、原生回合的模型/提供方/工具记录及后台状态。操作结果不明时
+  先检查实际回合，不能再次点击发送或重放原请求；桌面输入框实测也不等于用户亲自输入。
+  `desktop-status` 的保守验收字段不是已发生的主窗口输入回执。
   不要为 Web 任务在项目或全局 `.codex/config.toml` 关闭 `web_search`：项目设置也会影响
   同目录的 GLM、DeepSeek 和原生任务。Web provider 仅将准确的可选 live hosted
   `web_search` 声明绑定到 ChatGPT 网页自己的搜索路径，不生成 Codex

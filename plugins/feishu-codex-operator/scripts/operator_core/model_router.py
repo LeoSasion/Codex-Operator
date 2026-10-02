@@ -15,7 +15,7 @@ from aiohttp import web
 from yarl import URL
 
 from .beeper_provider import BeeperResponsesEngine
-from .model_registry import ModelRegistry, RouterError
+from .model_registry import ModelRegistry, RouterError, WebServiceBinding
 from .responses_capabilities import UpstreamProtocolError, protocol_reason, protocol_response_state
 from .responses_tool_adapter import prepare_request, restore_response, loads
 from .responses_events import restore_events, completed_response_events
@@ -25,6 +25,8 @@ NATIVE_BASE = "https://chatgpt.com/backend-api/codex"
 MAX_BODY = 16 * 1024 * 1024
 MAX_NATIVE_HTTP_BODY = 64 * 1024 * 1024
 MAX_UPSTREAM_HEADER = 64 * 1024
+UPSTREAM_READ_SECONDS = 300
+MANAGED_WEB_READ_SECONDS = 900
 NATIVE_AUXILIARY = {"alpha/search", "images/generations", "images/edits"}
 RESPONSE_STARTED = web.RequestKey("response_started", bool)
 PHASE = ContextVar("router_phase", default="request")
@@ -50,6 +52,18 @@ def clean_headers(headers) -> dict[str, str]:
 
 def encode(value) -> bytes:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def managed_web_request_options(binding):
+    # Only an authenticated, in-memory managed Web route gets the MCP deadline.
+    # Omission retains the session's native/API/Local timeout; timeout=None would
+    # silently disable that default. This changes no browser or request deadline.
+    if binding is None:
+        return {}
+    if not isinstance(binding, WebServiceBinding):
+        raise RouterError("web_route_binding_invalid")
+    return {"timeout": aiohttp.ClientTimeout(total=None, connect=15,
+                                             sock_read=MANAGED_WEB_READ_SECONDS)}
 
 
 class RequestSizeError(RouterError):
@@ -111,7 +125,8 @@ def request_size_response(limit, scope):
 
 class ModelRouter:
     def __init__(self, registry: ModelRegistry, token: str, *, native_base: str = NATIVE_BASE,
-                 registry_sha256: str | None = None, web_profile=None) -> None:
+                 registry_sha256: str | None = None, web_profile=None,
+                 native_enabled: bool = True, native_search_home=None) -> None:
         if not re.fullmatch(r"[a-f0-9]{64}", token):
             raise RouterError("router_token_requires_64_hex_characters")
         self._registry = registry
@@ -123,7 +138,21 @@ class ModelRouter:
         self._web_bind_not_before = 0.0
         self._web_turn_bindings = {}
         self.prefix = "/" + token + "/v1"
+        # A separately configured, zero-retry OpenAI-auth provider can retain
+        # Codex backend tool routing only with this exact API-base suffix.
+        # The original /v1 entry and its ownership journal stay unchanged.
+        self.codex_backend_prefix = "/" + token + "/backend-api/codex"
         self.native_base = native_base.rstrip("/")
+        if type(native_enabled) is not bool:
+            raise RouterError("invalid_native_route_policy")
+        # An explicitly isolated extension home has no native account route.
+        # The existing router contract retains its native passthrough default.
+        self.native_enabled = native_enabled
+        from .native_search import checked_home, identity
+        if native_search_home is not None and (native_enabled or self.native_base != NATIVE_BASE):
+            raise RouterError('native_search_fixed_endpoint_required')
+        self.native_search_home = None if native_search_home is None else checked_home(native_search_home)
+        self.native_search_identity = identity(self.native_search_home)
         self.beeper = BeeperResponsesEngine()
         self.native_models: dict[str, set[str]] = {}
         self.session: aiohttp.ClientSession | None = None
@@ -261,12 +290,14 @@ class ModelRouter:
         async with aiohttp.ClientSession(auto_decompress=False, skip_auto_headers={"Accept-Encoding"},
                 trust_env=False, trace_configs=[trace],
                 max_line_size=MAX_UPSTREAM_HEADER, max_field_size=MAX_UPSTREAM_HEADER,
-                timeout=aiohttp.ClientTimeout(total=None, connect=15, sock_read=300)) as session:
+                timeout=aiohttp.ClientTimeout(total=None, connect=15,
+                                             sock_read=UPSTREAM_READ_SECONDS)) as session:
             self.session = session
             yield
 
     async def admit(self, request):
-        websocket = (request.method == "GET" and request.path == self.prefix + "/responses"
+        websocket = (request.method == "GET" and request.path in {
+                     self.prefix + "/responses", self.codex_backend_prefix + "/responses"}
                      and web.WebSocketResponse(max_msg_size=MAX_BODY, compress=False).can_prepare(request).ok)
         slots = self.websocket_slots if websocket else self.http_slots
         if slots.locked():
@@ -302,6 +333,8 @@ class ModelRouter:
 
     async def catalog(self, headers, query="") -> dict:
         PHASE.set("catalog")
+        if not self.native_enabled:
+            return self.registry.extension_catalog()
         account = self.account(headers)
         forwarded = clean_headers(headers)
         forwarded = {k: v for k, v in forwarded.items()
@@ -333,7 +366,11 @@ class ModelRouter:
         if not isinstance(model, str):
             raise RouterError("model_required")
         if model == "beeper" or model in self.registry.routes:
+            if not self.native_enabled and model == "beeper":
+                raise RouterError("model_not_registered")
             return False
+        if not self.native_enabled:
+            raise RouterError("model_not_registered")
         if model.startswith(("api/", "local/", "chatgpt-web/")):
             raise RouterError("model_not_registered")
         account = self.account(headers)
@@ -350,9 +387,11 @@ class ModelRouter:
                 raise RouterError("browser_requests_not_supported")
             if request.path == self.prefix + "/health" and request.method == "GET":
                 return web.json_response({"status": "ready", "external_models": len(self.registry.routes)})
-            if not request.path.startswith(self.prefix + "/"):
+            prefix = next((candidate for candidate in (self.prefix, self.codex_backend_prefix)
+                           if request.path.startswith(candidate + "/")), None)
+            if prefix is None:
                 return web.json_response({"error": "not_found"}, status=404)
-            endpoint = request.path[len(self.prefix) + 1:]
+            endpoint = request.path[len(prefix) + 1:]
             query = ("?" + request.rel_url.raw_query_string) if request.query_string else ""
             if endpoint == "models" and request.method == "GET":
                 body = encode(await self.catalog(request.headers, query))
@@ -362,16 +401,29 @@ class ModelRouter:
                                     headers={"ETag": etag, "Cache-Control": "no-cache",
                                              "Vary": "Authorization, ChatGPT-Account-Id"})
             if endpoint in NATIVE_AUXILIARY:
+                isolated_search = (endpoint == 'alpha/search' and self.native_search_home is not None)
+                if not self.native_enabled and not isolated_search:
+                    raise RouterError("native_route_disabled")
                 if request.method != "POST":
                     return web.json_response({"error": "method_not_allowed"}, status=405)
-                self.account(request.headers)
+                if not isolated_search:
+                    self.account(request.headers)
                 # Dedicated native tools have their own model IDs and multipart bodies.
                 # Never infer an external provider or parse/rebuild their opaque payload.
                 body = await request.read()
                 if len(body) > MAX_BODY:
                     raise RequestSizeError(MAX_BODY, "native_auxiliary_request")
+                if isolated_search:
+                    from .native_search import load_headers
+                    # Never propagate caller credentials, cookies, or account selectors.
+                    headers = {k: v for k, v in request.headers.items() if k.lower() in {
+                        'content-type', 'content-encoding', 'accept', 'user-agent',
+                        'originator', 'x-codex-turn-state', 'x-codex-turn-metadata'}}
+                    headers.update(await asyncio.to_thread(load_headers, self.native_search_home))
+                else:
+                    headers = clean_headers(request.headers)
                 return await self.proxy(request, URL(self.native_base + "/" + endpoint + query, encoded=True),
-                                        body, clean_headers(request.headers))
+                                        body, headers)
             if endpoint not in {"responses", "responses/compact"}:
                 return web.json_response({"error": "endpoint_not_supported"}, status=404)
             if request.method == "GET" and endpoint == "responses":
@@ -419,7 +471,8 @@ class ModelRouter:
                     raise RouterError("adapted_request_too_large")
                 return await self.proxy(request, route.api_base.rstrip("/") + "/responses",
                                         external_body, headers,
-                                        context=context, stream=downstream_stream)
+                                        context=context, stream=downstream_stream,
+                                        web_binding=route.web_binding)
             stream = bool(payload.get("stream"))
             PHASE.set("local_response")
             if not stream:
@@ -501,10 +554,12 @@ class ModelRouter:
                 "code": "router_internal_no_retry",
                 "message": "Router internal failure; request was not retried."}}, status=502)
 
-    async def proxy(self, request, url, body, headers, *, context=None, stream=False):
+    async def proxy(self, request, url, body, headers, *, context=None, stream=False,
+                    web_binding=None):
         PHASE.set("http_connect")
         begin = perf_counter()
-        async with self.session.post(url, data=body, headers=headers, allow_redirects=False) as upstream:
+        async with self.session.post(url, data=body, headers=headers, allow_redirects=False,
+                **managed_web_request_options(web_binding)) as upstream:
             self.metrics.observe("upstream_headers", perf_counter() - begin)
             if upstream.status >= 400:
                 self.record_failure(status=upstream.status)
@@ -602,7 +657,8 @@ class ModelRouter:
         begin = perf_counter()
         async with self.session.post(route.api_base.rstrip("/") + "/responses",
                 data=external_body,
-                headers=headers, allow_redirects=False) as response:
+                headers=headers, allow_redirects=False,
+                **managed_web_request_options(route.web_binding)) as response:
             self.metrics.observe("upstream_headers", perf_counter() - begin)
             if json_mode:
                 if response.status >= 400:

@@ -37,6 +37,49 @@ PUBLIC_CITATION_ERRORS = frozenset({
 PUBLIC_CITATION_ID = r'[A-Za-z0-9_-]{1,128}'
 
 
+def public_citation_shape(message):
+    """Bounded failure evidence only; never retain answer, URL, title or IDs.
+
+    Counts 129/65 mean the reference/source bound was exceeded. This describes
+    the returned object, not its validity, and never changes citation handling.
+    """
+    message = message if isinstance(message, dict) else {}
+    metadata = message.get('metadata', {})
+    renderer = metadata.get('operator_web_renderer') if isinstance(metadata, dict) else 'unknown'
+    renderer = ('modern' if renderer == 'modern_content_references_v1'
+        else 'legacy' if renderer is None else 'unknown')
+    references = message.get('public_references')
+    shape = {'renderer': renderer, 'reference_count': None, 'references': {}}
+    if not isinstance(references, list):
+        return shape
+    shape['reference_count'] = min(len(references), 129)
+    for reference in references[:128]:
+        reference = reference if isinstance(reference, dict) else {}
+        kind = reference.get('type')
+        if kind not in ('grouped_webpages', 'sources_footnote', 'url'):
+            kind = 'unsupported'
+        bucket = shape['references'].setdefault(kind,
+            {'count': 0, 'sources_max': None, 'source_shapes': {}})
+        bucket['count'] += 1
+        if kind == 'unsupported':
+            continue
+        field = {'grouped_webpages': 'items', 'sources_footnote': 'sources', 'url': 'item'}[kind]
+        values = reference.get(field)
+        state, count = 'invalid', None
+        if field not in reference:
+            state = 'missing'
+        elif values is None:
+            state = 'null'
+        elif kind == 'url' and isinstance(values, dict):
+            state, count = 'item', 1
+        elif kind != 'url' and isinstance(values, list):
+            state, count = 'array' if values else 'empty_array', min(len(values), 65)
+        bucket['source_shapes'][state] = bucket['source_shapes'].get(state, 0) + 1
+        if count is not None:
+            bucket['sources_max'] = max(bucket['sources_max'] or 0, count)
+    return shape
+
+
 def _public_links(values):
     if not isinstance(values, list) or not 1 <= len(values) <= 64:
         raise RouterError('web_public_citation_sources_invalid')
@@ -223,7 +266,7 @@ def render_modern_public_citations(parts, references):
             raise RouterError('web_public_citation_marker_invalid')
         return parts
     sources_by_index, grouped_sources = [], set()
-    footnote_sources = []
+    footnote_sources = None
     for reference in references:
         if not isinstance(reference, dict):
             raise RouterError('web_public_citations_invalid')
@@ -239,9 +282,12 @@ def render_modern_public_citations(parts, references):
             raise RouterError('web_public_citation_position_invalid')
         matched = bounded_string(reference['matched_text'], maximum=8192)
         if kind == 'sources_footnote':
-            if matched != ' ' or end not in (start, start + 1) or footnote_sources:
+            if matched != ' ' or end not in (start, start + 1) or footnote_sources is not None:
                 raise RouterError('web_public_sources_footnote_invalid')
-            footnote_sources = _public_links(reference['sources'])
+            # The public projection preserves an empty footer as metadata. It
+            # cites nothing; keep strict nonempty validation for inline groups.
+            footnote_sources = ([] if reference['sources'] == []
+                else _public_links(reference['sources']))
             sources_by_index.append({url for _, url, _ in footnote_sources})
         elif kind == 'grouped_webpages':
             if not re.fullmatch(r'\ue200cite\ue202' + PUBLIC_CITATION_ID
@@ -274,7 +320,7 @@ def render_modern_public_citations(parts, references):
     markers = list(marker_pattern.finditer(body))
     if body.count(':chatgpt-content-reference') != len(markers):
         raise RouterError('web_public_citation_marker_invalid')
-    if references and not links and not markers:
+    if validated_urls and not links and not markers:
         raise RouterError('web_public_citation_unmapped')
     replacements = []
     for marker in markers:

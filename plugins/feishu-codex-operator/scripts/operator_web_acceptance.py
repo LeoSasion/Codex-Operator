@@ -224,20 +224,40 @@ def mcp_evidence(before, after, client_requests):
             and last['eventsTotal']-last['eventsDropped']==len(events),'web_check_diagnostics_invalid')
         if last['eventsDropped']>first['eventsTotal']:
             return {**unknown,'status':'history_incomplete'}
-        allowed_events={'received','rejected','reply_prepared','cancelled'}
-        allowed_stages={'http','body','rpc','session','tool_arguments','tool_dispatch','serialize'}
+        local_writes={'local_response_write_completed','local_response_write_failed'}
+        allowed_events={'received','rejected','reply_prepared','cancelled'}|local_writes
+        allowed_stages={'http','body','rpc','session','tool_arguments','tool_dispatch','serialize','socket'}
+        base_fields={'sequence','event','stage','method','tool','code'}
+        page_fields={'section','index','total'}
         for index,event in enumerate(events,last['eventsDropped']+1):
-            require(isinstance(event,dict) and set(event)=={'sequence','event','stage','method','tool','code'}
+            require(isinstance(event,dict) and set(event) in (base_fields,base_fields|page_fields)
                 and type(event['sequence']) is int and event['sequence']==index
                 and event['event'] in allowed_events and event['stage'] in allowed_stages
                 and event['method'] in _MCP_DIAGNOSTIC_METHODS|{'other'}
                 and event['tool'] in (None,'operator_begin','operator_call')
                 and event['code'] in _MCP_DIAGNOSTIC_CODES|{None,'web_mcp_other_rejection'},
                 'web_check_diagnostics_invalid')
+            has_page=set(event)==base_fields|page_fields
+            require(not has_page or (event['method']=='tools/call'
+                and event['tool']=='operator_begin'
+                and event['event'] in local_writes|{'reply_prepared'}
+                and event['section'] in ('context','catalog','schema')
+                and type(event['index']) is int and type(event['total']) is int
+                and 0<=event['index']<event['total']<=24),
+                'web_check_diagnostics_invalid')
+            if event['event'] in local_writes:
+                require(has_page and event['stage']=='socket' and event['code'] is None,
+                    'web_check_diagnostics_invalid')
+            elif has_page:
+                require(event['stage']=='serialize' and event['code'] is None,
+                    'web_check_diagnostics_invalid')
         selected=[e for e in events if e['sequence']>first['eventsTotal']]
         calls=[e for e in selected if e['tool']=='operator_call']
         return {'status':'complete','scope':'local_mcp_receive_only',
             'operator_begin_received':sum(e['event']=='received' and e['tool']=='operator_begin' for e in selected),
+            # A local socket write does not establish tunnel or cloud receipt.
+            'operator_begin_local_writes_completed':sum(e['event']=='local_response_write_completed' for e in selected),
+            'operator_begin_local_writes_failed':sum(e['event']=='local_response_write_failed' for e in selected),
             'operator_call_received':sum(e['event']=='received' for e in calls),
             'operator_call_replies_prepared':sum(e['event']=='reply_prepared' for e in calls),
             'operator_call_cancelled':sum(e['event']=='cancelled' for e in calls),

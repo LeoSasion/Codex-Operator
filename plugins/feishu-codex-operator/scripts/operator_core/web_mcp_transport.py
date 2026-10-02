@@ -14,7 +14,7 @@ import time
 
 from .responses_capabilities import RouterError
 from .responses_tool_adapter import MAX_ARGUMENT_BYTES, dumps, loads
-from .web_model_protocol import WebModelProtocol, PUBLIC_CITATION_ERRORS
+from .web_model_protocol import WebModelProtocol, PUBLIC_CITATION_ERRORS, public_citation_shape
 
 
 def require(value, code):
@@ -149,6 +149,9 @@ class IndexedWebRequest:
         self.described = set()
         self.discovered = set()
         self.reads = 0
+        self.consumed_pages = {}
+        self.read_rejections = {}
+        self.read_rejections_capped = False
         request = protocol.request()
         present = 'tools' in request
         tools = request.pop('tools', [])
@@ -348,7 +351,16 @@ class IndexedWebRequest:
         return keys[0]
 
     def read(self, key):
-        require(isinstance(key, str) and key in self.pages, 'web_mcp_read_key_unavailable')
+        if not isinstance(key, str) or key not in self.pages:
+            # Classify only against this turn's bounded in-memory ledger.
+            # Unknown includes foreign, altered and stale keys; none of those
+            # causes can be inferred from their contents or an assistant claim.
+            category = ('invalid_type' if not isinstance(key, str) else
+                'consumed_' + self.consumed_pages[key] if key in self.consumed_pages else 'unknown')
+            count = self.read_rejections.get(category, 0)
+            self.read_rejections[category] = min(INDEX_READ_LIMIT, count + 1)
+            self.read_rejections_capped |= count >= INDEX_READ_LIMIT
+            raise RouterError('web_mcp_read_key_unavailable')
         require(self.reads < INDEX_READ_LIMIT, 'web_mcp_read_limit')
         page, section, name, final = self.pages[key]
         require(section == 'context' or self.context_complete, 'web_mcp_context_not_read')
@@ -360,6 +372,7 @@ class IndexedWebRequest:
         require(self.expected[(section, name)] == key, 'web_mcp_read_out_of_order')
         # Consume before returning; uncertain deliveries cannot replay this page.
         del self.pages[key]
+        self.consumed_pages[key] = section
         self.expected[(section, name)] = page['next_read_key']
         self.reads += 1
         self.page_reads[section] += 1
@@ -382,6 +395,10 @@ class IndexedWebRequest:
             'catalog_pages_total': self.page_totals['catalog'],
             'schema_pages_read': self.page_reads['schema'],
             'schemas_complete': len(self.described)}
+
+    def read_rejection_observation(self):
+        """Fixed categories/counts only; never export handles or request data."""
+        return {'counts': dict(self.read_rejections), 'counts_capped': self.read_rejections_capped}
 
     def stage_unread_descriptions(self, protocol, names):
         """Build complete replacement pages without changing live read state.
@@ -437,6 +454,7 @@ class WebMcpTurn:
         self._seen_rpc = set()
         self._waiting_native = False
         self._final_queued = False
+        self.citation_validation = None
         self._input = deepcopy(protocol.request().get("input"))
         self._source_input = protocol.source_input()
         self._contract = protocol.continuation_contract()
@@ -629,6 +647,7 @@ class WebMcpTurn:
             self.indexed.pages.clear()
             self.indexed.expected.clear()
             self.indexed.discovered.clear()
+            self.indexed.consumed_pages.clear()
         if self.pending is not None and not self.pending["future"].done():
             self.pending["future"].cancel()
         while not self.frames.empty():
@@ -650,6 +669,8 @@ class WebMcpTurn:
             'public_final_returned': self.final_returned,
             **({'search_route': 'web_page_auto_v1'} if self._web_page_search_binding is not None else {}),
             **({'indexed_reads': self.indexed.read_observation()} if self.indexed is not None else {}),
+            **({'indexed_read_rejections': self.indexed.read_rejection_observation()}
+                if self.indexed is not None and self.indexed.read_rejections else {}),
             **({'unread_description_refreshes': self.unread_description_refreshes}
                 if self.unread_description_refreshes else {}),
             **({'binding_changes': deepcopy(self.binding_changes)} if self.binding_changes is not None else {})}
@@ -831,7 +852,7 @@ class WebResponsesBridge:
     These metadata values are correlation data, never caller authentication.
     """
     def __init__(self, route, endpoint, run_browser, *, timeout=300, call_limit=16,
-                 check_call=None, citation_mode='none', routes=None):
+                 check_call=None, citation_mode='none', routes=None, native_interruption_observer=None):
         require(citation_mode in ('none', 'markdown_links_v1'), 'web_public_citation_mode_required')
         self.citation_mode = citation_mode
         self.route = route
@@ -851,13 +872,64 @@ class WebResponsesBridge:
         self.exchanging = False
         self.turn_sequence = 0
         self.last_turn = None
+        self.native_interruption_observer = native_interruption_observer
+        self.native_watch = None
+        self.native_cleanup = False
+        self.ending = None
+        self.native_poll_interval = 2
+        self.native_observation = {'sequence': None, 'checks': 0, 'state': 'idle'}
 
     def diagnostics(self):
         """One current/last local observation; no history, secrets or replay data."""
         return {'scope': 'transport_only',
             'active_turn': {'sequence': self.turn_sequence, **self.turn.observation()}
                 if self.turn is not None else None,
-            'last_turn': deepcopy(self.last_turn)}
+            'last_turn': deepcopy(self.last_turn),
+            **({'native_interruption': dict(self.native_observation)}
+                if self.native_interruption_observer is not None else {})}
+
+    async def _watch_native_interruption(self, turn, identity):
+        """Fill only the gap after a released call and before a native result."""
+        while self.turn is turn and not turn.closed and not self.closed:
+            await asyncio.sleep(self.native_poll_interval)
+            pending = turn.pending
+            if (self.exchanging or pending is None or not pending['released']
+                    or pending['future'].done()):
+                continue
+            self.native_observation['checks'] += 1
+            try:
+                confirmed = await self.native_interruption_observer(identity)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                confirmed = None
+            if type(confirmed) is not bool:
+                self.native_observation['state'] = 'unavailable'
+                return  # No retry after an uncertain observation of this turn.
+            self.native_observation['state'] = 'interrupted' if confirmed else 'not_interrupted'
+            if not confirmed:
+                continue
+            # Native HTTP, MCP result and service-stop paths can change while
+            # metadata is read. Never cancel a replacement owner or continuation.
+            if (self.turn is not turn or self.owner != identity or turn.closed
+                    or self.closed):
+                return
+            if (self.exchanging or turn.pending is not pending
+                    or pending['future'].done()):
+                # This observation belongs to the previous call gap. Keep
+                # observing the same turn, but read fresh metadata before
+                # cancelling any subsequently released call.
+                continue
+            self.exchanging = True
+            self.native_cleanup = True
+            try:
+                await self._end('cancelled')
+                self.failure = None
+            finally:
+                self.native_watch = None
+                self.native_cleanup = False
+                self.exchanging = False
+            return
 
     @staticmethod
     def identity(payload):
@@ -886,6 +958,7 @@ class WebResponsesBridge:
                     # Fixed local terminal-validation codes only. An exception
                     # raised by the browser itself still takes the redacted path.
                     self.failure = str(error)
+                    turn.citation_validation = public_citation_shape(message)
                     turn.close()
                 else:
                     raise
@@ -904,19 +977,57 @@ class WebResponsesBridge:
             turn.close()
 
     async def _end(self, outcome='stopped'):
-        turn, driver = self.turn, self.driver
+        if self.ending is None:
+            self.ending = self._begin_end(outcome)
+        cleanup = self.ending
+        cancelled = False
+        # A disconnect can arrive while a failed continuation is already
+        # closing its metadata observer. Keep the cleanup owned and admission
+        # fenced even under repeated cancellation; callers still receive it.
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                cancelled = True
+        try:
+            cleanup.result()
+        finally:
+            if self.ending is cleanup:
+                self.ending = None
+        if cancelled:
+            raise asyncio.CancelledError
+
+    def _begin_end(self, outcome):
+        turn, driver, watch = self.turn, self.driver, self.native_watch
         self.turn = self.driver = self.owner = None
         if turn is not None:
             turn.client_cancelled = outcome == 'cancelled'
             turn.close()
             self.last_turn = {'sequence': self.turn_sequence, 'outcome': outcome,
                 **turn.observation()}
+            if turn.citation_validation is not None:
+                self.last_turn['citation_validation'] = deepcopy(turn.citation_validation)
             if self.endpoint.turn is turn:
                 self.endpoint.turn = None
-        if driver is not None:
-            if not driver.done():
-                driver.cancel()
-            await asyncio.gather(driver, return_exceptions=True)
+        if watch is asyncio.current_task():
+            watch = None
+        elif watch is not None:
+            self.native_watch = None
+        cancel_watch = not self.native_cleanup
+
+        async def finish_owned_tasks():
+            try:
+                if watch is not None:
+                    if cancel_watch:
+                        watch.cancel()
+                    await asyncio.gather(watch, return_exceptions=True)
+            finally:
+                if driver is not None:
+                    if not driver.done():
+                        driver.cancel()
+                    await asyncio.gather(driver, return_exceptions=True)
+
+        return asyncio.create_task(finish_owned_tasks())
 
     async def exchange(self, payload, *, on_failure=None):
         require(not self.closed, 'web_bridge_closed')
@@ -951,6 +1062,7 @@ class WebResponsesBridge:
                     check_call=self.check_call, web_page_search_binding=search_binding)
                 self.admitted.add(identity)
                 self.turn_sequence += 1
+                self.native_observation = {'sequence': self.turn_sequence, 'checks': 0, 'state': 'idle'}
                 request_turn, request_sequence = turn, self.turn_sequence
                 self.owner, self.turn = identity, turn
                 self.failure = None
@@ -964,6 +1076,8 @@ class WebResponsesBridge:
             frame = await turn.next_response()
             if turn._final_queued:
                 await self._end('public_final_returned')
+            elif self.native_interruption_observer is not None and self.native_watch is None:
+                self.native_watch = asyncio.create_task(self._watch_native_interruption(turn, identity))
             return frame
         except asyncio.CancelledError:
             await self._end('cancelled')
@@ -1039,14 +1153,47 @@ class WebMcpEndpoint:
         self._diagnostic_sequence = 0
         self._diagnostic_events = deque(maxlen=128)
 
-    def _trace(self, event, stage, method=None, tool=None, code=None):
+    def _trace(self, event, stage, method=None, tool=None, code=None, page=None):
         self._diagnostic_sequence += 1
-        self._diagnostic_events.append({'sequence': self._diagnostic_sequence,
+        observation = {'sequence': self._diagnostic_sequence,
             'event': event, 'stage': stage,
             'method': method if isinstance(method, str) and method in _MCP_DIAGNOSTIC_METHODS else 'other',
             'tool': tool if tool in ('operator_begin', 'operator_call') else None,
             'code': None if code is None else code if code in _MCP_DIAGNOSTIC_CODES
-                else 'web_mcp_other_rejection'})
+                else 'web_mcp_other_rejection'}
+        if (isinstance(page, tuple) and len(page) == 3
+                and page[0] in ('context', 'catalog', 'schema')
+                and type(page[1]) is int and type(page[2]) is int
+                and 0 <= page[1] < page[2] <= 24):
+            observation.update(section=page[0], index=page[1], total=page[2])
+        self._diagnostic_events.append(observation)
+
+    def _page_response(self, payload, headers, page):
+        # aiohttp is optional for read-only status and uninstall preflight.
+        from aiohttp import web
+
+        endpoint = self
+
+        class ObservedPageResponse(web.Response):
+            def __init__(self):
+                super().__init__(text=dumps(payload), headers=headers,
+                    content_type='application/json')
+                self._write_observed = False
+
+            async def write_eof(self, data=b''):
+                if self._write_observed:
+                    return await super().write_eof(data)
+                self._write_observed = True
+                try:
+                    await super().write_eof(data)
+                except BaseException:
+                    endpoint._trace('local_response_write_failed', 'socket',
+                        'tools/call', 'operator_begin', page=page)
+                    raise
+                endpoint._trace('local_response_write_completed', 'socket',
+                    'tools/call', 'operator_begin', page=page)
+
+        return ObservedPageResponse()
 
     def diagnostics(self):
         """Bounded local observations, not upstream denial or delivery attestation.
@@ -1251,13 +1398,16 @@ class WebMcpEndpoint:
                 raise RouterError("web_mcp_method_rejected")
             stage = 'serialize'
             response = {"jsonrpc": "2.0", "id": rpc_id, "result": result}
+            page = None
             if method == 'tools/call' and name == 'operator_begin' and self.turn.indexed is not None:
                 encoded(response, INDEX_REPLY_BYTES)
+                page = (answer['section'], answer['index'], answer['total'])
             encoded(response, 16 * 1024 * 1024)
-            self._trace('reply_prepared', stage, method, tool)
+            self._trace('reply_prepared', stage, method, tool, page=page)
             if pinned_session is not None:
                 pinned_session['reclaimable'] = True
-            return web.json_response(response, dumps=dumps, headers=response_headers)
+            return (self._page_response(response, response_headers, page) if page is not None
+                else web.json_response(response, dumps=dumps, headers=response_headers))
         except asyncio.CancelledError:
             self._trace('cancelled', stage, method, tool)
             raise

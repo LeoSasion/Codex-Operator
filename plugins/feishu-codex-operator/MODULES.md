@@ -5,13 +5,13 @@
 | 模块 | 负责 | 首版状态 |
 | --- | --- | --- |
 | Channels | IM 登录、消息与附件接收、准确任务映射、结果回传 | 飞书已实现；其他 IM 待扩展 |
-| Models / API | 在线端点登记、Responses 调度、工具协议适配 | 按端点与工具能力接入；全局路由非默认 |
-| Models / Local | 本地服务发现与模型接入 | LM Studio 发现；不自动下载或加载模型 |
+| Models / API | 原生 profile 添加与撤回、Responses 调度、工具协议适配 | 独立 profile 目录；主窗口跨 provider 菜单仍待接入 |
+| Models / Local | 本地服务发现、原生 profile 添加与撤回 | LM Studio 发现；不自动下载或加载模型 |
 | Models / Web | 固定连接、保存网页登录、后台页面与原生工具往返 | ChatGPT Web 独立 provider 预览；新任务接入需助手协助 |
 
 两个板块共享 Codex Desktop 的任务归属。Channels 不复制业务上下文，Models 不接管工具执行，Web Providers 不改变原生审批与权限。
 
-公开使用入口是 `scripts/codex-operator.ps1`：`status` 汇总两个板块，Web 位于 `models.providers.web`；通道操作用 `channels <操作>`，网页提供方操作用 `models web <操作>`，模型公共调度沿用 `models <路由操作>`。整体移除使用根命令 `uninstall`；`channels stop` 只停止通道，`channels uninstall` 会拒绝，避免误卸整个产品。
+公开使用入口是 `scripts/codex-operator.ps1`：`status` 汇总两个板块，Web 位于 `models.providers.web`；通道操作用 `channels <操作>`，网页提供方操作用 `models web <操作>`，API/Local 原生配置用 [`models native <操作>`](models/common/docs/native-models.md)，可选调度沿用 `models <路由操作>`。整体移除使用根命令 `uninstall`；`channels stop` 只停止通道，`channels uninstall` 会拒绝，避免误卸整个产品。
 
 ```text
 Codex-Operator

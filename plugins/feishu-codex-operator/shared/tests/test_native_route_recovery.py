@@ -29,6 +29,33 @@ from operator_core.model_registry import RouterError
 POWERSHELL = Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
 TOKEN = 'a' * 64  # Synthetic fixture only.
 BLOCK = f'# BEGIN FEISHU OPERATOR MODEL ROUTER\nopenai_base_url = "http://127.0.0.1:4317/{TOKEN}/v1"\n# END FEISHU OPERATOR MODEL ROUTER\n'
+VOICE_BLOCK = BLOCK.replace('# END FEISHU OPERATOR MODEL ROUTER\n',
+    'experimental_realtime_webrtc_call_base_url = "https://chatgpt.com/backend-api/codex"\n'
+    '# END FEISHU OPERATOR MODEL ROUTER\n')
+VOICE_WS_BLOCK = BLOCK.replace('# END FEISHU OPERATOR MODEL ROUTER\n',
+    'experimental_realtime_ws_base_url = "https://chatgpt.com/backend-api/codex"\n'
+    '# END FEISHU OPERATOR MODEL ROUTER\n')
+VOICE_BOTH_BLOCK = VOICE_BLOCK.replace('# END FEISHU OPERATOR MODEL ROUTER\n',
+    'experimental_realtime_ws_base_url = "https://chatgpt.com/backend-api/codex"\n'
+    '# END FEISHU OPERATOR MODEL ROUTER\n')
+UNIFIED_BASE = f'http://127.0.0.1:4318/{TOKEN}/backend-api/codex'
+UNIFIED_TOP = ('# BEGIN OPERATOR UNIFIED CANDIDATE\n'
+    'model_provider = "operator_unified_candidate"\n'
+    'experimental_realtime_webrtc_call_base_url = "https://chatgpt.com/backend-api/codex"\n'
+    'experimental_realtime_ws_base_url = "https://chatgpt.com/backend-api/codex"\n'
+    '# END OPERATOR UNIFIED CANDIDATE\n')
+UNIFIED_PROVIDER = ('\n# BEGIN OPERATOR UNIFIED PROVIDER CANDIDATE\n'
+    '[model_providers.operator_unified_candidate]\n'
+    'name = "OpenAI"\n'
+    f'base_url = "{UNIFIED_BASE}"\n'
+    f'model_catalog_url = "{UNIFIED_BASE}/models"\n'
+    'wire_api = "responses"\n'
+    'requires_openai_auth = true\n'
+    'request_max_retries = 0\n'
+    'stream_max_retries = 0\n'
+    'supports_websockets = false\n'
+    'supports_standalone_web_search = true\n'
+    '# END OPERATOR UNIFIED PROVIDER CANDIDATE\n')
 
 
 @unittest.skipUnless(os.name == 'nt' and POWERSHELL.is_file(), 'Windows PowerShell 5.1 required')
@@ -97,8 +124,118 @@ class NativeRouteRecoveryTests(unittest.TestCase):
             self.assertEqual(json.loads(command.stdout)['status'], 'preview')
             self.assertEqual(self.config.read_bytes(), before)
 
+    def test_voice_protected_route_recovers_exact_prefix_and_preserves_tail(self):
+        tail = b'model = "native"\r\n# keep bytes\r\n'
+        before = VOICE_BOTH_BLOCK.replace('\n', '\r\n').encode() + tail
+        self.config.write_bytes(before)
+        code, result = self.run_script(True)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result['completed'], ['operator-native-route-only', 'config.toml'])
+        self.assertEqual(self.config.read_bytes(), tail)
+        self.assertEqual((Path(result['backup']) / 'config.toml.before').read_bytes(), before)
+
+    def test_older_call_only_and_new_ws_only_blocks_remain_removable(self):
+        for block in (VOICE_BLOCK, VOICE_WS_BLOCK):
+            with self.subTest(block=block):
+                self.config.write_bytes(block.encode() + b'model="native"\n')
+                code, result = self.run_script(True)
+                self.assertEqual(code, 0, result)
+                self.assertEqual(self.config.read_bytes(), b'model="native"\n')
+                self.marker.unlink()
+
+    def test_recovery_preserves_one_following_commented_legacy_block(self):
+        commented = BLOCK.replace('openai_base_url', '# openai_base_url').replace('\n', '\r\n').encode()
+        tail = b'model="native"\r\n# keep trailing bytes\r\n'
+        before = VOICE_BOTH_BLOCK.encode() + commented + tail
+        self.config.write_bytes(before)
+        code, result = self.run_script(True)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result['completed'], ['operator-native-route-only', 'config.toml'])
+        self.assertEqual(self.config.read_bytes(), commented + tail)
+        self.assertEqual((Path(result['backup']) / 'config.toml.before').read_bytes(), before)
+
+    def test_unified_recovery_preserves_inert_legacy_block_and_later_table(self):
+        inert = BLOCK.replace('openai_base_url', '# openai_base_url').encode()
+        original = inert + b'model="native"\r\n[features]\r\nplugins=false\r\n'
+        later = b'\r\n[analytics]\r\nenabled=false\r\n'
+        before = UNIFIED_TOP.encode() + original + UNIFIED_PROVIDER.encode() + later
+        self.config.write_bytes(before)
+        self.assertEqual(self.run_script()[1]['would_change'], ['operator-native-route-only', 'config.toml'])
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertFalse(self.marker.exists())
+        code, result = self.run_script(True)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result['route_before'], 'plugin_route')
+        self.assertEqual(self.config.read_bytes(), original + later)
+        self.assertEqual((Path(result['backup']) / 'config.toml.before').read_bytes(), before)
+        self.assertTrue(self.marker.exists())
+        again = self.run_script(True)[1]
+        self.assertEqual(again['completed'], [])
+        self.assertEqual(self.config.read_bytes(), original + later)
+
+    def test_unified_recovery_preserves_existing_official_voice_settings(self):
+        top = UNIFIED_TOP.replace(
+            'experimental_realtime_webrtc_call_base_url = "https://chatgpt.com/backend-api/codex"\n', '').replace(
+            'experimental_realtime_ws_base_url = "https://chatgpt.com/backend-api/codex"\n', '')
+        original = (b'experimental_realtime_webrtc_call_base_url = "https://chatgpt.com/backend-api/codex"\n'
+            b'experimental_realtime_ws_base_url = "https://chatgpt.com/backend-api/codex"\n'
+            b'model="native"\n')
+        self.config.write_bytes(top.encode() + original + UNIFIED_PROVIDER.encode())
+        code, result = self.run_script(True)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(self.config.read_bytes(), original)
+
+    def test_client_compaction_provider_recovery_preserves_original_and_backup(self):
+        original = b'model="native"\n[features]\nplugins=false\n'
+        provider = UNIFIED_PROVIDER.replace('name = "OpenAI"', 'name = "Codex Operator"')
+        before = UNIFIED_TOP.encode() + original + provider.encode()
+        self.config.write_bytes(before)
+        code, result = self.run_script(True)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertEqual((Path(result['backup']) / 'config.toml.before').read_bytes(), before)
+
+    def test_changed_or_ambiguous_unified_blocks_stop_without_writes(self):
+        original = b'model="native"\n'
+        good = UNIFIED_TOP.encode() + original + UNIFIED_PROVIDER.encode()
+        cases = (
+            good.replace(b'name = "OpenAI"', b'name = "Other"'),
+            good.replace(b'request_max_retries = 0', b'request_max_retries = 1'),
+            good.replace(b'/models"', b'/other"'),
+            good.replace(b'# END OPERATOR UNIFIED CANDIDATE\n', b''),
+            good + UNIFIED_PROVIDER.encode(),
+            b'# unrelated\n' + good,
+            good + b'other_key = true\n',
+            UNIFIED_TOP.encode() + b'model="native"' + UNIFIED_PROVIDER.encode() + b'[analytics]\nenabled=false\n',
+            good + b'\n[model_providers.operator_unified_candidate]\nname="Other"\n',
+            good.replace(b'model="native"\n',
+                BLOCK.replace('openai_base_url', '# openai_base_url').encode() * 2 + original),
+            good.replace(b'model="native"\n', VOICE_BOTH_BLOCK.encode() + original),
+        )
+        for before in cases:
+            with self.subTest(before_sha256=hashlib.sha256(before).hexdigest()):
+                self.config.write_bytes(before)
+                code, result = self.run_script(True)
+                self.assertEqual(code, 1, result)
+                self.assertEqual(result['status'], 'stopped')
+                self.assertEqual(self.config.read_bytes(), before)
+                self.assertFalse(self.marker.exists())
+                self.assertFalse((self.home / 'operator-route-recovery').exists())
+
+    def test_changed_voice_route_is_not_guessed_during_recovery(self):
+        for block in (VOICE_BLOCK, VOICE_WS_BLOCK):
+            with self.subTest(block=block):
+                before = block.replace('chatgpt.com', 'example.com').encode() + b'model="native"\n'
+                self.config.write_bytes(before)
+                code, result = self.run_script(True)
+                self.assertEqual(code, 1, result)
+                self.assertEqual(result['status'], 'stopped')
+                self.assertEqual(self.config.read_bytes(), before)
+                self.assertFalse(self.marker.exists())
+
     def test_unknown_edited_or_embedded_route_is_not_overwritten(self):
         cases = [BLOCK.replace('127.0.0.1', 'example.com'), BLOCK + BLOCK,
+            VOICE_BOTH_BLOCK + VOICE_BOTH_BLOCK,
             'description="""\n' + BLOCK + '"""\n', '[other]\n' + BLOCK,
             BLOCK + 'openai_base_url="https://example.com/v1"\n',
             BLOCK + 'model_provider="custom"\n', BLOCK + '[model_providers.openai]\nbase_url="https://example.com"\n']

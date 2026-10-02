@@ -131,9 +131,12 @@ class ChannelModels:
                 answer += "\n上次选择已交给单次发送流程；上方为当前读回设置，不代表那条消息执行成功。"
             return answer + "\n" + HELP
         if parts == ["list"]:
+            if not rows:
+                return "当前任务没有可选的官方模型；保留已有任务设置。API、本地和 Web 模型待原生路由接入后开放。"
+            example = f"/model {rows[0]['model']} {rows[0]['default']}"
             return ("当前任务可选的官方模型：\n" + "\n".join(
                 r["model"] + " · " + "/".join(r["efforts"]) for r in rows)
-                + "\n例：/model luna low。API、本地和 Web 模型待原生路由接入后开放。")
+                + f"\n例：{example}。API、本地和 Web 模型待原生路由接入后开放。")
         name = parts[0].casefold()
         candidates = [r for r in rows if name in {r["model"], r["model"].rsplit("-", 1)[-1]}]
         if len(candidates) != 1:

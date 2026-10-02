@@ -12,6 +12,71 @@ Official DeepSeek and GLM development candidates and their explicit endpoint
 contracts are documented in [official online models](../../api/docs/official-online-models.md).
 These source assets do not activate routing or transfer historical acceptance.
 
+## Native picker candidate (2026-09-29)
+
+The 2026-09-29 native-picker candidate accepts an additional exact
+`/<token>/backend-api/codex` path beside the existing `/<token>/v1` path.
+Both paths use the same authenticated model catalog, native byte-preserving
+Responses and auxiliary forwarding, Web bindings, request limits and
+WebSocket admission. Unknown endpoints, including realtime calls, remain
+rejected. The alias matches Codex 0.158's
+[backend-route provider check](https://github.com/openai/codex/blob/rust-v0.158.0-alpha.2.1/codex-rs/model-provider-info/src/lib.rs#L2779-L2797);
+it does not install or select a provider.
+
+An isolated current-CLI test with a disposable home and synthetic API key
+confirmed that an explicitly named `OpenAI` custom provider can send native
+search through this alias, fetch the mixed catalog through `model_catalog_url`,
+and limit a 413 to one request with both retry settings at zero. The built-in
+`openai` provider instead repeated the same isolated 413 six times. These are
+different provider contracts: synthetic credentials do not prove that the
+signed-in Desktop supplies its ChatGPT token to a custom provider. A separate
+synthetic ChatGPT credential was rejected during workspace discovery before
+the local request. A later current-account CLI `model/list` probe did send an
+Authorization header through a process-local custom provider and displayed a
+synthetic row without a model turn. It also rewrote the real model cache; a
+later read showed ordinary rows again, but no original digest was retained.
+At that baseline, Desktop picker visibility, live routing and official native voice
+were unverified and global routing was disabled. Subsequent Desktop evidence is
+maintained in the [release audit](../../../development/docs/release-audit.md),
+separately from these isolated checks. The disposable configuration
+transaction and its limits are in [unified-picker candidate](unified-picker-candidate.md).
+
+## Client-owned compaction (2026-09-30)
+
+Codex 0.158.0-alpha.2.1 chooses remote compaction from the
+[provider identity](https://github.com/openai/codex/blob/rust-v0.158.0-alpha.2.1/codex-rs/model-provider/src/provider.rs#L411),
+not the selected catalog model. Naming the mixed provider `OpenAI` enables
+remote v2 even for a local model. Its
+[request](https://github.com/openai/codex/blob/rust-v0.158.0-alpha.2.1/codex-rs/core/src/compact_remote_v2_attempt.rs)
+contains `compaction_trigger` and expects an opaque compaction output; the
+external adapter correctly rejects unsupported history rather than fabricating
+one. The observed Desktop Gemma follow-up failed at compaction with
+`unsupported_history_item`; its actual wire body was not retained, so the
+specific trigger is a source-supported explanation, not captured live evidence.
+
+New candidates use `Codex Operator`, retaining explicit native authentication,
+standalone search, official voice URLs, catalog routing and zero retries. The
+official [client text-compaction task](https://github.com/openai/codex/blob/rust-v0.158.0-alpha.2.1/codex-rs/core/src/tasks/compact.rs)
+then generates and installs its own summary. This also changes native models'
+compaction under the shared provider; it is not a per-model setting. Existing
+encrypted histories are not decoded, dropped or retroactively repaired.
+
+`test_native_named_provider_aux_cli` runs the installed client with a disposable
+home, synthetic API key and loopback-only fixtures. It checks manual and automatic
+compaction followed by continuation through the actual adapted router, automatic
+compaction through native passthrough, native search and a single-attempt 413.
+Assertions verify the original prompt reaches summarization, its result reaches
+continuation, the client reports compaction complete, and no opaque compaction
+item is fabricated. Fixture answers prove protocol behavior, not a real model's
+summary quality or live Desktop acceptance.
+
+Do not patch an active provider or reset an existing activation attempt to deploy
+this change. Preserve the old config and transaction, update the owned recovery
+source, and use the reviewed native-recovery/cold-launch workflow with fresh
+source/config digests. Existing exact `OpenAI` and new `Codex Operator` blocks
+both remain recoverable. Deployment, signed-in native auxiliary behavior and
+ordinary Desktop follow-up acceptance still require separate evidence.
+
 ## HTTP and WebSocket capacity (alpha.132)
 
 The opt-in managed Web lane is described in
@@ -585,6 +650,44 @@ Adding v2 converts old rows to explicit null passthrough atomically. Start the
 stopped router separately to load registrations. These file mutations are
 separate from an explicit in-memory registry reload.
 
+### Updating an existing adaptation contract
+
+`register-model` remains append-only. To update existing v2 API/Local contracts,
+put the complete selected registrations in one private JSON array, then preview:
+
+```text
+operator_model_router.py update-contracts --state-dir <state> --registration <updates.json>
+```
+
+Preview reads local files only and reports both `registry_sha256` and
+`candidate_sha256`, plus the changed slugs. Review the actual contract differences
+and their evidence, then apply with `--apply --expected-registry-sha256 <old-digest>
+--expected-candidate-sha256 <candidate-digest>`. Apply requires the same stopped
+Operator/router, deactivated entry and empty callback gates as registration, and
+reserves the router port throughout the transaction. Desktop closure is not an
+additional registry-edit prerequisite.
+
+Only `responses` may change. Endpoint/model identity, credential-variable name,
+context capacity, efforts, labels, ordering and unselected rows must stay equal.
+Both versions are validated and limited to 1 MiB. Apply exclusively locks the
+registry, retains a content-addressed original, rechecks lifecycle and current
+bytes, and atomically replaces the file. Conflicting backups/locks or changed
+preview digests stop the operation; there is no retry, service restart, config
+write, model request or UI refresh. A no-op preserves the original bytes. Old
+capability evidence does not transfer to the new contract. Loading the updated
+registry and verifying a fresh Desktop request remain separate maintenance and
+acceptance steps.
+Rows explicitly labelled `[verified]` reject contract changes until that label
+has been separately reviewed; this updater cannot carry old verification forward
+or silently change a label.
+
+For an explicitly requested restore, extract only the affected original rows
+from the retained backup into a new private update array. Preview them against
+the current registry and apply using its new digests and the same stopped gates.
+Never overwrite the entire registry with an older backup: later registrations
+must survive. Changed identities or ambiguous verification labels still require
+review; restoring a contract does not replay its earlier requests.
+
 ### Opt-in synchronization before Desktop startup
 
 Alpha.106 adds `lmstudio-sync --state-dir <state> --discovery-policy <private-json>`.
@@ -689,8 +792,12 @@ sample values are not automatic discovery. Local endpoints use a `local/...`
 slug, a loopback `/v1` base and may set `api_key_env` to an empty string.
 Run `operator_model_router.py start --state-dir <same-directory>` in the dedicated
 environment to launch a hidden detached process; `serve` remains a foreground
-alternative. Repeated `start` converges on the existing verified service. `status`
-checks without starting or changing anything. `stop` uses an authenticated
+alternative. Repeated `start` converges on the existing verified service.
+On Windows, `start` requests a separate console/process group and job breakaway;
+an isolated service survived its launcher process exiting, then accepted an
+authenticated stop and released its port. Survival across a real Desktop exit
+is still unverified. `status` checks without starting or changing anything.
+`stop` uses an authenticated
 loopback endpoint and refuses while requests are in flight or the global entry
 is activated. It never kills a PID from a file. The registration commands above
 write only while the router is stopped. An independently authorized registry-file
@@ -940,6 +1047,28 @@ still require exact declared identity matches. Current `tools` and `tool_choice`
 are preserved; returned executable calls are rejected when none were advertised.
 Text-part result encoding remains the separate explicit lossless JSON option.
 No source is executed, repaired, summarized, or retried by this history codec.
+
+### Explicit paired function history without current tools (2026-10-02)
+
+`history_function_tools` defaults to `{}`. It may explicitly map exact function
+names, optionally with one namespace, to `json_object_v1`; at most 256 entries
+are accepted, and the endpoint must support function tools. This codec applies
+only when there are no current tool definitions. It preserves completed paired
+function calls, the original JSON argument string, complete result parts and
+metadata, with the same deterministic namespace aliases and 2 MiB argument bound.
+Unknown names, mismatched or missing results, duplicate identities, malformed
+JSON, unfinished calls and opaque history remain rejected. A nonempty current
+catalog still requires its exact declarations. The codec adds no executable
+definition or permission; a returned call remains rejected when no current tool
+was advertised. Native, v1/null and custom-history behavior is unchanged.
+
+This addresses an observed Huihui Desktop manual text-compaction rejection after
+three successful standard `exec_command` calls: `history_tool_definitions_empty`
+ended the compaction before upstream dispatch. Its original failure remains.
+An installed CLI 0.159.2 loopback fixture independently verifies a completed
+synthetic dynamic function call, empty-catalog compaction with the exact paired
+arguments/result, and continuation through the real adapter. That fixture does
+not execute a terminal or establish current main-window compaction acceptance.
 
 ### Explicit named function results (alpha.104; create-task extension alpha.131)
 

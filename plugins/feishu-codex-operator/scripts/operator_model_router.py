@@ -28,6 +28,31 @@ def web_profile_identity(profile):
     return None if profile is None else hashlib.sha256(str(profile).encode('utf-8')).hexdigest()
 
 
+def bound_web_route_digests(registry):
+    """Read only: disclose only one consistent bound generation's digests."""
+    generations = {(binding.profile_sha256, binding.session_sha256)
+        for route in registry.routes.values()
+        if (binding := route.web_binding) is not None}
+    profile, session = next(iter(generations)) if len(generations) == 1 else (None, None)
+    return {"web_route_bound": bool(generations),
+            "web_route_profile_sha256": profile,
+            "web_route_session_sha256": session}
+
+
+def lifecycle_diagnostics(router, web_profile):
+    """The existing bounded status plus an exact read-only Web generation."""
+    return {"failure_count": router.failure_count,
+            "native_enabled": router.native_enabled,
+            "native_search_identity": router.native_search_identity,
+            "last_failure": router.last_failure,
+            "timing": router.metrics.snapshot(),
+            "registry_sha256": router.registry_sha256,
+            "web_profile_identity": web_profile_identity(web_profile),
+            **bound_web_route_digests(router.registry),
+            "adapted_models": sum(route.responses is not None
+                                  for route in router.registry.routes.values())}
+
+
 def selected_web_profile(profile):
     if profile is None:
         return None
@@ -186,8 +211,8 @@ def readiness(state, port, config=None):
         parsed = tomllib.loads(raw.decode("utf-8-sig"))
         if (state / "codex-entry.json").exists():
             journal = settings.read_registration(state / "codex-entry.json")
-            exact = (journal == {"config": str(config.resolve()), "block":
-                     settings.BEGIN + "openai_base_url = " + json.dumps(settings.url(state, port)) + "\n" + settings.END})
+            exact = journal in ({"config": str(config.resolve()), "block": block.decode()}
+                                for block in settings.managed_entry_blocks(state, port))
             result["entry"] = "owned_active" if exact and raw.startswith(journal["block"].encode()) else "ownership_conflict"
         elif (parsed.get("model_provider", "openai") != "openai" or "openai_base_url" in parsed
               or "model_catalog_json" in parsed or parsed.get("profile")):
@@ -197,27 +222,65 @@ def readiness(state, port, config=None):
     return result
 
 
-def start(state, port, *, web_profile=None):
+def fresh_service_process(child_pid, service_pid):
+    """Witness the spawned Python or its Windows venv launcher child."""
+    import operator_web_service as web_service
+
+    if type(service_pid) is not int or service_pid <= 0:
+        return False
+    launcher = web_service.process_identity(child_pid)
+    service = web_service.process_identity(service_pid)
+    if launcher is None or service is None:
+        return False
+    if service_pid == child_pid:
+        return service['executable'] == str(Path(sys.executable).resolve())
+    if os.name != 'nt' or service['executable'] != str(Path(sys._base_executable).resolve()):
+        return False
+    if (launcher['executable'] != str(Path(sys.executable).resolve())
+            or int(service['birth']) < int(launcher['birth'])
+            or web_service.parent_pid(service_pid) != child_pid):
+        return False
+    return (web_service.process_identity(child_pid) == launcher
+            and web_service.process_identity(service_pid) == service)
+
+
+def start(state, port, *, web_profile=None, require_fresh=False, native_enabled=True, native_search_home=None):
     # Fail before spawning if state or optional dependencies are unavailable.
     import aiohttp  # noqa: F401
     settings.url(state, port)
     from operator_core.model_registry import ModelRegistry
     ModelRegistry.load(state / "registry.json")
     web_profile = selected_web_profile(web_profile)
+    from operator_core.native_search import identity
+    search_identity = identity(native_search_home)
+    if native_search_home is not None and native_enabled:
+        raise RouterError('native_search_external_only_required')
     try:
         existing = control(state, port)
+        if require_fresh:
+            raise RouterError("router_existing_service_requires_review")
         if existing.get("status") != "ready":
             raise RouterError("router_not_ready")
+        if existing.get('diagnostics', {}).get('native_enabled', True) is not native_enabled:
+            raise RouterError('router_native_route_policy_mismatch')
+        if existing.get('diagnostics', {}).get('native_search_identity') != search_identity:
+            raise RouterError('router_native_search_policy_mismatch')
         if existing.get('diagnostics', {}).get('web_profile_identity') != web_profile_identity(web_profile):
             raise RouterError('web_route_selected_profile_mismatch')
         return existing
     except OSError:
         pass
-    flags = (subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0
+    # A Windows venv launcher can spawn the base interpreter. DETACHED_PROCESS
+    # lets that child allocate a console; NO_WINDOW keeps the whole relay hidden.
+    flags = (subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+             | subprocess.CREATE_BREAKAWAY_FROM_JOB) if os.name == "nt" else 0
     child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "serve",
         "--state-dir", str(state.resolve()), "--port", str(port),
+        *([] if native_enabled else ['--external-only']),
+        *([] if native_search_home is None else ['--native-search-home', str(native_search_home)]),
         *(['--web-profile', str(web_profile)] if web_profile is not None else [])], stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True,
+        creationflags=flags,
         start_new_session=os.name != "nt", cwd=str(Path(__file__).resolve().parent))
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline and child.poll() is None:
@@ -225,16 +288,30 @@ def start(state, port, *, web_profile=None):
             ready = control(state, port)
             if ready.get("status") != "ready":
                 raise RouterError("router_not_ready")
+            diagnostics = ready.get('diagnostics')
+            if not isinstance(diagnostics, dict) or diagnostics.get('native_enabled', True) is not native_enabled:
+                raise RouterError('router_native_route_policy_mismatch')
+            if diagnostics.get('native_search_identity') != search_identity:
+                raise RouterError('router_native_search_policy_mismatch')
+            if require_fresh and (not fresh_service_process(child.pid, ready.get("pid")) or
+                    not isinstance(diagnostics, dict) or
+                    diagnostics.get('web_profile_identity') != web_profile_identity(web_profile)):
+                raise RouterError("router_fresh_service_identity_mismatch")
             return ready
         except OSError:
             time.sleep(0.1)  # Health polling only; never replays a model request.
+        except RouterError:
+            if require_fresh and child.poll() is None:
+                child.terminate()  # The process launched here, never the observed listener.
+                child.wait(timeout=5)
+            raise
     if child.poll() is None:
         child.terminate()  # Exact child handle, never a PID read from disk.
         child.wait(timeout=5)
     raise RouterError("router_start_failed")
 
 
-def restart(state, port, *, web_profile=None):
+def restart(state, port, *, web_profile=None, native_enabled=True):
     """Explicit restart only while deactivated. Never replay accepted inference."""
     if (state / "codex-entry.json").exists():
         raise RouterError("deactivate_before_router_restart")
@@ -263,17 +340,19 @@ def restart(state, port, *, web_profile=None):
             time.sleep(0.05)
         else:
             raise RouterError("router_stop_not_confirmed")
-    return start(state, port, **({'web_profile': web_profile} if web_profile is not None else {}))
+    return start(state, port, **({'web_profile': web_profile} if web_profile is not None else {}),
+                 **({} if native_enabled else {'native_enabled': False}))
 
 
-async def serve(state, port, *, web_profile=None):
+async def serve(state, port, *, web_profile=None, native_enabled=True, native_search_home=None):
     from aiohttp import web
     from operator_core.model_registry import ModelRegistry
     from operator_core.model_router import ModelRouter
     token = (state / "token").read_text(encoding="ascii").strip()
     registry, digest = ModelRegistry.load_snapshot(state / "registry.json")
     web_profile = selected_web_profile(web_profile)
-    router = ModelRouter(registry, token, registry_sha256=digest, web_profile=web_profile)
+    router = ModelRouter(registry, token, registry_sha256=digest, web_profile=web_profile,
+                         native_enabled=native_enabled, native_search_home=native_search_home)
     shutdown = asyncio.Event()
     active = 0
 
@@ -303,14 +382,7 @@ async def serve(state, port, *, web_profile=None):
                 shutdown.set()
             return web.json_response({"service": service_identity(state), "pid": os.getpid(),
                 "status": "stopping" if shutdown.is_set() else "ready",
-                "diagnostics": {"failure_count": router.failure_count,
-                                "last_failure": router.last_failure,
-                                "timing": router.metrics.snapshot(),
-                                "registry_sha256": router.registry_sha256,
-                                "web_profile_identity": web_profile_identity(web_profile),
-                                "web_route_bound": any(r.web_binding is not None for r in router.registry.routes.values()),
-                                "adapted_models": sum(route.responses is not None
-                                                      for route in router.registry.routes.values())}})
+                "diagnostics": lifecycle_diagnostics(router, web_profile)})
         if shutdown.is_set():
             return web.json_response({"error": "router_stopping_no_retry"}, status=503)
         active += 1
@@ -333,7 +405,7 @@ async def serve(state, port, *, web_profile=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["init", "serve", "start", "restart", "stop", "status", "activate", "deactivate",
-                                          "lmstudio-models", "lmstudio-register", "register-model", "preflight",
+                                          "lmstudio-models", "lmstudio-register", "register-model", "update-contracts", "preflight",
                                           "profile-build", "readiness", "lmstudio-sync", "reload-registry", "bind-web",
                                           "verification-init", "verification-status", "verification-label"])
     parser.add_argument("--state-dir", type=Path)
@@ -349,6 +421,8 @@ def main():
     parser.add_argument("--registration", type=Path)
     parser.add_argument("--profile", type=Path)
     parser.add_argument("--web-profile", type=Path)
+    parser.add_argument("--external-only", action="store_true")
+    parser.add_argument("--native-search-home", type=Path)
     parser.add_argument("--request", type=Path)
     parser.add_argument("--cli-version")
     parser.add_argument("--desktop-version")
@@ -356,12 +430,17 @@ def main():
     parser.add_argument("--desktop-evidence", type=Path)
     parser.add_argument("--format", choices=("json", "text"), default="json")
     parser.add_argument("--expected-registry-sha256")
+    parser.add_argument("--expected-candidate-sha256")
     parser.add_argument("--profile-id")
     parser.add_argument("--evidence", action="append", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--discovery-policy", type=Path)
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
+    if args.native_search_home is not None and (not args.external_only or args.action not in {'serve', 'start'}):
+        parser.error('--native-search-home requires explicit external-only serve/start')
+    if args.external_only and args.action not in {'serve', 'start', 'restart'}:
+        parser.error('--external-only is only for serve/start/restart')
     if args.web_profile is not None and args.action not in {'serve', 'start', 'restart', 'bind-web'}:
         parser.error('--web-profile is only for serve/start/restart/bind-web')
     if args.format != "json" and args.action != "verification-status":
@@ -373,8 +452,25 @@ def main():
         parser.error("port must be in 1024..65535")
     if args.registration and args.profile and args.action != "verification-status":
         parser.error("choose registration or profile, not both")
-    if args.apply and args.action not in {"lmstudio-sync", "verification-label"}:
-        parser.error("apply is only supported by lmstudio-sync or verification-label")
+    if args.apply and args.action not in {"lmstudio-sync", "verification-label", "update-contracts"}:
+        parser.error("apply is only supported by lmstudio-sync, verification-label or update-contracts")
+    if args.action == "update-contracts":
+        if not args.registration or args.profile:
+            parser.error("update-contracts requires a registration file containing an array of full registrations")
+        rows = settings.read_registration(args.registration)
+        if args.apply:
+            if not (args.expected_registry_sha256 and args.expected_candidate_sha256):
+                parser.error("apply requires both digests from a reviewed update-contracts preview")
+            from operator_core.responses_labels import assert_registry_edit_stopped
+            with reserve_inactive_port(args.port):
+                result = settings.update_contracts(args.state_dir, rows, apply=True,
+                    expected_sha256=args.expected_registry_sha256,
+                    expected_candidate_sha256=args.expected_candidate_sha256,
+                    guard=assert_registry_edit_stopped)
+        else:
+            result = settings.update_contracts(args.state_dir, rows)
+        print(json.dumps(result, ensure_ascii=True))
+        return
     if args.action == "verification-label":
         if not (args.slug and args.desktop_evidence and args.cli_version and args.desktop_version and args.model_sha256):
             parser.error("slug, desktop-evidence, cli-version, desktop-version and model-sha256 must be explicit")
@@ -513,10 +609,13 @@ def main():
         print(json.dumps(bind_web(args.state_dir, args.port, args.web_profile)))
         return
     if args.action == "start":
-        print(json.dumps(start(args.state_dir, args.port, web_profile=args.web_profile)))
+        print(json.dumps(start(args.state_dir, args.port, web_profile=args.web_profile,
+                               **({'native_search_home': args.native_search_home} if args.native_search_home else {}),
+                               **({'native_enabled': False} if args.external_only else {}))))
         return
     if args.action == "restart":
-        print(json.dumps(restart(args.state_dir, args.port, web_profile=args.web_profile)))
+        print(json.dumps(restart(args.state_dir, args.port, web_profile=args.web_profile,
+                                 **({'native_enabled': False} if args.external_only else {}))))
         return
     if args.action == "stop":
         print(json.dumps(control(args.state_dir, args.port, stop=True)))
@@ -530,7 +629,9 @@ def main():
             settings.deactivate(args.state_dir, args.codex_config)
         print("Codex entry updated. Restart Codex to load the change.")
         return
-    asyncio.run(serve(args.state_dir, args.port, web_profile=args.web_profile))
+    asyncio.run(serve(args.state_dir, args.port, web_profile=args.web_profile,
+                      **({'native_search_home': args.native_search_home} if args.native_search_home else {}),
+                      **({'native_enabled': False} if args.external_only else {})))
 
 
 if __name__ == "__main__":

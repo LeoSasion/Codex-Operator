@@ -128,6 +128,174 @@ function Invoke-OperatorEntryMigration {
     } finally { $lock.Dispose() }
 }
 
+function Get-OperatorEntryConfigUpgradeBuild([string]$ProjectRoot, $Migration) {
+    # A separate completed config-only attachment may replace exactly one
+    # migrated build hash. Incomplete evidence never becomes restoration owner.
+    $folder = Join-Path $ProjectRoot '.codex/operator-entry-upgrade'
+    Assert-OperatorPlainPath $folder
+    if (-not (Test-Path -LiteralPath $folder)) { return $Migration.build }
+    if (-not (Test-Path -LiteralPath $folder -PathType Container)) {
+        throw 'Entry upgrade transaction requires review.'
+    }
+    $intentFile = Join-Path $folder 'intent.json'
+    $receiptFile = Join-Path $folder 'receipt.json'
+    foreach ($path in @($intentFile,$receiptFile,(Join-Path $folder 'before.json'),
+            (Join-Path $folder 'after.json'))) {
+        Assert-OperatorPlainPath $path
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
+            (Get-Item -LiteralPath $path).Length -gt 65536) {
+            throw 'Entry upgrade transaction requires review.'
+        }
+    }
+    $intent = Get-Content -LiteralPath $intentFile -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+    $receipt = Get-Content -LiteralPath $receiptFile -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+    $before = Get-OperatorFingerprint (Join-Path $folder 'before.json')
+    $after = Get-OperatorFingerprint (Join-Path $folder 'after.json')
+    $planBytes = [Text.UTF8Encoding]::new($false).GetBytes(($intent.plan | ConvertTo-Json -Depth 10 -Compress))
+    $planHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($planBytes)).ToLowerInvariant()
+    if ($intent.schema_version -ne 1 -or $intent.phase -cne 'may_have_updated' -or
+        $intent.plan.schema_version -ne 1 -or $intent.plan.scope -cne 'entry_only_config_upgrade' -or
+        $intent.plan.project -ine [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\') -or
+        $intent.plan.runtime_ownership -cne 'unresolved' -or
+        ($Migration.phase -ceq 'installed' -and
+         $intent.plan.migration_sha256 -cne (Get-OperatorFingerprint (Join-Path $ProjectRoot '.codex/operator-entry-migration/journal.json'))) -or
+        $intent.plan_sha256 -cne $planHash -or
+        $intent.plan.migration_config_sha256 -cne $Migration.build['desktop-entry.json'] -or
+        $intent.plan.before_sha256 -cne $before -or $intent.plan.after_sha256 -cne $after -or
+        $receipt.schema_version -ne 1 -or $receipt.phase -cne 'applied' -or
+        $receipt.plan_sha256 -cne $intent.plan_sha256 -or
+        $receipt.intent_sha256 -cne (Get-OperatorFingerprint $intentFile) -or
+        $receipt.before_sha256 -cne $before -or $receipt.after_sha256 -cne $after) {
+        throw 'Entry upgrade transaction requires review.'
+    }
+    if ($before -cne $Migration.build['desktop-entry.json']) {
+        $recoveryPath = $intent.plan.recovery_receipt
+        if (-not $recoveryPath -or
+            (Get-OperatorFingerprint $recoveryPath) -cne $intent.plan.recovery_intent_sha256 -or
+            (Get-OperatorFingerprint (Join-Path (Split-Path -Parent $recoveryPath) 'completed.json')) -cne
+                $intent.plan.recovery_completed_sha256 -or
+            (Get-OperatorFingerprint (Join-Path (Split-Path -Parent $recoveryPath) 'desktop-entry.json.before')) -cne
+                $Migration.build['desktop-entry.json']) {
+            throw 'Entry upgrade recovery evidence changed.'
+        }
+    } elseif ($intent.plan.recovery_receipt) { throw 'Unexpected entry upgrade recovery evidence.' }
+    $build = @{}
+    foreach ($name in $Migration.build.Keys) { $build[$name] = $Migration.build[$name] }
+    $build['desktop-entry.json'] = $after
+    return $build
+}
+
+function Get-OperatorEntryPairAttachment([string]$ProjectRoot, $Migration, $BeforeBuild) {
+    $pairRoot=Join-Path $ProjectRoot '.codex/operator-desktop-pair'
+    Assert-OperatorPlainPath $pairRoot
+    if (-not (Test-Path -LiteralPath $pairRoot)) { return $null }
+    Import-Module (Join-Path $PSScriptRoot 'operator_desktop_pair_legacy.psm1') -DisableNameChecking
+    return Get-OperatorLegacyPairAttachment -ProjectRoot $ProjectRoot -Migration $Migration -BeforeBuild $BeforeBuild
+}
+
+function Get-OperatorEntryUpgradeBuild([string]$ProjectRoot, $Migration) {
+    # A pair attachment follows the complete old config-only chain. It cannot
+    # replace validation of that chain, even after migration restoration starts.
+    $before=Get-OperatorEntryConfigUpgradeBuild $ProjectRoot $Migration
+    $attachment=Get-OperatorEntryPairAttachment $ProjectRoot $Migration $before
+    if ($attachment) { return $attachment.after }
+    return $before
+}
+
+function Get-OperatorUnifiedRetirementStatus([string]$PlanPath, [string]$WorkflowPath) {
+    # Run the same read-only verifier used by unified teardown, under the
+    # reviewed workflow's exact interpreter. Its exit status is authoritative.
+    $scriptPath = Join-Path $WorkflowPath 'start-codex-with-web.ps1'
+    Assert-OperatorPlainPath $scriptPath
+    $script = [IO.File]::ReadAllText($scriptPath,[Text.UTF8Encoding]::new($false,$true))
+    $pathMatch = [regex]::Matches($script,"(?m)^\`$python = '((?:[^']|'')*)'\r?$")
+    $hashMatch = [regex]::Matches($script,
+        '(?m)^if \(\(Get-FileHash -LiteralPath \$python -Algorithm SHA256\)\.Hash\.ToLowerInvariant\(\) -cne ''([a-f0-9]{64})''\) \{ throw ''Saved Python changed\.'' \}\r?$')
+    if ($pathMatch.Count -ne 1 -or $hashMatch.Count -ne 1) {
+        throw 'Reviewed unified workflow interpreter unavailable.'
+    }
+    $python = $pathMatch[0].Groups[1].Value.Replace("''", "'")
+    Assert-OperatorPlainPath $python
+    if (-not [IO.Path]::IsPathFullyQualified($python) -or
+        (Get-OperatorFingerprint $python) -cne $hashMatch[0].Groups[1].Value) {
+        throw 'Reviewed unified workflow interpreter changed.'
+    }
+    $verifier = Join-Path $PSScriptRoot 'operator_unified_retire.py'
+    Assert-OperatorPlainPath $verifier
+    $output = @(& $python -X utf8 -E -s -B $verifier status --plan $PlanPath 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $output.Count -ne 1) {
+        throw 'Unified retirement is not witnessed.'
+    }
+    try { return ($output[0] | ConvertFrom-Json -AsHashtable) }
+    catch { throw 'Unified retirement status is invalid.' }
+}
+
+function Get-OperatorUnifiedRetiredEntryHash([string]$ProjectRoot, $Build) {
+    $project = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\')
+    $migration=Get-OperatorEntryMigrationState $project
+    $oldBuild=Get-OperatorEntryConfigUpgradeBuild $project $migration
+    $pair=Get-OperatorEntryPairAttachment $project $migration $oldBuild
+    $upgrade = Join-Path $project '.codex/operator-entry-upgrade'
+    if ($pair) {
+        if ($pair.after.Count -ne $Build.Count -or
+            @($Build.Keys | Where-Object {$pair.after[$_] -cne $Build[$_]}).Count) {
+            throw 'Unified retirement does not bind this pair build.'
+        }
+        $selectedCodexHome=Get-OperatorLauncherHome $pair.codex_home
+        $baselinePath=$pair.config_after_path
+        $expectedWorkflow=$pair.startup_bundle
+        $expectedScript=$pair.startup_script_sha256
+        $expectedMetadata=$pair.startup_metadata_sha256
+    } else {
+        $upgradeIntent = Join-Path $upgrade 'intent.json'
+        Assert-OperatorPlainPath $upgradeIntent
+        $attachment = Get-Content -LiteralPath $upgradeIntent -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+        if ($attachment.plan.scope -cne 'entry_only_config_upgrade' -or
+            $attachment.plan.after_sha256 -cne $Build['desktop-entry.json']) {
+            throw 'Unified retirement does not bind this entry upgrade.'
+        }
+        $selectedCodexHome=Get-OperatorLauncherHome $attachment.plan.codex_home
+        $baselinePath=Join-Path $upgrade 'after.json'
+        $expectedWorkflow=$attachment.plan.startup_bundle
+        $expectedScript=$attachment.plan.startup_script_sha256
+        $expectedMetadata=$attachment.plan.startup_metadata_sha256
+    }
+    $planPath = Join-Path $selectedCodexHome 'operator-unified-activation/plan.json'
+    Assert-OperatorPlainPath $planPath
+    $plan = Get-Content -LiteralPath $planPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+    $workflow = Join-Path $project '.codex/operator-unified-startup'
+    $startup = Join-Path $workflow 'start-codex-with-web.ps1'
+    $metadata = Join-Path $workflow 'startup-sync-plan.json'
+    $configPath = Join-Path $project '.codex/operator-desktop-entry/desktop-entry.json'
+    foreach ($path in @($workflow,$startup,$metadata,$configPath,$baselinePath)) { Assert-OperatorPlainPath $path }
+    $currentHash = Get-OperatorFingerprint $configPath
+    if ($expectedWorkflow -ine $workflow -or
+        (Get-OperatorFingerprint $baselinePath) -cne $Build['desktop-entry.json'] -or
+        $plan.schema_version -ne 1 -or $plan.project -ine $project -or $plan.home -ine $selectedCodexHome -or
+        $plan.startup_bundle.path -ine $workflow -or
+        $plan.startup_bundle.startup_script_sha256 -cne (Get-OperatorFingerprint $startup) -or
+        $plan.startup_bundle.sync_plan_sha256 -cne (Get-OperatorFingerprint $metadata) -or
+        $expectedScript -cne (Get-OperatorFingerprint $startup) -or
+        $expectedMetadata -cne (Get-OperatorFingerprint $metadata)) {
+        throw 'Unified retirement does not bind this entry upgrade.'
+    }
+    $before = Get-Content -LiteralPath $baselinePath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+    $current = Get-Content -LiteralPath $configPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+    if ($before.mode -cne 'reviewed_startup' -or $current.mode -cne 'native' -or
+        $before.Count -ne $current.Count -or
+        @($before.Keys | Where-Object { -not $current.ContainsKey($_) -or
+            ($_ -cne 'mode' -and $before[$_] -cne $current[$_]) }).Count) {
+        throw 'Recovered unified entry changed beyond native mode.'
+    }
+    $status = Get-OperatorUnifiedRetirementStatus $planPath $workflow
+    if ($status.status -cne 'retired_witnessed' -or
+        $status.recovery.entry_before_sha256 -cne $Build['desktop-entry.json'] -or
+        $status.recovery.entry_recovered_sha256 -cne $currentHash) {
+        throw 'Unified retirement does not witness this recovered entry.'
+    }
+    return $currentHash
+}
+
 function Restore-OperatorEntryMigration([string]$ProjectRoot) {
     $state = Get-OperatorEntryMigrationState $ProjectRoot
     if ($state.phase -notin @('installed','restoring','restored')) { throw 'Incomplete entry migration requires review.' }
@@ -137,25 +305,51 @@ function Restore-OperatorEntryMigration([string]$ProjectRoot) {
         $state = Get-OperatorEntryMigrationState $ProjectRoot
         $bundle = Join-Path $ProjectRoot '.codex/operator-desktop-entry'
         if ($state.build.Count -ne 5) { throw 'Incomplete migration build record.' }
-        foreach ($name in $state.build.Keys) {
+        $beforeBuild=Get-OperatorEntryConfigUpgradeBuild $ProjectRoot $state
+        $pair=Get-OperatorEntryPairAttachment $ProjectRoot $state $beforeBuild
+        if ($pair -and $pair.phase -cne 'restored') { throw 'Restore the desktop pair before restoring the legacy migration.' }
+        $currentBuild=if ($pair) {$pair.after} else {$beforeBuild}
+        $configPath = Join-Path $bundle 'desktop-entry.json'
+        $currentConfigHash = Get-OperatorFingerprint $configPath
+        $restoredUnifiedHash = $null
+        if ($currentConfigHash -cne $currentBuild['desktop-entry.json']) {
+            $restoredUnifiedHash = Get-OperatorUnifiedRetiredEntryHash $ProjectRoot $currentBuild
+        }
+        foreach ($name in $currentBuild.Keys) {
             if ($name -notin @('Codex拓展入口.exe','operator_desktop_entry.ps1','desktop-entry.json','launcher-manifest.json','Codex拓展入口.ico') -or
-                (Get-OperatorFingerprint (Join-Path $bundle $name)) -cne $state.build[$name]) { throw 'Migrated launcher changed.' }
+                (Get-OperatorFingerprint (Join-Path $bundle $name)) -cne
+                    $(if ($name -ceq 'desktop-entry.json' -and $restoredUnifiedHash) {
+                        $restoredUnifiedHash
+                    } else { $currentBuild[$name] })) { throw 'Migrated launcher changed.' }
         }
         if ((Get-OperatorFingerprint $state.plan.legacy_executable) -cne $state.plan.legacy_executable_sha256) { throw 'Legacy rollback launcher changed.' }
+        $desktopLink = @(Get-OperatorDesktopPaths)[0]
         foreach ($path in $state.entries.Keys) {
             $row = $state.entries[$path];$current = Get-OperatorFingerprint $path
-            if ($current -cne $row.before -and $current -cne $row.after) { throw 'Shortcut edited after migration; retained.' }
+            $ownedAfter = Get-OperatorEntryAdoptionAfter $ProjectRoot $state $path -CheckCurrent:($path -ieq $desktopLink -and $current -cne $row.before)
+            if ($current -cne $row.before -and $current -cne $ownedAfter) { throw 'Shortcut edited after migration; retained.' }
             if ($row.before -ne 'absent' -and (Get-OperatorFingerprint (Join-Path $folder ('originals/'+$row.before+'.bin'))) -cne $row.before) { throw 'Migration backup changed.' }
         }
         $marker = Join-Path $bundle 'native-only'
         $one = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]@(1))).ToLowerInvariant()
         if ((Get-OperatorFingerprint $marker) -notin @('absent',$one)) { throw 'Native fallback marker changed.' }
+        $checkedState=Get-OperatorEntryMigrationState $ProjectRoot
+        $checkedBefore=Get-OperatorEntryConfigUpgradeBuild $ProjectRoot $checkedState
+        $checkedPair=Get-OperatorEntryPairAttachment $ProjectRoot $checkedState $checkedBefore
+        if ([bool]$checkedPair -ne [bool]$pair -or ($checkedPair -and
+            ($checkedPair.phase -cne 'restored' -or $checkedPair.origin_sha256 -cne $pair.origin_sha256 -or
+             $checkedPair.receipt_sha256 -cne $pair.receipt_sha256))) {
+            throw 'Pair restoration evidence changed before legacy restoration.'
+        }
         $state.phase='restoring';Save-OperatorEntryMigrationState $ProjectRoot $state
         # Pins to the new binary remain usable after removing its shortcuts.
         Write-OperatorAtomicBytes $marker ([byte[]]@(1))
         foreach ($path in $state.entries.Keys) {
             $row = $state.entries[$path];$current=Get-OperatorFingerprint $path
-            if ($current -cne $row.before -and $current -cne $row.after) { throw 'Shortcut changed during restoration.' }
+            # The first pass verified both identities before writes. Start may
+            # already be restored by this pass when Desktop comes next.
+            $ownedAfter = Get-OperatorEntryAdoptionAfter $ProjectRoot $state $path -CheckCurrentDesktopOnly:($path -ieq $desktopLink -and $current -cne $row.before)
+            if ($current -cne $row.before -and $current -cne $ownedAfter) { throw 'Shortcut changed during restoration.' }
             if ($current -cne $row.before) {
                 if ($row.before -eq 'absent') { Remove-Item -LiteralPath $path }
                 else { Write-OperatorAtomicBytes $path ([IO.File]::ReadAllBytes((Join-Path $folder ('originals/'+$row.before+'.bin')))) }

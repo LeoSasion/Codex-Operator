@@ -200,11 +200,12 @@ class InstallUpgradeTests(unittest.TestCase):
                 self.assertEqual(set(manifest['code_files']), set(startup_files),
                                  'The startup guard must accept exactly the installed inventory')
                 self.assertIn("operator_core/runtime.py", manifest["code_files"])
-                for relative in ('operator_web_model.py', 'operator_web_service.py', 'operator_web_acceptance.py', 'operator_web_desktop.py', 'operator_web_entry.ps1', 'web_browser_host.cjs',
+                for relative in ('operator_web_model.py', 'operator_web_service.py', 'operator_web_acceptance.py', 'operator_web_desktop.py', 'operator_web_entry.ps1', 'operator_native_models.py', 'web_browser_host.cjs',
                         'web_browser_surface.cjs', 'web_browser_page.cjs',
                         'operator_core/web_browser_session.py',
                         'operator_core/web_openai_tunnel.py',
                         'operator_core/web_responses_provider.py',
+                        'operator_core/web_native_interruption.py',
                         'licenses/codex-chatgpt-web-MIT.txt', 'licenses/webcodex-Apache-2.0.txt'):
                     self.assertIn(relative, manifest['code_files'])
                     source = ROOT / 'scripts' / relative
@@ -223,9 +224,18 @@ class InstallUpgradeTests(unittest.TestCase):
                 imported = subprocess.run([sys.executable, '-I', '-B', '-c',
                     'import sys; sys.path.insert(0, sys.argv[1]); '
                     'import operator_web_model, operator_web_service; '
-                    'from operator_core.web_openai_tunnel import WebOpenAITunnel',
+                    'from operator_core.web_openai_tunnel import WebOpenAITunnel; '
+                    'from operator_core.web_native_interruption import read_interruption',
                     str(runtime)], cwd=project, capture_output=True, text=True, timeout=20)
                 self.assertEqual(imported.returncode, 0, imported.stdout + imported.stderr)
+                native_help = subprocess.run([sys.executable, '-I', '-B', '-c',
+                    'import runpy, sys; from pathlib import Path; '
+                    'runtime = Path(sys.argv[1]); sys.path.insert(0, str(runtime)); '
+                    'sys.argv = [str(runtime / "operator_native_models.py"), "--help"]; '
+                    'runpy.run_path(sys.argv[0], run_name="__main__")', str(runtime)],
+                    cwd=project, capture_output=True, text=True, timeout=20)
+                self.assertEqual(native_help.returncode, 0, native_help.stdout + native_help.stderr)
+                self.assertIn('--manifest', native_help.stdout)
             self.assertTrue((runtime / "backups").is_dir())
             installed_entry = subprocess.run([PWSH, '-NoProfile', '-File', str(runtime/'codex-operator.ps1'),
                 'status', '-ProjectRoot', str(project), '-Json'], capture_output=True, text=True, timeout=60)
