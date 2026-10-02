@@ -31,9 +31,9 @@ Channels 的插件工具仍要求可用的 `python` 命令，
 
 绑定完成后直接在飞书发消息；需要另选任务时才使用 `/init`。未授权自动登记的用户仍可用 `/init` 选择已有任务。只有实际收到同一请求的对应回复才算收发通过。自动新用户创建、本地伪模型接入与已有任务收发分别验证，不把“安装成功”当成全部就绪。
 
-在飞书发送 `/model` 查看当前绑定任务的原生模型设置，`/model list` 查看可选官方模型。例如 `/model luna low` 为下一条新消息选择 Luna/low；之后按正常方式发送需求即可，不需要返回 Desktop 点击切换。`/model cancel` 可取消尚未应用的选择。此操作不改变固定 Beeper；API、Local、Web 的任务级切换仍待接入。
+在飞书发送 `/model` 查看当前绑定任务的原生模型设置，`/model list` 查看可选官方模型及完整选择示例。按列表中的准确型号和支持的思考强度选择，之后正常发送需求即可，不需要返回 Desktop 点击切换。多代模型同时存在时，`luna` 之类的简称可能不唯一，请使用完整型号。`/model cancel` 可取消尚未应用的选择。此操作不改变固定 Beeper；API、Local、Web 的任务级切换仍待接入。
 
-安装会设置当前用户的 **Codex拓展入口** 快捷方式与项目 Hooks，保留原件；任务栏固定项可能需要你手动重新固定一次。
+新安装提供 **ChatGPT 原生入口** 和 **ChatGPT 拓展模型 MM-DD 入口**，同时配置项目 Hooks；已有旧入口保留原归属。日期和恢复规则见[安装与恢复指南](shared/docs/installation-and-removal.md#desktop-entry-pair)。任务栏固定项可能需要手动重新固定一次。
 
 日常启动、状态与停止统一使用 `codex-operator.ps1 channels start|status|stop`。账号安装与登录入口是 `channels cli-install|configure|login`；更详细的设置由助手调用现有模块命令完成。
 
@@ -41,15 +41,17 @@ Channels 的插件工具仍要求可用的 `python` 命令，
 
 告诉助手准确的服务、模型名称和用途，例如“接入我的 LM Studio 模型”。凭据填写在本机相应配置界面，不发送到对话中。
 
-助手先验证官方 provider 直连，再按实际缺口选择 Responses 适配。登记、工具往返、Desktop 显示分别检查。当前统一全局路由不是默认安装步骤；保留官方原生模型直连。模型模块的命令入口为 `codex-operator.ps1 models <操作> --state-dir <私有目录>`；参数由助手填写。
+需要在 Codex 对话框内切换自定义模型时，由助手准备并绑定[模式入口](models/common/docs/mode-entry-window.md)。打开拓展快捷方式后，左侧“原生”回到官方配置，右侧“拓展”进入独立窗口；具体型号仍在原生聊天菜单中选择。两种模式分别保存聊天列表，不迁移原生历史或登录。当前已验证 GLM、DeepSeek 同聊切换和搜索；本地服务、Web 后端与其他工具按实际配置另行验证。
 
-支持范围取决于具体端点与工具模式，不能从模型名称推断。详见 [模型接入](models/common/docs/model-router.md) 和 [实际验收规则](models/common/docs/responses-acceptance.md)。
+已知官方版本的拓展首次启动会省去重复个性设置引导；未知版本保留正常引导。登录和权限步骤仍由用户本人处理。已有 `models native` 独立 profile 可继续按原登记准备、检查和撤回；不要把旧共享配置入口当成这个独立模式。
+
+支持范围取决于具体端点与工具模式，不能从模型名称推断。详见[添加与撤回](models/common/docs/native-models.md)、[可选适配路由](models/common/docs/model-router.md)和[实际验收规则](models/common/docs/responses-acceptance.md)。
 
 ## Models / Web：在原生任务中使用 ChatGPT Web
 
 告诉助手“配置 ChatGPT Web”。首次接入要核对当前 ChatGPT 登录状态、固定 Tunnel、运行密钥及准确的 app 绑定；已有有效登录直接复用。助手按 [首次连接流程](models/web/docs/web-fixed-tunnel.md) 准备本机表单并逐步引导。密钥直接填到本机遮蔽输入框，后续复用保存配置。
 
-配置完成后，用 `models web start` 启动保存的后台，`models web status` 检查状态。出现协助提示时，先用 `models web inspect` 核对当前页面；只有页面实际显示待处理的登录或验证控件，才请你在辅助窗口完成该步骤。已登录且输入框可用时直接复用会话。失败的请求不会自动重发。
+配置完成后，用 `models web start` 启动保存的后台，`models web status` 检查状态。如果后台已就绪但提示“启动登记尚未完成”，由助手再次显式执行 `models web start`，核对并登记当前实例后再连接；这个步骤复用当前后台，不另起进程或发送模型请求。出现协助提示时，先用 `models web inspect` 核对当前页面；只有页面实际显示待处理的登录或验证控件，才请你在辅助窗口完成该步骤。已登录且输入框可用时直接复用会话。失败的请求不会自动重发。
 
 已有保存入口时，再次要求助手配置会直接复用原设置和运行程序，无需重填位置、连接编号或密钥。不带新设置的 `models web configure` 只核验并确认复用，不更新登记或启动后台；首次配置和明确升级仍由助手提供必要参数。访问受限、登记不符、运行程序变化和检查结果不可用会分别说明，由助手按具体原因继续处理。
 
@@ -63,6 +65,8 @@ Channels 的插件工具仍要求可用的 `python` 命令，
 
 升级前检查已有实例和待完成请求，按模块升级；保留固定连接、登录、任务与失败记录。预览版不自动恢复未知占用或重新执行失败操作。
 
-卸载时先停止准确的后台并解除独立 Web 登记，再由助手使用根命令 `uninstall` 运行项目安全卸载预览和应用操作，最后从 Codex 移除插件。直接在插件列表点“移除”不会替你恢复快捷方式或 Hooks。详细顺序见 [安装与移除](shared/docs/installation-and-removal.md)。
+桌面双入口升级由助手先准备私有构建、核对预览，再更新日期入口。已有旧入口会保留原迁移记录和开始菜单文件；桌面旧文件原地改名，新增独立原生入口。升级失败时保留原件与诊断，安装成功也不代表真实模型会话已验收。
+
+卸载时先按[原生模型撤回流程](models/common/docs/native-models.md)处理需要移除的 API/Local profile，停止准确的后台并解除独立 Web 登记，再由助手使用根命令 `uninstall` 运行项目安全卸载预览和应用操作，最后从 Codex 移除插件。直接在插件列表点“移除”不会替你恢复快捷方式或 Hooks。详细顺序见 [安装与移除](shared/docs/installation-and-removal.md)。
 
 已有旧版飞书 Operator 的项目继续保留原运行目录。插件改名不自动搬迁旧运行时、账号或任务；迁移需先停止准确服务并核对原有记录。

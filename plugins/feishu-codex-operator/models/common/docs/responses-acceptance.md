@@ -2,6 +2,21 @@
 
 Cross-model guidance and the current native/router comparison are maintained in the independent `codex-model-adaptation` skill. This file retains dated acceptance evidence and Operator-specific verification contracts.
 
+## Native CLI command display, 2026-09-28
+
+CLI `0.158.0-alpha.2.1` projects command argv through POSIX `shlex_join` even
+on Windows; see the [matching native source](https://github.com/openai/codex/blob/rust-v0.158.0-alpha.2.1/codex-rs/app-server-protocol/src/protocol/item_builders.rs#L53).
+A Windows command-line decoder misread the resulting escaped backslashes in a
+new private native-provider fixture. Decode this declared display format, then
+compare the complete argv exactly; do not replace slashes, normalize paths or
+repair the native request. Seventeen offline checks cover the retained event,
+changed arguments and injected commands. This validates displayed argv, not
+unreported original tool fields such as workdir or yield settings. Require a
+completed native command, actual output, final marker and unchanged file bytes
+separately; earlier cases stopped by the harness remain failed with their missing
+execution evidence. Current model-specific results are in the
+[release audit](../../../development/docs/release-audit.md).
+
 ## Local native and adapted tool follow-up, 2026-09-14
 
 The owner selected DavidAU Qwen3.6 27B, Huihui Qwen3.8 27B and Gemma 4 E2B

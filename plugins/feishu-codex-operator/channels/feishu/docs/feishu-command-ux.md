@@ -27,8 +27,12 @@ rebinding rather than an obligatory step after authorized automatic setup.
 ## Task model selection
 
 `/model` reads the exact bound native task settings without turns; `/model list`
-lists the bounded current official catalog. `/model luna low` (or an exact model
-ID with optional effort) saves a choice for the next new business message.
+lists the bounded current official catalog. `/model <exact model ID> [effort]`
+saves a choice for the next new business message. The list includes a copyable
+example using one current model's exact ID and supported default effort; an empty
+catalog offers no selection example. Short names such as `luna` work only when
+they identify exactly one catalog entry. Multiple generations sharing a name
+require the full ID; the Operator never silently chooses a generation.
 `/model cancel` removes only the pending/local selection, leaving native settings
 and already dispatched messages alone. These commands do not send model turns.
 

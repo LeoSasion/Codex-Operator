@@ -4,7 +4,7 @@
 `chat-on-steroids` 的方法，由本插件实现路由、协议转换和连接配置，不使用它们的
 程序作为运行依赖。固定源码对比、自有协议层与未完成验收见
 [ChatGPT Web 自有接入](../../web/docs/chatgpt-web-integration.md)。不再要求用户填写参考程序的
-Tunnel/key 向导；必要内部配置由插件承担。该新增模块尚未接入活动路由。
+Tunnel/key 向导；必要内部配置由插件承担。该新增模块在当时尚未接入活动路由；后来的独立 Web provider 与实际验收以[原生 Web 体验](../../web/docs/native-web-experience.md)为准。
 
 通用适配经验与跨模型原生/路由工具对照已提炼到独立 `codex-model-adaptation` skill 的 `adaptation-playbook.md`、`model-support-matrix.md`；本文件继续维护项目架构、协议合同和研发历史。
 
@@ -47,8 +47,8 @@ BenedictKing/ccx `codex_tools.go` / `codex_tool_search_tools.go`、Codex++
 一致性检查失败见[直连验证](../../api/docs/official-online-models.md#native-provider-checks-2026-09-14)。
 
 2026-09-14 后续方向：所有者要求简化为官方单一日常入口，优先让 GPT 和已兼容的
-厂商 API 直连，只对需要协议转换的模型使用独立适配 provider。当前仍通过全局
-`openai_base_url` 激活路由，尚未完成这项迁移。现有独立 provider/任务持久化
+厂商 API 直连，只对需要协议转换的模型使用独立适配 provider。当时仍通过全局
+`openai_base_url` 激活路由，尚未完成这项迁移。此段是历史状态；当前保持官方直连保护，Web 使用独立 provider，API/Local 的新增入口见[原生配置](native-models.md)，不能据此重新激活全局路由。当时的独立 provider/任务持久化
 证据不能证明当前 Desktop 会按模型名称自动选择 provider 或合并多个供应商目录。
 先验证目录归属与任务选择，再处理独立 provider 的认证、搜索和后台生命周期；
 通过后按所有权记录恢复官方路由与快捷方式，不再要求使用者区分多个日常入口。

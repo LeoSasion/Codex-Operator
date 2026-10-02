@@ -1,4 +1,4 @@
-"""Shared stdio transport for the three read-only App Server clients."""
+"""Shared stdio transport for read-only App Server clients."""
 
 from __future__ import annotations
 
@@ -24,9 +24,16 @@ class AppServerSession:
     def __init__(
         self, executable: Path, timeout_seconds: int, *,
         error_type: type[AppServerError] = AppServerError,
+        codex_home: Path | None = None,
     ) -> None:
         self._error_type = error_type
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+        environment = None
+        if codex_home is not None:
+            home = Path(codex_home)
+            if not home.is_absolute() or not home.is_dir():
+                raise self._error_type("read-only App Server home is unavailable")
+            environment = {**os.environ, "CODEX_HOME": str(home)}
         try:
             self.process = subprocess.Popen(
                 [str(executable), "app-server", "--listen", "stdio://"],
@@ -38,6 +45,7 @@ class AppServerSession:
                 errors="strict",
                 bufsize=1,
                 creationflags=flags,
+                env=environment,
             )
         except OSError as exc:
             raise self._error_type("read-only App Server could not start") from exc

@@ -16,6 +16,9 @@ from .responses_tool_adapter import loads
 
 BEGIN = "# BEGIN FEISHU OPERATOR MODEL ROUTER\n"
 END = "# END FEISHU OPERATOR MODEL ROUTER\n"
+VOICE_ROUTE_KEY = "experimental_realtime_webrtc_call_base_url"
+VOICE_WS_ROUTE_KEY = "experimental_realtime_ws_base_url"
+OFFICIAL_VOICE_BASE_URL = "https://chatgpt.com/backend-api/codex"
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -149,6 +152,106 @@ def register_routes(state: Path, rows: list[dict], *, expected_sha256=None, guar
         lock.unlink()
 
 
+def update_contracts(state: Path, rows: list[dict], *, apply=False,
+                     expected_sha256=None, expected_candidate_sha256=None, guard=None):
+    """Explicit v2 contract update; caller reserves the inactive port for apply.
+
+    Preview is offline/read-only. Only responses may change: routing identity,
+    model budgets, ordering and all unselected registrations remain intact.
+    """
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 100:
+        raise RouterError("invalid_contract_update_batch")
+    catalog = json.loads(Path(__file__).with_name("beeper_model_catalog.json").read_text(encoding="utf-8"))
+    ModelRegistry({"version": 2, "models": rows}, catalog)
+    if any(not row.get("responses") or not row["slug"].startswith(("api/", "local/")) for row in rows):
+        raise RouterError("contract_update_requires_adapted_registration")
+    target = state / "registry.json"
+
+    def snapshot():
+        if target.is_symlink() or not target.is_file():
+            raise RouterError("registry_requires_regular_file")
+        with target.open("rb") as handle:
+            raw = handle.read(1048577)
+        if len(raw) > 1048576:
+            raise RouterError("registration_file_too_large")
+        value = loads(raw)
+        ModelRegistry(value, catalog)
+        if value["version"] != 2:
+            raise RouterError("contract_update_requires_v2_registry")
+        return raw, value
+
+    def prepare():
+        raw, value = snapshot()
+        changed = []
+        for row in rows:
+            current = next((r for r in value["models"] if r["slug"] == row["slug"]), None)
+            if current is None or not current.get("responses"):
+                raise RouterError("contract_update_requires_existing_adapted_registration")
+            if ({k: v for k, v in current.items() if k != "responses"}
+                    != {k: v for k, v in row.items() if k != "responses"}):
+                raise RouterError("contract_update_identity_changed")
+            if current["responses"] != row["responses"]:
+                if "[verified]" in current.get("display_name", ""):
+                    raise RouterError("contract_update_verified_label_requires_review")
+                current["responses"] = row["responses"]
+                changed.append(row["slug"])
+        ModelRegistry(value, catalog)
+        candidate = (json.dumps(value, ensure_ascii=True, indent=2) + "\n").encode() if changed else raw
+        if len(candidate) > 1048576:
+            raise RouterError("registration_file_too_large")
+        report = {"registry_sha256": hashlib.sha256(raw).hexdigest(),
+                  "candidate_sha256": hashlib.sha256(candidate).hexdigest(),
+                  "changed_slugs": changed, "applied": False, "upstream_requests": 0}
+        return raw, candidate, report
+
+    if not apply:
+        return prepare()[2]
+    if any(not isinstance(d, str) or not re.fullmatch(r"[a-f0-9]{64}", d)
+           for d in (expected_sha256, expected_candidate_sha256)):
+        raise RouterError("contract_update_preview_digests_required")
+    if guard is None:
+        raise RouterError("contract_update_stopped_guard_required")
+
+    def stopped():
+        entry = state / "codex-entry.json"
+        if entry.exists() or entry.is_symlink():
+            raise RouterError("deactivate_before_contract_update")
+        guard(state)
+
+    stopped()
+    lock = state / "registry-edit.lock"
+    with lock.open("xb") as handle:
+        try:
+            original, candidate, report = prepare()
+            if report["registry_sha256"] != expected_sha256:
+                raise RouterError("registry_changed_since_contract_preview")
+            if report["candidate_sha256"] != expected_candidate_sha256:
+                raise RouterError("candidate_changed_since_contract_preview")
+            if not report["changed_slugs"]:
+                return report
+            backup = state / ("contract-update-before-" + expected_sha256 + ".json")
+            if backup.exists() or backup.is_symlink():
+                if backup.is_symlink() or not backup.is_file():
+                    raise RouterError("contract_update_backup_conflict")
+                with backup.open("rb") as saved:
+                    if saved.read(1048577) != original:
+                        raise RouterError("contract_update_backup_conflict")
+            else:
+                with backup.open("xb") as out:
+                    out.write(original)
+                    out.flush()
+                    os.fsync(out.fileno())
+            stopped()
+            if snapshot()[0] != original:
+                raise RouterError("registry_changed_during_contract_update")
+            atomic_write(target, candidate)
+            report.update(applied=True, backup_name=backup.name)
+            return report
+        finally:
+            handle.close()
+            lock.unlink()
+
+
 def atomic_write(path: Path, data: bytes):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=".router-", dir=path.parent)
@@ -222,22 +325,44 @@ def health(state: Path, port: int) -> dict:
     return value
 
 
+def managed_entry_blocks(state: Path, port: int) -> tuple[bytes, bytes, bytes, bytes]:
+    """Exact old and Voice variants; no config or journal I/O."""
+    route_line = "openai_base_url = " + json.dumps(url(state, port)) + "\n"
+    legacy = (BEGIN + route_line + END).encode()
+    call_line = VOICE_ROUTE_KEY + " = " + json.dumps(OFFICIAL_VOICE_BASE_URL) + "\n"
+    ws_line = VOICE_WS_ROUTE_KEY + " = " + json.dumps(OFFICIAL_VOICE_BASE_URL) + "\n"
+    call_only = (BEGIN + route_line + call_line + END).encode()
+    ws_only = (BEGIN + route_line + ws_line + END).encode()
+    protected = (BEGIN + route_line + call_line + ws_line + END).encode()
+    return legacy, call_only, ws_only, protected
+
+
 def activation_preflight(state: Path, port: int, config: Path):
-    """Read-only config compatibility check; preserve inactive comments verbatim."""
+    """Read-only config check; keep both Voice transports on the official route."""
     assert_global_route_allowed(config)
     original = config.read_bytes() if config.exists() else b""
     if original.startswith(b"\xef\xbb\xbf"):
         raise RouterError("bom_config_requires_explicit_normalization")
     text = original.decode("utf-8-sig")
     parsed = tomllib.loads(text)
-    block = (BEGIN + "openai_base_url = " + json.dumps(url(state, port)) + "\n" + END).encode()
+    legacy_block, call_only_block, ws_only_block, pinned_block = managed_entry_blocks(state, port)
+    known_blocks = (legacy_block, call_only_block, ws_only_block, pinned_block)
     journal = state / "codex-entry.json"
     if journal.exists():
         owned = json.loads(journal.read_text())
-        if owned != {"config": str(config.resolve()), "block": block.decode()}:
+        if (not isinstance(owned, dict) or owned.keys() != {"config", "block"}
+                or owned.get("config") != str(config.resolve())
+                or owned.get("block") not in tuple(block.decode() for block in known_blocks)):
             raise RouterError("existing_router_journal_conflict")
-        if original.startswith(block):
-            return original, block, True
+        owned_block = owned["block"].encode()
+        if original.startswith(owned_block):
+            # Old three/four-line entries remain removable. Neither proves both
+            # Voice transports stay official unless the missing field is already
+            # supplied by the user's unchanged top-level config.
+            if (parsed.get(VOICE_ROUTE_KEY) != OFFICIAL_VOICE_BASE_URL
+                    or parsed.get(VOICE_WS_ROUTE_KEY) != OFFICIAL_VOICE_BASE_URL):
+                raise RouterError("legacy_router_voice_route_unprotected")
+            return original, owned_block, True
         # A journal written before a failed config write can safely converge below.
     # A retained, wholly commented legacy prefix is documentation, not a route.
     # Admit only this exact known shape. Incomplete, active or additional marker
@@ -254,6 +379,22 @@ def activation_preflight(state: Path, port: int, config: Path):
         raise RouterError("existing_provider_requires_explicit_migration")
     if "openai_base_url" in parsed or "model_catalog_json" in parsed or parsed.get("profile"):
         raise RouterError("existing_route_catalog_or_profile_requires_explicit_migration")
+    call_route = parsed.get(VOICE_ROUTE_KEY)
+    ws_route = parsed.get(VOICE_WS_ROUTE_KEY)
+    if call_route is not None and call_route != OFFICIAL_VOICE_BASE_URL:
+        raise RouterError("existing_voice_route_requires_explicit_migration")
+    if ws_route is not None and ws_route != OFFICIAL_VOICE_BASE_URL:
+        raise RouterError("existing_voice_ws_route_requires_explicit_migration")
+    # Pre-existing official values stay user-owned byte for byte. The managed
+    # prefix owns only whichever Voice lines are missing.
+    block = {
+        (False, False): pinned_block,
+        (True, False): ws_only_block,
+        (False, True): call_only_block,
+        (True, True): legacy_block,
+    }[(call_route == OFFICIAL_VOICE_BASE_URL, ws_route == OFFICIAL_VOICE_BASE_URL)]
+    if journal.exists() and owned["block"] != block.decode():
+        raise RouterError("existing_router_journal_conflict")
     return original, block, False
 
 

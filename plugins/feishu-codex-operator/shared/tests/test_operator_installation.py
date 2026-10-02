@@ -78,6 +78,34 @@ class OwnershipTests(unittest.TestCase):
             self.assertEqual(before, {p.relative_to(self.project): p.read_bytes()
                                      for p in self.project.rglob('*') if p.is_file()})
 
+    def test_unified_candidate_blocks_preview_and_apply_before_archive(self):
+        home = self.project/'user-config'
+        home.mkdir()
+        config = home/'config.toml'
+        config.write_bytes(b'model = "native-fixture"\n# BEGIN OPERATOR UNIFIED CANDIDATE\n')
+        env = {**os.environ, 'LOCALAPPDATA': str(self.project/'local-appdata'),
+               'CODEX_HOME': str(home)}
+        installed = subprocess.run([PWSH, '-NoProfile', '-File',
+            str(ROOT/'scripts/install-feishu-codex-operator.ps1'), '-ProjectRoot', str(self.project),
+            '-SkipDesktopEntry'], env=env, capture_output=True, text=True, encoding='utf-8', timeout=60)
+        self.assertEqual(installed.returncode, 0, installed.stdout+installed.stderr)
+        before = {p.relative_to(self.project): p.read_bytes()
+                  for p in self.project.rglob('*') if p.is_file()}
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1', 0))
+            port = listener.getsockname()[1]
+        for flags in ([], ['-Apply']):
+            result = subprocess.run([PWSH, '-NoProfile', '-File',
+                str(ROOT/'scripts/uninstall-feishu-codex-operator.ps1'), '-ProjectRoot',
+                str(self.project), '-CodexConfig', str(config), '-RouterPort', str(port), *flags],
+                env=env, capture_output=True, text=True, encoding='utf-8', timeout=30)
+            self.assertNotEqual(result.returncode, 0, result.stdout+result.stderr)
+            self.assertIn('Unified candidate configuration or transaction requires reviewed recovery',
+                          result.stderr)
+            self.assertEqual(before, {p.relative_to(self.project): p.read_bytes()
+                                     for p in self.project.rglob('*') if p.is_file()})
+        self.assertFalse((self.project/'.codex/operator-uninstalled').exists())
+
     def test_reinstall_requires_completed_uninstall_and_unchanged_originals(self):
         self.target.write_bytes(b'original')
         self.assertEqual(self.write('managed').returncode, 0)
@@ -248,6 +276,46 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(self.target.read_bytes(), b'User rules\r\n')
         self.assertEqual(hooks.read_bytes(), existing)
         self.assertEqual((archives[0]/'sessions.json').read_bytes(), b'private fixture retained')
+
+    def test_new_pair_launcher_preparation_creates_no_legacy_shortcuts(self):
+        code = """
+. SETUP -ProjectRoot $p -Library
+$fixtureDesktop=Join-Path $p 'fake-desktop'
+$fixturePrograms=Join-Path $p 'fake-programs'
+$fixtureApp=Join-Path $p 'fake-app'
+New-Item -ItemType Directory -Force -Path $fixtureDesktop,$fixturePrograms,(Join-Path $fixtureApp 'app') | Out-Null
+$fixtureSource=Join-Path $p 'fixture.cs'
+[IO.File]::WriteAllText($fixtureSource,'class Fixture { static void Main() {} }')
+$compiler=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+& $compiler /nologo /target:winexe (('/out:')+(Join-Path $fixtureApp 'app/ChatGPT.exe')) $fixtureSource
+if($LASTEXITCODE -ne 0){throw 'Fixture build failed'}
+function Get-AppxPackage { param($Name) [pscustomobject]@{InstallLocation=$fixtureApp} }
+function Get-OperatorDesktopPaths {
+    @((Join-Path $fixtureDesktop 'Codex拓展入口.lnk'),(Join-Path $fixturePrograms 'Codex拓展入口.lnk'))
+}
+Install-OperatorDesktopEntry -ProjectRoot $p -NoShortcuts | Out-Null
+if(@(Get-ChildItem -LiteralPath $fixtureDesktop,$fixturePrograms -File).Count){throw 'Unexpected legacy shortcut'}
+$bundle=Join-Path $p '.codex/operator-desktop-entry'
+$record=Get-Content -LiteralPath (Join-Path $bundle 'launcher-manifest.json') -Raw | ConvertFrom-Json
+if($record.build_date -cnotmatch '^\\d{4}-\\d{2}-\\d{2}$' -or
+   $record.source_sha256 -cnotmatch '^[a-f0-9]{64}$' -or -not $record.product_version){throw 'Missing successful build identity'}
+$before=@{}
+foreach($file in @(Get-ChildItem -LiteralPath $bundle -File)){$before[$file.FullName]=Get-OperatorFingerprint $file.FullName}
+$blocked=$false
+try {Install-OperatorDesktopEntry -ProjectRoot $p -NoShortcuts | Out-Null} catch {$blocked=$true}
+if(-not $blocked){throw 'Existing launcher adopted as fresh'}
+foreach($path in $before.Keys){if((Get-OperatorFingerprint $path) -cne $before[$path]){throw 'Existing build changed'}}
+$other=Join-Path $p 'other-project'
+New-Item -ItemType Directory -Path $other | Out-Null
+$legacy=Join-Path $fixtureDesktop 'Codex拓展入口.lnk'
+[IO.File]::WriteAllText($legacy,'preserve unrelated owner')
+$blocked=$false
+try {Install-OperatorDesktopEntry -ProjectRoot $other -NoShortcuts | Out-Null} catch {$blocked=$true}
+if(-not $blocked -or (Test-Path -LiteralPath (Join-Path $other '.codex'))){throw 'Legacy collision was not rejected before writes'}
+if([IO.File]::ReadAllText($legacy) -cne 'preserve unrelated owner'){throw 'Legacy entry changed'}
+""".replace('SETUP',self.q(ROOT/'scripts/operator_desktop_setup.ps1'))
+        result=self.ps(code)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_shortcut_setup_restores_original_and_never_uses_real_shell_folders(self):
         code = """

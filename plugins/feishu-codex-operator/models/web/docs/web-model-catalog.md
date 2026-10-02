@@ -38,6 +38,46 @@ changed generation, ambiguous option or unavailable control stops that request.
 All entries share one browser, admission gate, MCP endpoint and consumed-turn
 ledger. Changing the selected model cannot enable parallel dispatch or replay.
 
+## Context capacity is model-specific evidence
+
+The catalog now records `context_window: {"status": "unverified"}` separately
+for every published Web model. No account-specific ChatGPT Web context limit has
+been verified for these three entries. The existing `16000` in the internal
+route is a provisional compatibility value while a record is unverified; it is
+**not** the capacity of GPT-5.6 Sol, GPT-5.6 Pro or GPT-6 Pro. An API model card,
+an App Server fallback window or a successful small prompt cannot fill this
+record. The page composer/request-size limit is also separate from model context:
+raising catalog metadata cannot make a larger prompt pass the page.
+The current [OpenAI ChatGPT model guide](https://help.openai.com/en/articles/20001354-gpt-56-and-gpt-6-pro-in-chatgpt)
+lists those Web selections and plan availability but gives no per-selection
+context windows; it cannot supply the missing numbers.
+
+A future verified record must bind the exact Web model key, all reasoning
+efforts represented by that one Codex catalog slug, an integer token limit,
+and either an official **Web-specific** document URL or an opaque private
+account-observation receipt. An incomplete, mismatched or malformed record
+fails before route publication. The reference is a reviewable provenance field,
+not automatic proof that the Web account has that capacity; numeric adoption
+still requires the independent checks below. When efforts have different proven
+limits, the current one-slug-per-model catalog cannot honestly advertise both;
+do not publish one effort's value for the other efforts. A separate catalog
+identity and its migration/selection test would be needed first.
+
+For an explicitly verified record, `text_route` and the prepared model row
+receive that model's value; synthetic tests show distinct models produce
+distinct rows without changing browser dispatch. This does not prove that a
+running Desktop adopted a refreshed catalog or that ChatGPT Web accepts the
+advertised amount. Adoption requires a fresh native `model/list`, the selected
+task's effective context report and a bounded new Web request, all checked
+separately. Source changes to this catalog also change the saved service
+identity; an existing bound instance is not silently replaced.
+
+The [codex-chatgpt-web architecture](https://github.com/miuuyy/codex-chatgpt-web/blob/fa2d2c6c24926078b46eedb2186f69f2e8d548d7/docs/architecture.md)
+and [issue 76](https://github.com/miuuyy/codex-chatgpt-web/issues/76) distinguish
+per-effort/account context budgets from the separate composer boundary. Those
+design constraints inform this record shape; their historical numeric limits
+are not evidence for this account and none was copied.
+
 The catalog is published only for a checked service that advertises its complete
 model list. Native catalog rows and existing WebSocket/request snapshots retain
 their identities. Independent Desktop preparation includes all advertised Web

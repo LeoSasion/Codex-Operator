@@ -182,8 +182,12 @@ def project_overview(project, home, inspect=inspect_entry):
         failure = web_failure(observation)
         if failure:
             web, web_diagnostic = failure
+        elif state == 'unavailable' and observation.get('configuration_current') is False:
+            web = ('unavailable', 'Web 后台当前不可用，保存配置与当前程序也不一致；原件保留',
+                '由助手核对准确实例与失败记录，再检查更新登记；不要重发失败请求或要求重新登录')
         elif observation.get('configuration_current') is False:
-            web = ('changed', '已有配置与当前程序不一致，保留原配置等待核对', 'web status')
+            web = ('changed', '已有配置与当前程序不一致，保留原配置等待核对',
+                '由助手核对原登记与空闲状态，再按受控流程更新；无需重新登录')
         elif observation.get('configuration_current') is not True or not isinstance(state, str) or state not in {
                 'ready', 'assistance', 'starting', 'preparing', 'connection', 'reconnecting', 'draining', 'configured', 'stopped'}:
             web = ('unavailable', '后台状态暂时无法确认，现有登录与配置仍保留', 'web status')
@@ -201,6 +205,8 @@ def project_overview(project, home, inspect=inspect_entry):
             web = ('preparing', '后台正在准备空白聊天，沿用保存的登录与配置', '稍后查看 models web status')
         elif state in ('connection', 'reconnecting'):
             web = ('connecting', '后台正在建立连接，沿用保存的登录与配置', '稍后查看 models web status')
+        elif state == 'ready' and observation.get('active') is False and observation.get('session_bound') is False:
+            web = ('needs_registration', '后台已就绪，启动登记尚未完成；显式复用当前实例即可继续接入', 'web start')
         elif state == 'ready' and observation.get('active') is False:
             binding_observation = observe(inspect, project, 'web', 'desktop-status')
             binding = binding_observation.get('status')
@@ -269,7 +275,7 @@ def project_overview(project, home, inspect=inspect_entry):
         config_path = home / 'config.toml'
         config_state = file_state(config_path)
         if config_state == 'absent':
-            routing = 'default'
+            routing = 'custom' if os.environ.get('OPENAI_BASE_URL') else 'default'
         elif config_state == 'unavailable':
             routing = 'unknown'
         else:
@@ -278,7 +284,16 @@ def project_overview(project, home, inspect=inspect_entry):
             if len(raw) > BOUND:
                 raise ValueError('config_size')
             config = tomllib.loads(raw.decode('utf-8-sig'))
-            routing = 'official_direct' if not config.get('openai_base_url') and config.get('model_provider', 'openai') == 'openai' else 'custom'
+            providers = config.get('model_providers', {})
+            if not isinstance(providers, dict):
+                raise ValueError('config_provider_shape')
+            # As in the Channels catalog guard, the name "openai" alone does
+            # not establish the official route when its endpoint is overridden.
+            redirected = (bool(os.environ.get('OPENAI_BASE_URL'))
+                or config.get('openai_base_url') is not None
+                or config.get('model_provider', 'openai') != 'openai'
+                or bool(providers.get('openai')))
+            routing = 'custom' if redirected else 'official_direct'
     except (OSError, ValueError):
         pass
     report['native_routing'] = routing

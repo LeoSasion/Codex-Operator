@@ -17,6 +17,8 @@ const configPath = process.argv[2];
 let config, win, surface, timer, cancelWatch, deadlineAt, stage = "configuration", sent = false, ended = false, cancelling = false;
 let ownedConnectorQuery = null;
 let dispatchedPublicPrompt = null;
+let dispatchedUserId = null;
+let dispatchedRequestBinding = null;
 let windowShown = 0, windowFocused = 0;
 let workerMode = false, workerRequestId = null, workerClosing = false, finishTurn = null;
 let cancelledIdleVerified = false;
@@ -306,22 +308,41 @@ async function cancelOwnedGeneration(reuseWhenIdle = false) {
   // provider receipt, stopped inference or billing. Never send another prompt.
   if (sent && win && !win.isDestroyed() && !config.connectorSelectionName) {
     let clicked = false;
+    let idleReason = null;
     try {
       // Keep the exact public app-pill representation validated at dispatch.
       // Rebuilding the legacy @name prefix loses the current renderer's binding.
       const expected = dispatchedPublicPrompt;
       requireValue(typeof expected === 'string' && expected.length > 0,
         "web_cancel_user_binding_required");
-      const binding = await inPage(page.publicUserBindingShape, expected, true);
-      requireValue(binding?.exact === true, "web_cancel_user_binding_required");
-      clicked = await inPage(page.cancelGeneration);
+      const expectedId = dispatchedUserId;
+      requireValue(typeof expectedId === 'string' && expectedId.length > 0,
+        "web_cancel_user_binding_required");
+      const verifyBoundPage = async () => {
+        if (config.backgroundInput) requireBackgroundWindow();
+        const url = surface.webContents.getURL();
+        requireValue(new URL(url).origin === 'https://chatgpt.com'
+          && !isPublicLoginUrl(url) && !isPluginMaintenanceUrl(url),
+          "web_cancel_page_binding_required");
+        // The URL and title may change while generating. The exact public
+        // message identity and full dispatched text must remain unchanged.
+        const id = dispatchedRequestBinding !== null
+          ? await inPage(page.publicBoundUserIdentity,expected,expectedId,dispatchedRequestBinding)
+          : await inPage(page.publicUserBindingShape,expected,true,true);
+        if (id !== expectedId) {
+          try { record('public_turn_state', { state: await inPage(page.publicTurnState, expected, expectedId, dispatchedRequestBinding) }); } catch {}
+        }
+        requireValue(id === expectedId, "web_cancel_user_binding_required");
+      };
+      await verifyBoundPage();
+      clicked = await inPage(page.cancelGeneration, expected, expectedId, dispatchedRequestBinding,
+        config.connectorMention?.name ?? null);
       record(clicked ? "cancel_click_attempted" : "cancel_click_unavailable");
       if (clicked && reuseWhenIdle && workerMode && !workerClosing) {
         let idleSince = null;
         await waitFor(async () => {
           requireBackgroundWindow();
-          const binding = await inPage(page.publicUserBindingShape, expected, true);
-          requireValue(binding?.exact === true, "web_cancel_user_binding_required");
+          await verifyBoundPage();
           const interruption = await inPage(page.publicInterruptionState, config.connectorMention?.name ?? null);
           requireValue(interruptionCode(interruption) === null, "web_cancel_page_interrupted");
           const progress = await inPage(page.publicGenerationState, true);
@@ -329,17 +350,25 @@ async function cancelOwnedGeneration(reuseWhenIdle = false) {
           const oneBoundUser = controls.modernRowCount > 0
             ? controls.userCount === 0 && controls.assistantCount === 0
             : progress.userRows === 1 && controls.userCount === 1;
-          const idle = progress.stopPresent === false && oneBoundUser
-            && controls.pageKind === "chatgpt" && controls.loginVisible === false
-            && controls.composer === true
-            && await inPage(page.composerPrefix, null) === "";
+          idleReason = progress.stopPresent !== false ? "web_cancel_idle_still_generating"
+            : !oneBoundUser ? "web_cancel_idle_user_shape_changed"
+            // A title is presentation, not message identity. A challenge still
+            // fails here even when the exact user row remains mounted.
+            : !["chatgpt", "other"].includes(controls.pageKind) ? "web_cancel_idle_page_kind"
+            : controls.loginVisible !== false ? "web_cancel_idle_login_visible"
+            : controls.composer !== true ? "web_cancel_idle_composer_missing" : null;
+          const idle = idleReason === null && await inPage(page.composerPrefix, null) === "";
           if (!idle) { idleSince = null; return false; }
           if (idleSince === null) idleSince = Date.now();
           return Date.now() - idleSince >= 150;
         }, 2000);
         cancelledIdleVerified = !ended && !workerClosing;
       }
-    } catch { record(clicked ? "cancel_idle_unverified" : "cancel_click_unavailable"); }
+    } catch (error) {
+      const code = safeError(error);
+      record(clicked ? "cancel_idle_unverified" : "cancel_click_unavailable",
+        { error: code === "web_page_state_timeout" && idleReason !== null ? idleReason : code });
+    }
   }
   finish(1, { error: "web_cancelled_no_retry" });
 }
@@ -393,12 +422,19 @@ async function inPage(fn, ...args) {
   const result = await surface.webContents.executeJavaScript(`(() => {
     const currentPublicFiber = (${page.currentPublicFiber.toString()});
     const uniqueComposer = (${page.uniqueComposer.toString()});
+    const stopControlSelector = (${page.stopControlSelector.toString()});
     const eligibleModelButtons = (${page.eligibleModelButtons.toString()});
     const eligibleEffortContainer = (${page.eligibleEffortContainer.toString()});
     const connectorPillState = (${page.connectorPillState.toString()});
     const promptMismatchShape = (${page.promptMismatchShape.toString()});
     const modernPublicItem = (${page.modernPublicItem.toString()});
+    ${fn === page.armPublicFreshRequest ? `const emptyFreshChat = (${page.emptyFreshChat.toString()});` : ''}
+    ${[page.publicTurnState,page.capturePublicDispatchBinding,page.cancelGeneration].includes(fn) ? `const publicUserBindingShape = (${page.publicUserBindingShape.toString()});` : ''}
+    ${fn === page.capturePublicDispatchBinding ? `const capturePublicRequestBinding = (${page.capturePublicRequestBinding.toString()});` : ''}
+    ${fn === page.cancelGeneration ? `const publicBoundUserIdentity = (${page.publicBoundUserIdentity.toString()});
+      const publicInterruptionState = (${page.publicInterruptionState.toString()});` : ''}
     const projectPublicReferences = (${page.projectPublicReferences.toString()});
+    const modernBoundTurnMatches = (${page.modernBoundTurnMatches.toString()});
     const modernPublicFinal = (${page.modernPublicFinal.toString()});
     try { return { ok: true, value: (${fn.toString()})(...${JSON.stringify(args)}) }; }
     catch (error) { return { ok: false, code: /^web_[a-z_]+$/.test(error?.message)
@@ -426,6 +462,8 @@ function interruptionCode(state) {
 }
 async function waitForPublicFinal(publicPrompt, connectorName) {
   let lastObservation = 0, priorState = null, interruptedAt = 0, previousCode = null;
+  let identityStructureObserved = false;
+  let candidate = null, candidateAt = 0;
   return waitFor(async () => {
     const state = await inPage(page.publicInterruptionState, connectorName);
     const encoded = JSON.stringify(state), code = interruptionCode(state);
@@ -435,18 +473,34 @@ async function waitForPublicFinal(publicPrompt, connectorName) {
     }
     if (code !== previousCode) { previousCode = code; interruptedAt = Date.now(); }
     if (code) {
+      candidate = null;
       // A card may disappear after the platform applies a saved permission.
       // Observe briefly, then stop once. Do not click it, show a window or send
       // again. Even a simultaneous public answer cannot hide unresolved UI.
       if (Date.now() - interruptedAt >= 2000) throw new Error(code);
       return false;
     }
-    const result = await inPage(page.publicFinal, publicPrompt, config.includeCitations === true, true);
+    const result = await inPage(page.publicFinal, publicPrompt, config.includeCitations === true, true, dispatchedRequestBinding);
     if (result || Date.now() - lastObservation >= 15000) {
       lastObservation = Date.now();
       record("generation_state", { progress: await inPage(page.publicGenerationState, true) });
+      try { record('public_turn_state', { state: await inPage(page.publicTurnState, publicPrompt, dispatchedUserId, dispatchedRequestBinding) }); } catch {}
+      if (!identityStructureObserved) {
+        try {
+          const shape = await inPage(page.publicIdentityStructure,'assistant',dispatchedUserId,publicPrompt);
+          if (shape) {record('public_identity_structure',{shape}); identityStructureObserved=true;}
+        } catch {}
+      }
     }
-    return result;
+    // The renderer can mark an item complete before its final text projection
+    // settles. Observe the complete exact snapshot, including citations, before
+    // release. This is a bounded local read, never another model request.
+    if (!result) { candidate = null; return false; }
+    const snapshot = JSON.stringify(result);
+    if (snapshot !== candidate) {
+      candidate = snapshot; candidateAt = Date.now(); return false;
+    }
+    return Date.now() - candidateAt >= 500 ? result : false;
   }, Math.max(1, deadlineAt - Date.now() - 2000));
 }
 async function key(keyCode) {
@@ -816,7 +870,7 @@ async function completeAssistance() {
 async function checkInspectionPage() {
   requireValue(inspectionPage && completedPage === inspectionPage.page
     && surface.webContents.getURL() === inspectionPage.url, "web_inspection_page_changed");
-  const current = await inPage(page.publicFinal, completedPage.prompt, config.includeCitations === true, true);
+  const current = await inPage(page.publicFinal, completedPage.prompt, config.includeCitations === true, true, completedPage.requestBinding ?? null);
   requireValue(current && JSON.stringify(current) === JSON.stringify(completedPage.message),
     "web_inspection_page_changed");
 }
@@ -888,7 +942,7 @@ async function loadFreshPage() {
   let current = null;
   try {
     current = await waitFor(() => inPage(page.publicFinal,
-      previous.prompt, config.includeCitations === true, true), 3000);
+      previous.prompt, config.includeCitations === true, true, previous.requestBinding ?? null), 3000);
   } catch (error) {
     if (error.message !== "web_page_state_timeout") throw error;
   }
@@ -900,7 +954,7 @@ async function loadFreshPage() {
     try { record("modern_identity_shape", { shape: await inPage(page.modernIdentityShape) }); } catch {}
     throw new Error("web_new_chat_previous_page_changed");
   }
-  try { await inPage(page.startFreshChat, previous.prompt, previous.message.id); }
+  try { await inPage(page.startFreshChat, previous.prompt, previous.message.id, previous.requestBinding ?? null); }
   catch (error) {
     if (error?.message === "web_new_chat_control_ambiguous") {
       // This is a second read after the failed selector check, never a click.
@@ -969,6 +1023,8 @@ async function runCurrentPage() {
     await waitRelease(config.prepareReleaseFile, "ready\n");
   }
   await selectModel();
+  if (workerMode && config.mode === 'generate')
+    requireValue(await inPage(page.armPublicFreshRequest,workerRequestId) === true, 'web_fresh_page_required');
   let mention = config.connectorMention ?? null;
   let connectorPublicPrefix = null;
   if (config.autoSelectConnector) {
@@ -1070,22 +1126,38 @@ async function runCurrentPage() {
   await inPage(page.sendOnce);
   // The public row includes the app link. Compare it with the exact projected
   // source message, not with the transport body alone.
-  let bindingShape = await waitFor(async () => inPage(page.publicUserBindingShape, publicPrompt, true));
-  if (currentAppPill && bindingShape?.exact === false && bindingShape.appSeparatorOnly === true
-      && connectorPublicPrefix.endsWith('\u00a0')) {
-    publicPrompt = connectorPublicPrefix.slice(0, -1) + ' ' + config.text;
-    bindingShape = await inPage(page.publicUserBindingShape, publicPrompt, true);
-  }
-  record("public_user_binding", { shape: bindingShape });
-  requireValue(bindingShape?.exact === true, "web_user_turn_mismatch");
+  const dispatchBinding = await waitFor(() => inPage(page.capturePublicDispatchBinding, publicPrompt,
+    workerMode ? workerRequestId : null, !!currentAppPill && connectorPublicPrefix.endsWith('\u00a0')));
+  record("public_user_binding", { shape: dispatchBinding?.shape });
+  requireValue(dispatchBinding?.shape?.exact === true, "web_user_turn_mismatch");
+  const spaceProjection = !!currentAppPill && connectorPublicPrefix.endsWith('\u00a0')
+    ? connectorPublicPrefix.slice(0,-1) + ' ' + config.text : null;
+  requireValue(dispatchBinding.prompt === publicPrompt || dispatchBinding.prompt === spaceProjection,
+    "web_user_turn_mismatch");
+  publicPrompt = dispatchBinding.prompt;
   dispatchedPublicPrompt = publicPrompt;
+  dispatchedUserId = dispatchBinding.userId;
+  requireValue(typeof dispatchedUserId === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(dispatchedUserId),
+    "web_user_identity_unavailable");
+  requireValue(typeof dispatchBinding.modern === 'boolean', "web_user_identity_unavailable");
+  dispatchedRequestBinding = dispatchBinding.requestBinding;
+  if (workerMode && dispatchBinding.modern) {
+    requireValue(dispatchedRequestBinding?.kind === 'modern_fresh_document_v1'
+      && dispatchedRequestBinding.userId === dispatchedUserId
+      && dispatchedRequestBinding.prompt === publicPrompt
+      && dispatchedRequestBinding.nonce === workerRequestId, "web_user_identity_unavailable");
+    try { record('public_identity_structure',{shape:await inPage(page.publicIdentityStructure,'user',dispatchedUserId,publicPrompt)}); } catch {}
+    try { record('public_turn_state',{state:await inPage(page.publicTurnState,publicPrompt,dispatchedUserId,dispatchedRequestBinding)}); } catch {}
+  } else {
+    requireValue(dispatchedRequestBinding === null, "web_user_identity_unavailable");
+  }
   stage = "wait_public_final";
   // The selected app pill's exact public syntax was bound before submission;
   // never trim or infer arbitrary message text.
   const message = await waitForPublicFinal(publicPrompt, mention?.name ?? null);
   if (config.inspectCitations === true)
     record("public_citation_shape", { shape: await inPage(page.publicCitationShape, true) });
-  if (workerMode) completedPage = { prompt: publicPrompt, message };
+  if (workerMode) completedPage = { prompt: publicPrompt, message, requestBinding: dispatchedRequestBinding };
   requireValue(verifiedSelection?.model === config.model
     && verifiedSelection.effortIndex === modelSelection(config).effort.index, "web_model_selection_unverified");
   finish(0, { ...verifiedSelection, publicMessage: message });
@@ -1245,6 +1317,8 @@ async function workerLoop() {
     networkRequests.clear(); networkEventCount = 0;
     ownedConnectorQuery = null;
     dispatchedPublicPrompt = null;
+    dispatchedUserId = null;
+    dispatchedRequestBinding = null;
     deadlineAt = Date.now() + config.timeoutMs;
     const completed = new Promise(resolve => { finishTurn = resolve; });
     timer = setTimeout(() => finish(1, { error: "web_host_deadline_no_retry" }), config.timeoutMs);

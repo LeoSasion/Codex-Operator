@@ -101,6 +101,7 @@ class ResponsesCapabilities:
     tool_choice_by_reasoning: tuple[tuple[str, tuple[str, ...]], ...] = ()
     text_tool_outputs: str = "native"
     history_custom_tools: tuple[tuple[str, str], ...] = ()
+    history_function_tools: tuple[tuple[str, str], ...] = ()
     named_function_outputs: tuple[tuple[str, str], ...] = ()
     input_tool_definitions: str = "reject"
     upstream_response_mode: str = "match_client"
@@ -110,6 +111,7 @@ class ResponsesCapabilities:
     def parse(cls, value):
         fields = set(cls.__dataclass_fields__)
         optional = {"tool_choice_by_reasoning", "text_tool_outputs", "history_custom_tools",
+                    "history_function_tools",
                     "named_function_outputs", "input_tool_definitions", "upstream_response_mode",
                     "completed_output_policy"}
         if (not isinstance(value, dict) or set(value) - fields
@@ -141,6 +143,15 @@ class ResponsesCapabilities:
                        or key not in tools or fmt != "codex_exec_v1"
                        for key, fmt in history_tools.items())):
             raise RouterError("invalid_history_custom_tool_capabilities")
+        history_functions = value.get("history_function_tools", {})
+        if (not isinstance(history_functions, dict) or len(history_functions) > 256
+                or any(not isinstance(key, str)
+                       or not re.fullmatch(r"(?:[A-Za-z0-9_-]{1,64}\.)?[A-Za-z0-9_-]{1,64}", key)
+                       or codec != "json_object_v1"
+                       for key, codec in history_functions.items())):
+            raise RouterError("invalid_history_function_tool_capabilities")
+        if history_functions and not value["function_tools"]:
+            raise RouterError("function_capability_required_for_history")
         named_outputs = value.get("named_function_outputs", {})
         if (not isinstance(named_outputs, dict) or any(
                 key not in NAMED_FUNCTION_OUTPUT_SOURCES or mode != "user_message_json_v1"
@@ -190,6 +201,7 @@ class ResponsesCapabilities:
                       "tool_choice": choices, "input_modalities": modalities,
                       "tool_choice_by_reasoning": restrictions, "text_tool_outputs": text_outputs,
                       "history_custom_tools": tuple(sorted(history_tools.items())),
+                      "history_function_tools": tuple(sorted(history_functions.items())),
                       "named_function_outputs": tuple(sorted(named_outputs.items())),
                       "input_tool_definitions": input_definitions,
                       "upstream_response_mode": response_mode,

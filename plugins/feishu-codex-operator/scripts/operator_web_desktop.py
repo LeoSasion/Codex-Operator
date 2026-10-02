@@ -52,6 +52,15 @@ def check_binding_files(profile, expected):
         'web_desktop_session_changed')
 
 
+def check_native_observer_home(profile, home):
+    _, config = load_profile(profile)
+    raw = read_bytes(config['settings']['path'])
+    require(digest(raw) == config['settings']['sha256'], 'web_manager_settings_changed')
+    native_home = service.selected_native_cancellation_home(service.loads(raw))
+    require(native_home is None or native_home == checked_path(home, directory=True).resolve(),
+        'web_desktop_native_home_mismatch')
+
+
 def catalogue(route):
     routes = (route,) if hasattr(route, 'slug') else tuple(route)
     template = read_json(Path(__file__).with_name('operator_core') / 'beeper_model_catalog.json')
@@ -137,6 +146,7 @@ def load_trial(profile, home):
 
 def prepare(profile, home):
     profile, _ = load_profile(profile)
+    check_native_observer_home(profile, home)
     target, before, existed = config_bytes(home)
     existing = load_trial(profile, target.parent)
     if existing is not None and existing[3]['phase'] != 'disconnected':
@@ -152,6 +162,7 @@ def prepare(profile, home):
         require(config_bytes(target.parent)[1:] == (before, existed), 'web_desktop_config_changed')
         # Recheck after taking the lifecycle lock without another health read.
         check_binding_files(profile, expected)
+        check_native_observer_home(profile, target.parent)
         root = profile / 'desktop'
         if not root.exists(): private_directory(root)
         checked_path(root, directory=True)
@@ -200,16 +211,18 @@ def replace_config(target, expected, replacement, *, existed):
 
 
 def connect(profile, home):
+    check_native_observer_home(profile, home)
     trial = load_trial(profile, home)
     require(trial is not None, 'web_desktop_prepare_required')
     folder, plan, files, journal = trial
-    routes = resolve_routes(profile, plan['binding'])  # idle, exact process/session; zero inference
+    routes = resolve_routes(profile, plan['binding'], require_bound_session=True)
     route = routes[0]
     require(addition(route, plan['provider']) == files['addition.toml']
         and json.loads(files['catalog.json']) == catalogue(routes), 'web_desktop_preparation_changed')
     with operation_lock(profile):
         require(load_trial(profile, home) == trial, 'web_desktop_preparation_changed')
         check_binding_files(profile, plan['binding'])
+        check_native_observer_home(profile, home)
         target, current, existed = config_bytes(home)
         if journal['phase'] == 'connected':
             require(owned_fragment(current, files['addition.toml']), 'web_desktop_config_changed')
@@ -337,6 +350,7 @@ def rebind(profile, home):
     Preserve the exact provider ID so a native task keeps its binding after the
     Desktop process reloads configuration. A failed transaction is review-only.
     """
+    check_native_observer_home(profile, home)
     trial = load_trial(profile, home)
     require(trial is not None, 'web_desktop_prepare_required')
     old_folder, old_plan, old_files, old_journal = trial
@@ -351,7 +365,7 @@ def rebind(profile, home):
     require(existed and owned_fragment(before, old_files['addition.toml']),
         'web_desktop_config_changed')
     expected = route_preview(profile)
-    routes = resolve_routes(profile, expected)
+    routes = resolve_routes(profile, expected, require_bound_session=True)
     fragment = addition(routes[0], old_plan['provider'])
     if expected == old_plan['binding'] and fragment == old_files['addition.toml']:
         return result('connected', reused=True, provider=old_plan['provider'])
@@ -364,6 +378,7 @@ def rebind(profile, home):
         require(load_trial(profile, home) == trial and config_bytes(home) == (target, before, existed),
             'web_desktop_config_changed')
         check_binding_files(profile, expected)
+        check_native_observer_home(profile, home)
         root = old_folder.parent
         transaction_path = root / 'rebind.json'
         if transaction_path.exists():
@@ -510,8 +525,14 @@ def main():
     args = parser.parse_args()
     try:
         report = globals()[args.action.removeprefix('desktop-')](args.profile, args.codex_home)
-    except Exception:
+    except Exception as error:
         report = result('unavailable')
+        if isinstance(error, ValueError) and str(error) == 'web_manager_session_binding_required':
+            report.update(code='web_manager_session_binding_required', next_action='start',
+                summary='请先完成当前后台的启动登记，再连接原生入口；未重启服务、修改原生配置或重做请求。')
+        elif isinstance(error, ValueError) and str(error) == 'web_desktop_native_home_mismatch':
+            report.update(code='web_desktop_native_home_mismatch',
+                summary='停止状态观察器与目标 Codex 配置目录不一致，请核对已保存的观察目录；未修改配置或启动服务。')
     print(json.dumps(report, ensure_ascii=False))
     return 0 if report['status'] not in ('changed', 'unavailable') else 1
 

@@ -21,7 +21,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
 const { publicFinal, clickModelChooser, focusModelMenu, connectorMenuChoice, connectorPillState, selectedConnector, composerPrefix, focusComposer, composerMatches,
-  uniqueComposer, eligibleModelButtons, eligibleEffortContainer } = require(operatorTestScript("web_browser_page.cjs"));
+  uniqueComposer, eligibleModelButtons, eligibleEffortContainer, stopControlSelector } = require(operatorTestScript("web_browser_page.cjs"));
 const prompt = "Synthetic fixture 中文";
 
 test('startup control structure exposes only bounded selector counts and flags', () => {
@@ -169,7 +169,7 @@ test('plugin close readiness excludes drafts, forms, permissions, auth and pendi
   let fields=[element({placeholder:'搜索设置'})], dialogs=[element({role:'dialog','aria-label':'设置'})], buttons=[], busy=[];
   const document={readyState:'complete',title:'ChatGPT - Operator fixture',getElementById:()=>null,
     querySelectorAll:s=>s.startsWith('input,')?fields:s.startsWith('[role="dialog"')?dialogs:s==='button,a'?buttons:busy};
-  const read=()=>vm.runInNewContext('('+pluginMaintenanceReady.toString()+')()',{document});
+  const read=()=>vm.runInNewContext('('+pluginMaintenanceReady.toString()+')()',{document, stopControlSelector});
   assert.equal(read(),true);
   for(const field of [element({value:'draft',placeholder:'搜索设置'}),element({type:'password'}),
     element({tagName:'TEXTAREA',value:'draft'}),element({tagName:'BUTTON',role:'switch'}),
@@ -260,8 +260,9 @@ function hiddenHostFixture(overrides = {}) {
     composerPrefix: function () { return ''; }, connectorPillState,
     promptMismatchShape: function () { return null; },
     modernPublicItem: function () {}, modernPublicFinal: function () {},
+    modernBoundTurnMatches: require(operatorTestScript('web_browser_page.cjs')).modernBoundTurnMatches,
     projectPublicReferences: require(operatorTestScript('web_browser_page.cjs')).projectPublicReferences,
-    uniqueComposer, eligibleModelButtons, eligibleEffortContainer,
+    uniqueComposer, eligibleModelButtons, eligibleEffortContainer, stopControlSelector,
     publicFinal: function () {}, startFreshChat: function () {}, freshChatControlStructure: function () {},
     enableTemporaryChat: function () {},
     currentPublicFiber: require(operatorTestScript("web_browser_page.cjs")).currentPublicFiber,
@@ -396,7 +397,7 @@ test('fresh chat clicks only equivalent public home links on the idle owned page
     getClientRects: () => [{}], getAttribute: key => key === 'href' ? href : null,
     click: () => actions.push(href) });
   let choices = [link(), link('新聊天CtrlShiftO')], users = [{}], assistants = [{}], stops = [];
-  const invoke = () => vm.runInNewContext(`(${startFreshChat.toString()})()`, { uniqueComposer: () => composer, document: {
+  const invoke = () => vm.runInNewContext(`(${startFreshChat.toString()})()`, { stopControlSelector, uniqueComposer: () => composer, document: {
     querySelector: () => composer, querySelectorAll: selector => selector.includes('author-role="user"') ? users
       : selector.includes('author-role="assistant"') ? assistants : selector.includes('stop-button') ? stops
       : selector === '[data-chatgpt-search-unit-key]' || selector.startsWith('nav[') ? [] : choices } });
@@ -408,12 +409,12 @@ test('fresh chat clicks only equivalent public home links on the idle owned page
   }
   choices = [link()];
   composer.textContent = 'unsubmitted draft';
-  assert.throws(invoke, /web_new_chat_idle_page_required/);
+  assert.throws(invoke, /web_new_chat_idle_page_required_empty/);
   composer.textContent = '';
   stops = [{ getClientRects: () => [{}] }];
-  assert.throws(invoke, /web_new_chat_idle_page_required/);
+  assert.throws(invoke, /web_new_chat_idle_page_required_stopped/);
   stops = []; users = [{}, {}];
-  assert.throws(invoke, /web_new_chat_idle_page_required/);
+  assert.throws(invoke, /web_new_chat_idle_page_required_identity/);
   assert.equal(actions.length, 1);
 });
 test('fresh chat accepts only the exact completed modern turn and unique sidebar button', () => {
@@ -427,7 +428,7 @@ test('fresh chat accepts only the exact completed modern turn and unique sidebar
     : selector.startsWith('nav[') ? buttons
     : selector === 'a[data-testid="create-new-chat-button"]' ? links : [] };
   const invoke = (prompt = 'exact prompt', id = 'bound-id') => vm.runInNewContext(
-    `(${startFreshChat.toString()})(prompt,id)`, { prompt, id, uniqueComposer: () => composer,
+    `(${startFreshChat.toString()})(prompt,id)`, { stopControlSelector, prompt, id, uniqueComposer: () => composer,
       modernPublicFinal: value => value === 'exact prompt' ? { id: finalId } : null, document });
   invoke();
   assert.deepEqual(actions, ['new-chat']);
@@ -453,7 +454,7 @@ test('fresh chat recognizes the visible text button in chat-history navigation',
   const document = { querySelectorAll: selector => selector === '[data-chatgpt-search-unit-key]'
     ? [{}, {}] : selector.includes('nav[aria-label="聊天记录"]')
       ? [textButton, iconButton] : [] };
-  vm.runInNewContext(`(${startFreshChat.toString()})('new prompt','bound-id')`, {
+  vm.runInNewContext(`(${startFreshChat.toString()})('new prompt','bound-id')`, { stopControlSelector,
     uniqueComposer: () => composer,
     modernPublicFinal: () => ({ id: 'bound-id' }), document });
   assert.deepEqual(actions, ['新聊天']);
@@ -479,7 +480,7 @@ test('failed fresh chat diagnostic contains only fixed selector categories', () 
 test('empty fresh chat rejects retained modern messages and drafts', () => {
   const { emptyFreshChat } = require(operatorTestScript('web_browser_page.cjs'));
   let text = '', rows = [], stops = [];
-  const invoke = () => vm.runInNewContext(`(${emptyFreshChat.toString()})()`, {
+  const invoke = () => vm.runInNewContext(`(${emptyFreshChat.toString()})()`, { stopControlSelector,
     uniqueComposer: () => ({ textContent: text }), document: { querySelectorAll: selector =>
       selector.includes('stop-button') ? stops : rows } });
   assert.equal(invoke(), true);
@@ -690,7 +691,7 @@ test('generation diagnostics distinguish hidden stop controls and finished publi
       querySelectorAll: selector => selector === '[role="alert"]'
         ? [{ getClientRects: () => [{}], textContent: '未能加载订阅：Something went wrong. PRIVATE' }]
         : selector.includes('assistant') ? [row] : [{}] };
-    return plain(vm.runInNewContext(`(${publicGenerationState.toString()})()`, { document }));
+    return plain(vm.runInNewContext(`(${publicGenerationState.toString()})()`, { document, stopControlSelector }));
   };
   const state = invoke(authored([]));
   assert.deepEqual(state, { userRows: 1, assistantRows: 1, finalRows: 1, finishedFinalRows: 1,
@@ -831,6 +832,46 @@ test('transient UI clears before final acceptance and prose never becomes interr
   assert.equal(host.commands.length, 0);
 });
 
+test('final release waits for the entire snapshot to settle and resets after a missing observation', async () => {
+  const first = {id: 'same-id', content: {parts: ['first\nanswer']}, public_references: []};
+  const final = {...first, content: {parts: ['settled\nanswer']}};
+  for (const sequence of [[first, final, final, final],
+      [final, final, null, final, final, final],
+      [{...final, public_references: [{type: 'initial'}]}, final, final, final]]) {
+    const host = hiddenHostFixture();
+    host.invoke(`let fixtureClock = 1000, snapshots = ${JSON.stringify(sequence)}, reads = 0;
+      Date.now = () => fixtureClock;
+      inPage = async fn => {
+        if (fn === page.publicInterruptionState) return {};
+        if (fn === page.publicGenerationState) return {};
+        if (fn === page.publicFinal) return snapshots[Math.min(reads++, snapshots.length - 1)];
+        throw Error('unexpected action');
+      };
+      waitFor = async fn => { for (let i = 0; i < 10; i++, fixtureClock += 250) {
+        const result = await fn(); if (result) return result;
+      } throw Error('fixture deadline'); };`);
+    assert.deepEqual(plain(await host.invoke("waitForPublicFinal('exact prompt', null)")), final);
+    assert.equal(host.invoke('reads'), sequence.length);
+    assert.equal(host.commands.length, 0);
+  }
+});
+
+test('an answer that never settles reaches its deadline without releasing a snapshot', async () => {
+  const host = hiddenHostFixture();
+  host.invoke(`let fixtureClock = 1000, reads = 0;
+    Date.now = () => fixtureClock;
+    inPage = async fn => {
+      if (fn === page.publicInterruptionState || fn === page.publicGenerationState) return {};
+      if (fn === page.publicFinal) return {id: 'same-id', content: {parts: [String(reads++)]}};
+      throw Error('unexpected action');
+    };
+    waitFor = async fn => { for (let i = 0; i < 8; i++, fixtureClock += 250) {
+      const result = await fn(); if (result) return result;
+    } throw Error('fixture deadline'); };`);
+  await assert.rejects(host.invoke("waitForPublicFinal('exact prompt', null)"), /fixture deadline/);
+  assert.equal(host.commands.length, 0);
+});
+
 function currentTree(previous, latest) {
   const rootState = {};
   const rootA = { tag: 3, return: null, stateNode: rootState };
@@ -886,7 +927,7 @@ test('committed public output never releases a stale successful copy or reads it
   const document = { querySelector: () => null, querySelectorAll: selector => selector === '[role="alert"]' ? []
     : selector.includes('user') ? [{ textContent: prompt }] : [row] };
   const invoke = expression => vm.runInNewContext(`const currentPublicFiber = (${currentPublicFiber.toString()}); ${expression}`,
-    { document, prompt, TextEncoder });
+    { document, prompt, TextEncoder, stopControlSelector });
   const result = invoke(`(${publicFinal.toString()})(prompt, false, true)`);
   assert.deepEqual(plain(result.content.parts), ['exact 中文😀\r\n_a_']);
   tree.b.memoizedProps.message.status = 'in_progress';
@@ -978,19 +1019,176 @@ test("public user diagnostics retain bounded counts without source text", () => 
   assert.equal(Object.values(changed).some(value => typeof value === 'string'), false);
   assert.deepEqual(call('x'.repeat(1024 * 1024 + 1), 'x'), { supportedTextShape: false });
 });
+test('current turn diagnostics distinguish missing sources and unequal turn objects without reading output', () => {
+  const { publicTurnState } = require(operatorTestScript('web_browser_page.cjs'));
+  const prompt = 'PRIVATE request must never be exported';
+  const user = {id: 'PRIVATE-user-id', item: {message: prompt}, turn: {status: 'in_progress'}};
+  const assistant = {id: 'PRIVATE-answer-id', item: {completed: true, phase: 'final_answer',
+    latestMessageId: 'PRIVATE-answer-id', sourceMessageIds: ['PRIVATE-answer-id']},
+    turn: {status: 'complete', workCompletedAtMs: 12}};
+  Object.defineProperty(assistant.item, 'content', {get() { throw Error('answer content read'); }});
+  for (const turn of [user.turn, assistant.turn])
+    Object.defineProperty(turn, 'messageIds', {get() { throw Error('turn history read'); }});
+  const row = role => ({getAttribute: () => 'PRIVATE-turn:0:' + role});
+  const rows = [row('user'), row('assistant')];
+  let missing = false, unstable = false;
+  const read = () => plain(vm.runInNewContext(`(${publicTurnState.toString()})(prompt, expected)`, {
+    prompt, expected: user.id,
+    document: {querySelectorAll: selector => selector === '[data-chatgpt-search-unit-key]' ? rows : []},
+    modernPublicItem: role => {
+      if (role === 'user') return missing ? null : user;
+      if (unstable) throw Error('web_public_current_branch_unavailable');
+      return assistant;
+    },
+  }));
+  const state = read();
+  assert.equal(state.modernUserRows, 1); assert.equal(state.modernAssistantRows, 1);
+  assert.equal(state.userIdentityExact, true); assert.equal(state.sourceExact, true);
+  assert.equal(state.sameTurnObject, false); assert.equal(state.sameUnitTurn, true);
+  assert.equal(state.assistantCompleted, true); assert.equal(state.turnCompleted, true);
+  assert.equal(JSON.stringify(state).includes('PRIVATE'), false);
+  user.item.message += ' changed'; assert.equal(read().sourceExact, false);
+  missing = true; assert.equal(read().userSource, 'absent'); assert.equal(read().userIdentityExact, null);
+  unstable = true; assert.equal(read().assistantSource, 'unavailable'); assert.equal(read().turnCompleted, null);
+});
+
+test('turn diagnostics never promote an absent legacy identity to a successful binding', () => {
+  const { publicTurnState } = require(operatorTestScript('web_browser_page.cjs'));
+  let binding = null;
+  const read = () => plain(vm.runInNewContext(`(${publicTurnState.toString()})('PRIVATE', 'PRIVATE-id')`, {
+    document: {querySelectorAll: selector => selector === '[data-message-author-role="user"]' ? [{}] : []},
+    publicUserBindingShape: () => binding,
+  }));
+  assert.equal(read().userSource, 'absent'); assert.equal(read().userIdentityExact, null);
+  binding = 'different'; assert.equal(read().userIdentityExact, false);
+  binding = 'PRIVATE-id'; assert.equal(read().userIdentityExact, true);
+  assert.equal(read().sourceExact, null); assert.equal(read().turnCompleted, null);
+  assert.equal(JSON.stringify(read()).includes('PRIVATE'), false);
+});
+
+test('private cancellation identity requires the entire bound user text in both renderers', () => {
+  const { publicUserBindingShape } = require(operatorTestScript('web_browser_page.cjs'));
+  const prompt = 'private full message\n keep whitespace ';
+  for (const modern of [false, true]) {
+    const row = { getAttribute: () => 'private-user-id', __reactFiber$fixture: {
+      memoizedProps: {message: {id: 'private-user-id', author: {role: 'user'},
+        content: {content_type: 'text', parts: [prompt]}}}, return: null}};
+    const read = (expected, identityOnly, source = prompt, count = 1) => vm.runInNewContext(
+      `(${publicUserBindingShape.toString()})(expected, false, identityOnly)`, {
+        expected, identityOnly,
+        document: {querySelectorAll: () => modern ? [] : Array(count).fill(row),
+          querySelector: () => modern ? {} : null},
+        modernPublicItem: () => count === 1 ? {id: 'private-user-id', item: {message: source}} : null,
+      });
+    assert.equal(read(prompt, true), 'private-user-id');
+    assert.equal(read(prompt.trim(), true), null);
+    assert.equal(read(prompt, true, prompt, 2), null);
+    assert.equal(JSON.stringify(read(prompt, false)).includes('private-user-id'), false);
+    assert.equal(JSON.stringify(read(prompt, false)).includes('private full message'), false);
+    if (modern) {
+      assert.equal(read(prompt, true, ['unsupported']), null);
+      assert.equal(read(prompt, true, 'x'.repeat(1024 * 1024 + 1)), null);
+    } else {
+      row.__reactFiber$fixture.memoizedProps.message.content.parts = [prompt, 'extra'];
+      assert.equal(read(prompt, true), null);
+    }
+  }
+});
+
+function cancellationPageContext(document) {
+  return {document, stopControlSelector, URL, location: {href: 'https://chatgpt.com/?temporary-chat=true'},
+    uniqueComposer: () => ({textContent: ''}), publicInterruptionState: () => ({sessionExpired: false,
+      approvalCards: 0, connectorDialogs: 0, subscriptionUnavailable: false, responseError: false}),
+    publicUserBindingShape: (text, committed, identityOnly) =>
+      text === 'bound request' && committed === true && identityOnly === true ? 'bound-user' : null};
+}
+
+test('cancel recognizes current composer stop controls without clicking a voice button', () => {
+  const { cancelGeneration, stopControlSelector } = require(operatorTestScript('web_browser_page.cjs'));
+  for (const selector of ['button[data-testid="composer-stop-button"]',
+      ...['Stop streaming', 'Stop generating', 'Stop answering', '停止', '停止生成', '停止回复']
+        .map(label => `form button[aria-label="${label}"]`)]) {
+    let clicks = 0;
+    const button = {disabled: false, getClientRects: () => [{}], getAttribute: () => null,
+      closest: () => null, click: () => clicks++};
+    const call = () => vm.runInNewContext(`(${cancelGeneration.toString()})('bound request','bound-user')`,
+      cancellationPageContext({querySelectorAll: query => query.split(',').includes(selector) ? [button] : []}));
+    assert.equal(call(), true, selector);
+    assert.equal(clicks, 1);
+    button.closest = () => ({});
+    assert.equal(call(), false, 'hidden/inert ancestor');
+    assert.equal(clicks, 1);
+  }
+  for (const selector of ['form button[aria-label="Start Voice"]',
+      'form button[aria-label="开启语音聊天"]', 'button[aria-label="停止"]']) {
+    const button = {getClientRects: () => [{}], getAttribute: () => null, closest: () => null,
+      click: () => assert.fail('not a composer stop control')};
+    assert.equal(vm.runInNewContext(`(${cancelGeneration.toString()})('bound request','bound-user')`,
+      cancellationPageContext({querySelectorAll: query => query.split(',').includes(selector) ? [button] : []})), false);
+  }
+});
+
+test('modern stop presence fences final output, fresh chats and idle observations consistently', () => {
+  const page = require(operatorTestScript('web_browser_page.cjs'));
+  const stop = {getClientRects: () => [{}], closest: () => null};
+  const matches = query => query.split(',').includes('form button[aria-label="Stop answering"]');
+  const document = {readyState: 'complete', title: 'ChatGPT',
+    querySelector: query => matches(query) ? stop : null,
+    querySelectorAll: query => matches(query) ? [stop] : []};
+  const context = {document, stopControlSelector, uniqueComposer: () => ({textContent: ''})};
+  const call = fn => vm.runInNewContext(`(${fn.toString()})()`, context);
+  assert.equal(call(page.publicFinal), null);
+  assert.equal(call(page.emptyFreshChat), false);
+  assert.equal(call(page.pluginMaintenanceReady), false);
+  const state = call(page.publicGenerationState);
+  assert.equal(state.stopPresent, true);
+  assert.equal(state.stopVisible, true);
+  // Even with an otherwise valid completed legacy page, navigation must not start.
+  document.querySelectorAll = query => matches(query) ? [stop]
+    : /data-message-author-role="(user|assistant)"/.test(query) ? [{}] : [];
+  assert.throws(() => call(page.startFreshChat), /web_new_chat_idle_page_required/);
+});
+
 test("cancel clicks only one visible enabled stop control", () => {
   const { cancelGeneration } = require(operatorTestScript("web_browser_page.cjs"));
   let clicks = 0;
   const button = (visible = true, disabled = false) => ({ disabled,
-    getClientRects: () => visible ? [{}] : [], getAttribute: () => null, click: () => { clicks++; } });
-  const call = rows => vm.runInNewContext(`(${cancelGeneration.toString()})()`,
-    { document: { querySelectorAll: () => rows } });
+    getClientRects: () => visible ? [{}] : [], getAttribute: () => null, closest: () => null, click: () => { clicks++; } });
+  const call = rows => vm.runInNewContext(`(${cancelGeneration.toString()})('bound request','bound-user')`,
+    cancellationPageContext({querySelectorAll: selector => selector === stopControlSelector() ? rows : []}));
   assert.equal(call([]), false);
   assert.equal(call([button(false), button(true, true)]), false);
   assert.equal(call([button()]), true);
   assert.equal(clicks, 1);
   assert.throws(() => call([button(), button()]), /web_stop_control_ambiguous/);
   assert.equal(clicks, 1);
+});
+
+test('atomic Stop rejects changed identity, routes, drafts and current public interruptions before clicking', () => {
+  const {cancelGeneration} = require(operatorTestScript('web_browser_page.cjs'));
+  for (const failure of ['identity', 'source', 'login_route', 'plugin_route', 'origin', 'challenge',
+      'login_button', 'draft', 'composer', 'sessionExpired', 'approvalCards', 'connectorDialogs',
+      'subscriptionUnavailable', 'responseError']) {
+    let clicks = 0;
+    const stop = {getClientRects: () => [{}], disabled: false, getAttribute: () => null,
+      closest: () => null, click: () => clicks++};
+    const context = cancellationPageContext({title: 'ChatGPT', querySelectorAll: selector =>
+      selector === stopControlSelector() ? [stop] : selector === 'button,a' && failure === 'login_button'
+        ? [{...stop, textContent: 'Log in'}] : []});
+    if (failure === 'identity') context.publicUserBindingShape = () => 'different-user';
+    if (failure === 'source') context.publicUserBindingShape = () => null;
+    if (failure === 'login_route') context.location.href = 'https://chatgpt.com/auth/login';
+    if (failure === 'plugin_route') context.location.href = 'https://chatgpt.com/plugins';
+    if (failure === 'origin') context.location.href = 'https://example.test/';
+    if (failure === 'challenge') context.document.title = 'Just a moment';
+    if (failure === 'draft') context.uniqueComposer = () => ({textContent: 'unsent draft'});
+    if (failure === 'composer') context.uniqueComposer = () => null;
+    if (['sessionExpired', 'approvalCards', 'connectorDialogs', 'subscriptionUnavailable', 'responseError'].includes(failure))
+      context.publicInterruptionState = () => ({[failure]: failure.endsWith('Cards') || failure.endsWith('Dialogs') ? 1 : true});
+    assert.throws(() => vm.runInNewContext(`(${cancelGeneration.toString()})('bound request','bound-user')`, context),
+      /web_cancel_(user_binding_required|page_binding_required|page_interrupted)/, failure);
+    assert.equal(clicks, 0, failure);
+  }
 });
 function authored(parts = ["answer"], extra = {}) {
   return { id: "message-1", author: { role: "assistant" }, recipient: "all", channel: "final",
@@ -1012,7 +1210,7 @@ function project(messages, options = {}) {
   // Match Electron's function-source serialization, with no module closure.
   return vm.runInNewContext(`const projectPublicReferences = (${projectPublicReferences.toString()});
     (${publicFinal.toString()})(prompt, includeCitations)`,
-    { document, prompt, TextEncoder, includeCitations: options.includeCitations === true });
+    { document, prompt, TextEncoder, stopControlSelector, includeCitations: options.includeCitations === true });
 }
 function plain(value) { return value === null ? null : JSON.parse(JSON.stringify(value)); }
 
@@ -1040,7 +1238,7 @@ test('current message units bind exact source, terminal status and one public ou
   const userRow = makeRow('user', userId, user), answerRow = makeRow('assistant', answerId, answer);
   let rows = [userRow, answerRow], stop = false, unstableAssistant = null,
     selectionReady = true;
-  const document = { querySelector: selector => selector === '[data-testid="stop-button"]'
+  const document = { querySelector: selector => selector === stopControlSelector()
     ? stop ? {} : null : selector === '[data-chatgpt-search-unit-key]' ? rows[0] : null,
     querySelectorAll: selector => selector === '[data-chatgpt-search-unit-key]' ? rows
       : selector === '[data-message-author-role="user"]' ? [] : [] };
@@ -1054,7 +1252,7 @@ test('current message units bind exact source, terminal status and one public ou
     const projectPublicReferences = (${page.projectPublicReferences.toString()});
     const modernPublicFinal = (${page.modernPublicFinal.toString()});
     return (${publicFinal.toString()})(request, citations, true);
-  })()`, { document, request, citations, TextEncoder, answerRow, unstableAssistant });
+  })()`, { document, request, citations, TextEncoder, answerRow, unstableAssistant, stopControlSelector });
   assert.deepEqual(plain(run()), { id: answerId, author: { role: 'assistant' },
     recipient: null, channel: 'final', end_turn: true, status: 'finished_successfully',
     metadata: { operator_web_renderer: 'modern_content_references_v1' },
@@ -1097,6 +1295,410 @@ test('current message units bind exact source, terminal status and one public ou
       end_idx: answer.content.length + 1, matched_text: ' ',
       sources: [{ title: 'Another', url: 'https://example.test/other' }] }]);
   assert.equal(JSON.stringify(run(true)).includes('DO_NOT_EXPORT'), false);
+  answer.contentReferences = [{ type: 'sources_footnote', matched_text: ' ',
+    start_idx: answer.content.length, end_idx: answer.content.length, sources: [] }];
+  assert.deepEqual(plain(run(true)).public_references, answer.contentReferences);
+});
+
+function virtualizedTurnFixture() {
+  const page = require(operatorTestScript('web_browser_page.cjs'));
+  const userId = '11111111-1111-4111-8111-111111111111';
+  const answerId = '22222222-2222-4222-8222-222222222222';
+  const otherId = '33333333-3333-4333-8333-333333333333';
+  const request = 'exact private source\n  with boundaries';
+  const conversationId='44444444-4444-4444-8444-444444444444', nonce='a'.repeat(32);
+  const user = {type: 'user-message', messageId: userId, message: request};
+  const answer = {type: 'assistant-message', messageId: answerId,
+    latestMessageId: answerId, sourceMessageIds: [answerId], completed: true,
+    phase: 'final_answer', content: '  complete exact answer\n', contentReferences: []};
+  const turn = {status: 'complete', workCompletedAtMs: 12, messageIds: [otherId, answerId]};
+  const userTurn = {messageIds:[userId]};
+  Object.defineProperty(turn, 'messages', {get() { throw Error('hidden messages must not be read'); }});
+  const makeRow = (role, id, item) => ({
+    nodeType:1, contains:node=>node?.ownerRole===role,
+    getClientRects: () => [{}], closest: () => null,
+    getAttribute: name => name === 'data-chatgpt-search-unit-key' ? 'fallback-turn-0:'
+      + (role === 'user' ? '0:user' : '2:assistant')
+      : name === 'data-chatgpt-search-message-ids' ? id : null,
+    querySelectorAll: name => role === 'user' && name === '[data-user-message-bubble="true"]' ? [{}]
+      : role === 'assistant' && name === '[data-chatgpt-selection-message-id]'
+        ? [{getAttribute: () => id}] : [],
+    __reactFiber$fixture: {memoizedProps: {item},
+      return: {memoizedProps: {entry: {conversationId,turn:role==='user'?userTurn:turn}}, return: null}},
+  });
+  const userRow = makeRow('user', userId, user), answerRow = makeRow('assistant', answerId, answer);
+  let rows = [userRow, answerRow], legacy = [], legacyAssistants = [];
+  const observers=[];
+  const location={href:'https://chatgpt.com/?temporary-chat=true'};
+  class Observer {
+    constructor(callback){this.callback=callback;this.pending=[];this.disconnected=false;observers.push(this);}
+    observe(){} disconnect(){this.disconnected=true;} takeRecords(){return this.pending.splice(0);}
+  }
+  const document = {title: 'ChatGPT', querySelector: name => name === '[data-chatgpt-search-unit-key]' ? rows[0] : null,
+    documentElement:{contains:element=>rows.includes(element)},
+    querySelectorAll: name => name === '[data-chatgpt-search-unit-key]' ? rows
+      : name === '[data-message-author-role],[data-chatgpt-search-unit-key]' ? [...legacy, ...legacyAssistants, ...rows]
+      : name === '[data-message-author-role="user"]' ? legacy
+      : name === '[data-message-author-role="assistant"]' || name === '[data-message-author-role="assistant"][data-message-id]'
+        ? legacyAssistants
+      : name === '[data-message-author-role="user"],[data-message-author-role="assistant"]'
+        ? [...legacy, ...legacyAssistants] : []};
+  const functions = ['modernPublicItem','emptyFreshChat','armPublicFreshRequest','capturePublicRequestBinding','publicUserBindingShape','capturePublicDispatchBinding','modernBoundTurnMatches',
+    'publicBoundUserIdentity', 'projectPublicReferences', 'modernPublicFinal', 'publicFinal', 'publicTurnState', 'startFreshChat',
+    'publicInterruptionState', 'cancelGeneration'];
+  const context=vm.createContext({document,location,URL,args:[],TextEncoder,stopControlSelector,MutationObserver:Observer,
+    uniqueComposer:()=>({textContent:''}),currentPublicFiber:fiber=>fiber});
+  vm.runInContext(functions.map(key=>`const ${key} = (${page[key].toString()});`).join('\n'),context);
+  const invoke=(name,...args)=>{context.args=args;return vm.runInContext(`${name}(...args)`,context);};
+  const bind=()=>{
+    rows=[];assert.equal(invoke('armPublicFreshRequest',nonce),true);
+    rows=[userRow];return plain(invoke('capturePublicRequestBinding',request,userId,nonce));
+  };
+  return {userId,answerId,otherId,conversationId,nonce,request,user,answer,turn,userTurn,userRow,answerRow,invoke,bind,document,observers,
+    setRows: value => {rows = value;}, setLegacy: (value, assistants = []) => {legacy = value; legacyAssistants = assistants;},
+    setLocation:value=>{location.href=value;}};
+}
+
+test('atomic modern Stop revalidates the bound document after an earlier host identity check', () => {
+  for (const change of ['none', 'root', 'conversation', 'mixed', 'ledger']) {
+    const f = virtualizedTurnFixture(), binding = f.bind();
+    f.setRows([f.answerRow]);
+    assert.equal(f.invoke('publicBoundUserIdentity', f.request, f.userId, binding), f.userId);
+    let clicks = 0;
+    const stop = {getClientRects: () => [{}], disabled: false, getAttribute: () => null,
+      closest: () => null, click: () => clicks++};
+    const priorQuery = f.document.querySelectorAll;
+    f.document.querySelectorAll = selector => selector === stopControlSelector() ? [stop] : priorQuery(selector);
+    if (change === 'root') f.document.documentElement = {contains: () => true};
+    if (change === 'conversation') f.answerRow.__reactFiber$fixture.return.memoizedProps.entry.conversationId = f.otherId;
+    if (change === 'mixed') f.setLegacy([{}]);
+    if (change === 'ledger') f.observers[0].pending.push({type: 'characterData', target: {ownerRole: 'user'}});
+    const cancel = () => f.invoke('cancelGeneration', f.request, f.userId, binding);
+    if (change === 'none') assert.equal(cancel(), true);
+    else assert.throws(cancel, /web_cancel_user_binding_required/, change);
+    assert.equal(clicks, change === 'none' ? 1 : 0, change);
+  }
+});
+
+test('bound modern finals never downgrade to legacy rows, including after ledger invalidation', () => {
+  for (const mixed of [false, true]) for (const invalidate of [false, true]) {
+    const f = virtualizedTurnFixture(), binding = f.bind();
+    f.setRows([f.answerRow]);
+    assert.equal(f.invoke('publicFinal', f.request, false, true, binding).id, f.answerId);
+    if (invalidate) {
+      f.observers[0].pending.push({type: 'characterData', target: {ownerRole: 'user'}});
+      assert.equal(f.invoke('publicFinal', f.request, false, true, binding), null);
+    }
+    const unrelated = authored(['unrelated legacy answer'], {id: 'legacy-unrelated'});
+    const user = {textContent: f.request};
+    const answer = {getAttribute: () => unrelated.id, querySelectorAll: () => [],
+      __reactFiber$fixture: {memoizedProps: {message: unrelated}, return: null}};
+    f.setLegacy([user], [answer]);
+    f.setRows(mixed ? [f.answerRow] : []);
+    assert.equal(f.invoke('publicFinal', f.request, false, true, binding), null);
+    assert.equal(f.invoke('publicFinal', f.request, false, true, {...binding, nonce: 'b'.repeat(32)}), null);
+    if (!mixed) {
+      // A request originally dispatched through legacy still uses its existing reader.
+      const legacy = plain(f.invoke('publicFinal', f.request, false, true, null));
+      assert.equal(legacy.id, unrelated.id);
+      assert.deepEqual(legacy.content.parts, unrelated.content.parts);
+    }
+  }
+});
+
+test('bound navigation rechecks renderer and ledger after the previous final was read', () => {
+  for (const change of ['legacy_only', 'mixed', 'invalid_ledger']) {
+    const f = virtualizedTurnFixture(), binding = f.bind();
+    f.setRows([f.answerRow]);
+    let clicks = 0;
+    const button = {textContent: 'New chat', disabled: false, getClientRects: () => [{}],
+      getAttribute: key => key === 'type' ? 'button' : null, closest: () => null,
+      click: () => clicks++};
+    const priorQuery = f.document.querySelectorAll;
+    f.document.querySelectorAll = selector => selector.startsWith('nav[') ? [button] : priorQuery(selector);
+    const previous = f.invoke('publicFinal', f.request, false, true, binding);
+    assert.equal(previous.id, f.answerId);
+    if (change === 'invalid_ledger') {
+      f.observers[0].pending.push({type: 'characterData', target: {ownerRole: 'user'}});
+    } else {
+      f.setLegacy([{}], [{}]);
+      if (change === 'legacy_only') f.setRows([]);
+    }
+    assert.throws(() => f.invoke('startFreshChat', f.request, previous.id, binding),
+      /web_new_chat_idle_page_required_identity/);
+    assert.equal(clicks, 0);
+  }
+  const f = virtualizedTurnFixture(), binding = f.bind();
+  f.setRows([f.answerRow]);
+  let clicks = 0;
+  const priorQuery = f.document.querySelectorAll;
+  f.document.querySelectorAll = selector => selector.startsWith('nav[')
+    ? [{textContent: 'New chat', disabled: false, getClientRects: () => [{}],
+        getAttribute: key => key === 'type' ? 'button' : null, closest: () => null,
+        click: () => clicks++}] : priorQuery(selector);
+  f.invoke('startFreshChat', f.request, f.answerId, binding);
+  assert.equal(clicks, 1); // The unchanged bound modern page remains usable.
+});
+
+test('one page read retains the original dispatch before its user row is unmounted', () => {
+  const f=virtualizedTurnFixture();
+  f.setRows([]); assert.equal(f.invoke('armPublicFreshRequest',f.nonce),true);
+  assert.equal(f.invoke('capturePublicDispatchBinding',f.request,f.nonce),null);
+  f.setRows([f.userRow]);
+  const dispatch=plain(f.invoke('capturePublicDispatchBinding',f.request,f.nonce));
+  assert.equal(dispatch.prompt,f.request); assert.equal(dispatch.userId,f.userId);
+  assert.equal(dispatch.shape.exact,true); assert.equal(dispatch.modern,true);
+  assert.equal(dispatch.requestBinding.nonce,f.nonce);
+  f.setRows([f.answerRow]);
+  assert.equal(f.invoke('publicFinal',dispatch.prompt,false,true,dispatch.requestBinding).id,f.answerId);
+  assert.equal(f.invoke('publicBoundUserIdentity',dispatch.prompt,dispatch.userId,dispatch.requestBinding),f.userId);
+  assert.equal(f.invoke('capturePublicDispatchBinding',f.request,f.nonce),null);
+});
+
+test('atomic app projection requires the selected separator and every original body byte', () => {
+  const head='[$operator](app://asdk_app_'+'a'.repeat(32)+')';
+  const body=' exact body\n\u00a0preserved ';
+  const expected=head+'\u00a0'+body;
+  for(const [source,allowed,accepted] of [[expected,false,true],[head+' '+body,true,true],
+      [head+' '+body,false,false],[head+' '+body.trim(),true,false],
+      [head.replace('operator','other')+' '+body,true,false],[head+'\t'+body,true,false]]) {
+    const f=virtualizedTurnFixture();
+    f.setRows([]); assert.equal(f.invoke('armPublicFreshRequest',f.nonce),true);
+    f.user.message=source; f.setRows([f.userRow]);
+    const dispatch=plain(f.invoke('capturePublicDispatchBinding',expected,f.nonce,allowed));
+    assert.equal(dispatch.shape.exact,accepted);
+    assert.equal(dispatch.requestBinding!==null,accepted);
+    if(accepted) assert.equal(dispatch.prompt,source);
+  }
+});
+
+test('atomic dispatch rejects ambiguous identity and preserves the unbound one-shot path',()=>{
+  const f=virtualizedTurnFixture();
+  f.setRows([f.userRow]);
+  assert.throws(()=>f.invoke('capturePublicDispatchBinding',f.request,f.nonce),/web_user_identity_unavailable/);
+  for(const [prompt,nonce,projection] of [[null,null,false],[f.request,'bad',false],[f.request,null,1]])
+    assert.throws(()=>f.invoke('capturePublicDispatchBinding',prompt,nonce,projection),/web_user_identity_unavailable/);
+  f.setLegacy([{}]);
+  assert.throws(()=>f.invoke('capturePublicDispatchBinding',f.request,null),/web_user_identity_unavailable/);
+  f.setLegacy([]);
+  const dispatch=plain(f.invoke('capturePublicDispatchBinding',f.request,null));
+  assert.equal(dispatch.modern,true); assert.equal(dispatch.requestBinding,null);
+  assert.equal(dispatch.userId,f.userId);
+});
+
+test('an admitted fresh-document final survives separate role turns and user virtualization', () => {
+  const f = virtualizedTurnFixture();
+  assert.equal(f.invoke('capturePublicRequestBinding',f.request,f.userId,f.nonce),null);
+  const binding=f.bind();
+  assert.deepEqual(binding,{kind:'modern_fresh_document_v1',userId:f.userId,prompt:f.request,
+    conversationId:f.conversationId,nonce:f.nonce});
+  f.setRows([f.answerRow]);
+  assert.equal(f.invoke('publicFinal', f.request, false, true), null);
+  const final = plain(f.invoke('publicFinal', f.request, false, true, binding));
+  assert.equal(final.id, f.answerId);
+  assert.deepEqual(final.content.parts, ['  complete exact answer\n']);
+  assert.equal(f.invoke('capturePublicRequestBinding', f.request, f.userId), null);
+  const state = plain(f.invoke('publicTurnState', f.request, f.userId, binding));
+  assert.equal(state.turnIdentityListValid, true);
+  assert.equal(state.turnBoundUserPresent, false);
+  assert.equal(state.turnBoundUserFirst, false);
+  assert.equal(state.turnAssistantLast, true);
+  assert.equal(state.turnInitialPrefixExact, false);
+  assert.equal(JSON.stringify(state).includes(f.userId), false);
+  f.answerRow.__reactFiber$fixture.return.memoizedProps.entry.turn = {...f.turn};
+  assert.deepEqual(plain(f.invoke('publicFinal', f.request, false, true, binding)), final);
+});
+
+test('fresh binding rejects forged documents, conversations, sources and unbounded assistant identities', () => {
+  const f = virtualizedTurnFixture();
+  const binding=f.bind();
+  f.setRows([f.answerRow]);
+  const final = value => f.invoke('publicFinal', f.request, false, true, value);
+  for (const value of [null,{...binding,prompt:'changed'},{...binding,conversationId:f.otherId},
+    {...binding,nonce:'b'.repeat(32)},{...binding,userId:f.otherId},
+    {...binding, unexpected: true}, {...binding, kind: 'unknown'}]) assert.equal(final(value), null);
+  for (const ids of [undefined, [], [f.userId], [f.otherId],
+    [f.userId, f.answerId, f.otherId], [f.userId, f.answerId, f.answerId],
+    [f.userId, {id: f.answerId}], [f.userId, 'unvalidated'], [f.userId, , f.answerId],
+    [f.userId, ...Array.from({length: 127}, (_, index) =>
+      index.toString(16).padStart(8, '0') + '-1111-4111-8111-111111111111'), f.answerId]]) {
+    f.turn.messageIds = ids; assert.equal(final(binding), null);
+  }
+  f.turn.messageIds = [f.otherId, f.answerId];
+  const entry=f.answerRow.__reactFiber$fixture.return.memoizedProps.entry;
+  entry.conversationId=f.otherId;assert.equal(final(binding),null);entry.conversationId=f.conversationId;
+  const root=f.document.documentElement;
+  f.document.documentElement={contains:()=>true};assert.equal(final(binding),null);f.document.documentElement=root;
+  f.setRows([f.userRow, f.answerRow]); f.user.message += ' changed';
+  assert.throws(() => final(binding), /web_user_turn_mismatch/);
+  f.user.message = f.request;
+  f.userRow.getAttribute = name => name === 'data-chatgpt-search-unit-key' ? 'fallback-turn-0:0:user'
+    : name === 'data-chatgpt-search-message-ids' ? f.otherId : null;
+  f.user.messageId = f.otherId;
+  assert.throws(() => final(binding), /web_user_turn_mismatch/);
+});
+
+test('the public conversation key is opaque, bounded and exact within the admitted document',()=>{
+  const f=virtualizedTurnFixture();
+  const entry=f.userRow.__reactFiber$fixture.return.memoizedProps.entry;
+  f.setRows([]);assert.equal(f.invoke('armPublicFreshRequest',f.nonce),true);f.setRows([f.userRow]);
+  for(const key of ['a'.repeat(129), 'key\n', 'key\u0000', null, {id:f.conversationId}]) {
+    entry.conversationId=key;
+    assert.equal(f.invoke('capturePublicRequestBinding',f.request,f.userId,f.nonce),null);
+  }
+  Object.defineProperty(entry,'conversationId',{configurable:true,get(){throw Error('identity accessor must not be read');}});
+  assert.equal(f.invoke('capturePublicRequestBinding',f.request,f.userId,f.nonce),null);
+  Object.defineProperty(entry,'conversationId',{configurable:true,writable:true,value:'temporary-conversation'});
+  const binding=plain(f.invoke('capturePublicRequestBinding',f.request,f.userId,f.nonce));
+  assert.equal(binding.conversationId,'temporary-conversation');
+  const answerEntry=f.answerRow.__reactFiber$fixture.return.memoizedProps.entry;
+  answerEntry.conversationId=binding.conversationId;f.setRows([f.answerRow]);
+  assert.equal(f.invoke('publicFinal',f.request,false,true,binding).id,f.answerId);
+  const state=plain(f.invoke('publicTurnState',f.request,f.userId,binding));
+  assert.equal(state.requestBound,true);assert.equal(state.requestDocumentExact,true);
+  assert.equal(state.conversationIdentityUuid,false);assert.equal(state.conversationIdentityBounded,true);
+  assert.equal(state.conversationIdentityExact,true);
+  assert.equal(JSON.stringify(state).includes(binding.conversationId),false);
+  answerEntry.conversationId='different-conversation';
+  assert.equal(f.invoke('publicFinal',f.request,false,true,binding),null);
+});
+
+test('an explicit empty conversation key requires the monitored exact temporary document',()=>{
+  const f=virtualizedTurnFixture();f.setRows([]);
+  for(const url of ['https://chatgpt.com/','https://chatgpt.com/c/old?temporary-chat=true',
+    'https://chatgpt.com/?temporary-chat=true&other=1','https://other.example/?temporary-chat=true']) {
+    f.setLocation(url);assert.equal(f.invoke('armPublicFreshRequest',f.nonce),false);
+  }
+  f.setLocation('https://chatgpt.com/?temporary-chat=true');
+  f.userRow.__reactFiber$fixture.return.memoizedProps.entry.conversationId='';
+  f.answerRow.__reactFiber$fixture.return.memoizedProps.entry.conversationId='';
+  const binding=f.bind();f.setRows([f.answerRow]);
+  assert.equal(binding.conversationId,'');
+  assert.equal(f.invoke('publicFinal',f.request,false,true,binding).id,f.answerId);
+  const state=plain(f.invoke('publicTurnState',f.request,f.userId,binding));
+  assert.equal(state.conversationIdentityEmpty,true);assert.equal(state.requestTemporaryDocument,true);
+  f.setLocation('https://chatgpt.com/');
+  assert.equal(f.invoke('publicFinal',f.request,false,true,binding),null);
+  assert.equal(f.invoke('publicBoundUserIdentity',f.request,f.userId,binding),null);
+});
+
+test('cancellation retains only the monitored original fresh request before and after virtualization', () => {
+  const f = virtualizedTurnFixture();
+  const binding=f.bind();
+  f.setRows([f.answerRow]); f.answer.completed = false;
+  const read = () => f.invoke('publicBoundUserIdentity', f.request, f.userId, binding);
+  assert.equal(read(), f.userId);
+  assert.equal(f.invoke('publicBoundUserIdentity', 'changed', f.userId, binding), null);
+  assert.equal(f.invoke('publicBoundUserIdentity', f.request, f.otherId, binding), null);
+  f.turn.messageIds = [f.otherId]; assert.equal(read(), null);
+  f.turn.messageIds = [f.otherId, f.answerId];
+  f.setRows([f.userRow, f.answerRow]); assert.equal(read(),f.userId);
+  f.setRows([f.answerRow]); f.setLegacy([{}]); assert.equal(read(), null);
+});
+
+test('pending assistant unit identity can bind cancellation but cannot supply a final message',()=>{
+  const f=virtualizedTurnFixture(),binding=f.bind();f.setRows([f.answerRow]);
+  f.answerRow.querySelectorAll=()=>[];
+  Object.defineProperty(f.answerRow.__reactFiber$fixture.memoizedProps,'item',{
+    get(){throw Error('pending message body must not be read');}});
+  assert.equal(f.invoke('publicFinal',f.request,false,true,binding),null);
+  assert.equal(f.invoke('publicBoundUserIdentity',f.request,f.userId,binding),f.userId);
+  const state=plain(f.invoke('publicTurnState',f.request,f.userId,binding));
+  assert.equal(state.assistantSource,'absent');assert.equal(state.pendingAssistantIdentityAvailable,true);
+  assert.equal(state.pendingAssistantTurnIdentityExact,true);assert.equal(state.pendingAssistantConversationExact,true);
+  f.turn.messageIds=[f.otherId];
+  assert.equal(f.invoke('publicBoundUserIdentity',f.request,f.userId,binding),null);
+  f.turn.messageIds=[f.otherId,f.answerId];
+  f.answerRow.__reactFiber$fixture.return.memoizedProps.entry.conversationId=f.otherId;
+  assert.equal(f.invoke('publicBoundUserIdentity',f.request,f.userId,binding),null);
+});
+
+test('observed new user identities and original text edits poison the binding without a retry',()=>{
+  for(const edit of ['new_user','text_edit']) {
+    const f=virtualizedTurnFixture(),binding=f.bind();
+    f.setRows([f.answerRow]);
+    const observer=f.observers[0];
+    const node={nodeType:1,querySelectorAll:()=>[],getAttribute:key=>key==='data-chatgpt-search-unit-key'
+      ?'fallback-turn-0:0:user':key==='data-chatgpt-search-message-ids'?f.otherId:null};
+    observer.pending.push(edit==='new_user'?{type:'childList',addedNodes:[node]}
+      :{type:'characterData',target:{ownerRole:'user'}});
+    assert.equal(f.invoke('publicFinal',f.request,false,true,binding),null);
+    assert.equal(f.invoke('publicBoundUserIdentity',f.request,f.userId,binding),null);
+    assert.equal(f.invoke('capturePublicRequestBinding',f.request,f.userId,f.nonce),null);
+  }
+});
+
+test('text mutations in a recycled assistant row do not classify the original user as edited',()=>{
+  const f=virtualizedTurnFixture(),binding=f.bind();
+  f.setRows([f.answerRow]);
+  f.userRow.getAttribute=name=>name==='data-chatgpt-search-unit-key'
+    ?'fallback-turn-0:2:assistant':name==='data-chatgpt-search-message-ids'?f.answerId:null;
+  f.observers[0].pending.push({type:'characterData',target:{ownerRole:'user'}});
+  assert.equal(f.invoke('publicFinal',f.request,false,true,binding).id,f.answerId);
+  assert.equal(f.invoke('publicBoundUserIdentity',f.request,f.userId,binding),f.userId);
+  f.setRows([]);
+  assert.equal(f.invoke('armPublicFreshRequest',f.nonce),false);
+});
+
+test('completed worker inspection and new-chat checks preserve their original private dispatch binding', async () => {
+  const host = hiddenHostFixture({mode: 'worker', workerDirectory: require('node:path').resolve(__dirname), parentPid: 1});
+  host.state.origin = 'https://chatgpt.com/?temporary-chat=true';
+  host.invoke(`const privateBinding = {kind:'modern_fresh_document_v1',userId:'exact',prompt:'original',conversationId:'conversation',nonce:'nonce'};
+    completedPage = {prompt:'original',message:{id:'answer'},requestBinding:privateBinding};
+    let boundChecks = 0;
+    inPage = async (fn,...args) => {
+      if (fn === page.publicFinal) {requireValue(args[3] === privateBinding,'web_binding_changed'); boundChecks++; return {id:'answer'};}
+      if (fn === page.startFreshChat) {requireValue(args[2] === privateBinding,'web_binding_changed'); boundChecks++; return;}
+      if (fn === page.emptyFreshChat) return true;
+      return {composer:true,userCount:0,assistantCount:0};
+    };
+    inspectionPage = {page:completedPage,url:surface.webContents.getURL()};`);
+  await host.invoke('checkInspectionPage()');
+  await host.invoke('loadFreshPage()');
+  assert.equal(host.invoke('boundChecks === 3 && completedPage === null && !sent'), true);
+});
+
+test('identity structure exposes only fixed field types and comparisons without getters or raw values', () => {
+  const {publicIdentityStructure} = require(operatorTestScript('web_browser_page.cjs'));
+  const expected = '11111111-1111-4111-8111-111111111111';
+  const answerId = '22222222-2222-4222-8222-222222222222';
+  const turn = {parentMessageId:expected, messageIds:[answerId], userMessage:{id:expected}};
+  Object.defineProperty(turn,'content',{enumerable:true,get(){throw Error('body getter must not run');}});
+  Object.defineProperty(turn,'id',{enumerable:true,get(){throw Error('identity accessor must not run');}});
+  const item = {messageId:answerId,content:'DO_NOT_EXPORT'};
+  const read = () => plain(vm.runInNewContext(`(${publicIdentityStructure.toString()})('assistant',expected,'private source')`,
+    {expected,modernPublicItem:()=>({id:answerId,item,turn,entry:{userMessageId:expected}}),
+      document:{querySelectorAll:()=>[]}}));
+  const shape = read();
+  assert.deepEqual(shape.groups.turn.fields.find(row=>row[0]==='parentMessageId'),['parentMessageId','string',true,false]);
+  assert.deepEqual(shape.groups.turn.fields.find(row=>row[0]==='id'),['id','accessor',false,false]);
+  assert.deepEqual(shape.groups.turnUserMessage.fields,[['id','string',true,false]]);
+  assert.equal(JSON.stringify(shape).includes(expected),false);
+  assert.equal(JSON.stringify(shape).includes(answerId),false);
+  assert.equal(JSON.stringify(shape).includes('DO_NOT_EXPORT'),false);
+});
+
+test('current render collection diagnostics read bounded identity metadata only', () => {
+  const {publicIdentityStructure} = require(operatorTestScript('web_browser_page.cjs'));
+  const expected='11111111-1111-4111-8111-111111111111', answer='22222222-2222-4222-8222-222222222222';
+  const userItem={type:'user-message',messageId:expected};
+  Object.defineProperty(userItem,'message',{get(){throw Error('hidden body must not be read');}});
+  const user={turn:{messageIds:[expected],items:[userItem]}};
+  const entry={turn:{messageIds:[answer],items:[]}}, item={messageId:answer};
+  const props={entries:[user,entry]};
+  Object.defineProperty(props,'allMessages',{get(){throw Error('account history must not be read');}});
+  Object.defineProperty(props,'turns',{get(){throw Error('container accessor must not run');}});
+  const fiber={memoizedProps:props,return:{memoizedProps:{entries:['DO_NOT_EXPORT']}}};
+  const read=()=>plain(vm.runInNewContext(`(${publicIdentityStructure.toString()})('assistant',expected,'private source')`,
+    {expected,modernPublicItem:()=>({id:answer,item,turn:entry.turn,entry,entryFiber:fiber}),
+      currentPublicFiber:f=>f,document:{querySelectorAll:()=>[]}}));
+  const shape=read();
+  assert.equal(shape.renderAncestors.length,1);
+  assert.deepEqual(shape.renderAncestors[0].fields.find(row=>row[0]==='entries'),['entries','array',2,1,1,1,1,true]);
+  assert.deepEqual(shape.renderAncestors[0].fields.find(row=>row[0]==='turns'),['turns','accessor',null,null,null,null,null,null]);
+  assert.equal(JSON.stringify(shape).includes(expected),false);
+  assert.equal(JSON.stringify(shape).includes(answer),false);
+  assert.equal(JSON.stringify(shape).includes('DO_NOT_EXPORT'),false);
 });
 
 test('public app separator classification preserves the exact app link and complete body', () => {
@@ -1490,7 +2092,7 @@ test("the version chooser follows its accessible label rather than the effort te
   const item = (label, text) => ({ textContent: text, getClientRects: () => [{}],
     getAttribute: name => name === "aria-label" ? label : null, closest: () => null, click: () => { clicked++; } });
   const invoke = rows => vm.runInNewContext(`(${clickModelChooser.toString()})()`,
-    { document: { querySelectorAll: () => rows } });
+    { stopControlSelector, document: { querySelectorAll: () => rows } });
   invoke([item("选择模型", "极高"), item("能力", "")]);
   assert.equal(clicked, 1);
   assert.throws(() => invoke([item(null, "选择模型")]), /web_model_chooser_ambiguous/);

@@ -71,15 +71,29 @@ internal static class OperatorDesktopEntry
     {
         string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
             "WindowsPowerShell", "v1.0", "powershell.exe");
-        string code = "$ErrorActionPreference='Stop'; $p=@(Get-AppxPackage -Name OpenAI.Codex); " +
-            "if($p.Count -ne 1){exit 1}; $e=Join-Path $p[0].InstallLocation 'app\\ChatGPT.exe'; " +
-            "if(-not(Test-Path -LiteralPath $e -PathType Leaf)){exit 1}; " +
-            (checkOnly ? "exit 0" : "Start-Process -FilePath $e -WindowStyle Normal; exit 0");
+        string code = BuildNativeActivationCommand(checkOnly);
         string encoded = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(code));
         var start = new ProcessStartInfo(powershell, "-NoProfile -NonInteractive -EncodedCommand " + encoded);
         start.UseShellExecute = false; start.CreateNoWindow = true;
         start.WindowStyle = ProcessWindowStyle.Hidden;
         using (Process child = Process.Start(start)) { child.WaitForExit(); return child.ExitCode; }
+    }
+
+    private static string BuildNativeActivationCommand(bool checkOnly)
+    {
+        // This fallback survives removal of plugin source. Resolve the current
+        // package each time and activate its shell identity, never the raw EXE.
+        return "$ErrorActionPreference='Stop'; $p=@(Get-AppxPackage -Name OpenAI.Codex); " +
+            "if($p.Count -ne 1){exit 1}; $e=Join-Path $p[0].InstallLocation 'app\\ChatGPT.exe'; " +
+            "$m=Join-Path $p[0].InstallLocation 'AppxManifest.xml'; $x=Join-Path $env:SystemRoot 'explorer.exe'; " +
+            "if(-not(Test-Path -LiteralPath $e -PathType Leaf) -or -not(Test-Path -LiteralPath $m -PathType Leaf) -or " +
+            "(Get-Item -LiteralPath $m).Length -gt 1048576 -or -not(Test-Path -LiteralPath $x -PathType Leaf) -or " +
+            "$p[0].PackageFamilyName -cnotmatch '\\AOpenAI\\.Codex_[a-z0-9]+\\z'){exit 1}; " +
+            "[xml]$d=Get-Content -LiteralPath $m -Raw -Encoding utf8; " +
+            "$a=@($d.Package.Applications.Application | Where-Object {$_.Id -ceq 'App'}); " +
+            "if($d.Package.Identity.Name -cne 'OpenAI.Codex' -or $a.Count -ne 1 -or " +
+            "$a[0].Executable -cne 'app/ChatGPT.exe' -or $a[0].EntryPoint -cne 'Windows.FullTrustApplication'){exit 1}; " +
+            (checkOnly ? "exit 0" : "Start-Process -FilePath $x -ArgumentList @('shell:AppsFolder\\'+$p[0].PackageFamilyName+'!App') -WindowStyle Hidden; exit 0");
     }
 
     private static void ShowFailure(string message, string bundle)

@@ -14,10 +14,12 @@ import asyncio
 from copy import deepcopy
 import json
 import unittest
+from unittest.mock import patch
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, web
 from test_web_model_protocol import make, message, FUNCTION
 from operator_core.responses_capabilities import RouterError
+from operator_core.responses_tool_adapter import dumps
 from operator_core.web_model_protocol import _tool_declaration_change_kinds
 from operator_core.web_mcp_transport import (WebMcpTurn, WebMcpEndpoint,
     QuickTunnelAnnouncement, WebResponsesBridge, IndexedWebRequest, INDEX_REPLY_BYTES, INDEX_READ_LIMIT)
@@ -856,8 +858,99 @@ class IndexedWebRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(empty.indexed.reads, 1)
         empty.close()
 
+    async def test_unavailable_read_diagnostics_distinguish_consumed_unknown_and_type(self):
+        for wire in ('mcp_indexed_request_v1', 'mcp_catalog_pages_v2', 'mcp_context_records_v3'):
+            turn = WebMcpTurn(protocol())
+            self.addCleanup(turn.close)
+            turn.prepare_indexed(wire_protocol=wire, begin_result_mode='structured_begin_v1')
+            context_key = turn.indexed.first_key
+            key = turn.key
+            while key:
+                last = turn.begin(key)
+                key = last['next_read_key']
+            catalog_key = last['catalog_read_key']
+            if wire == 'mcp_indexed_request_v1':
+                catalog, _ = self.read_section(turn, catalog_key)
+            else:
+                catalog = turn.begin(catalog_key)['entries']
+            schema_key = catalog[0]['schema_read_key']
+            self.read_section(turn, schema_key)
+            before = turn.indexed.read_observation()
+            for key in (None, {'private': 'not a key'}, 'unknown-private-read-handle',
+                    context_key, catalog_key, schema_key):
+                with self.assertRaisesRegex(RouterError, '^web_mcp_read_key_unavailable$'):
+                    turn.begin(key)
+            observed = turn.observation()
+            self.assertEqual(observed['indexed_reads'], before)
+            self.assertEqual(observed['indexed_read_rejections'], {'counts': {
+                'invalid_type': 2, 'unknown': 1, 'consumed_context': 1,
+                'consumed_catalog': 1, 'consumed_schema': 1}, 'counts_capped': False})
+            for private in (context_key, catalog_key, schema_key, 'unknown-private-read-handle',
+                    'not a key'):
+                self.assertNotIn(private, json.dumps(observed))
+            self.assertEqual(len(turn.indexed.consumed_pages), turn.indexed.reads)
+            self.assertLessEqual(len(turn.indexed.consumed_pages), INDEX_READ_LIMIT)
+            turn.close()
+            self.assertEqual(turn.indexed.consumed_pages, {})
+            self.assertEqual(turn.observation(), observed)
+
+    async def test_read_rejection_counts_are_bounded_and_do_not_consume_valid_catalog(self):
+        turn = WebMcpTurn(protocol())
+        self.addCleanup(turn.close)
+        turn.prepare_indexed()
+        _, last = self.read_section(turn, turn.key)
+        before = turn.indexed.reads
+        for _ in range(INDEX_READ_LIMIT + 2):
+            with self.assertRaisesRegex(RouterError, '^web_mcp_read_key_unavailable$'):
+                turn.begin('unknown')
+        self.assertEqual(turn.indexed.reads, before)
+        self.assertEqual(turn.observation()['indexed_read_rejections'], {
+            'counts': {'unknown': INDEX_READ_LIMIT}, 'counts_capped': True})
+        page = turn.begin(last['catalog_read_key'])
+        self.assertEqual(page['section'], 'catalog')
+        self.assertEqual(turn.indexed.reads, before + 1)
+        self.assertEqual(turn.calls, 0)
+
 
 class WebResponsesBridgeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_citation_failure_retains_bounded_shape_without_sources_or_replay(self):
+        visits = []
+        async def browser(turn):
+            visits.append(turn)
+            turn.begin(turn.key)
+            if len(visits) > 1:
+                return message(['new answer'], public_references=[])
+            return message(['private answer'],
+                metadata={'operator_web_renderer': 'modern_content_references_v1'},
+                public_references=[{'type': 'grouped_webpages',
+                    'matched_text': '\ue200cite\ue202source1\ue201',
+                    'start_idx': 0, 'end_idx': 16, 'items': []}])
+        bridge = WebResponsesBridge(protocol().route, WebMcpEndpoint(), browser,
+            citation_mode='markdown_links_v1')
+        self.addAsyncCleanup(bridge.stop)
+        payload = self.payload()
+        with self.assertRaisesRegex(RouterError, '^web_public_citation_sources_invalid$'):
+            await bridge.exchange(payload)
+        result = bridge.diagnostics()['last_turn']
+        self.assertEqual(result['outcome'], 'failed')
+        self.assertEqual(result['calls_released'], 0)
+        self.assertFalse(result['public_final_returned'])
+        self.assertEqual(result['citation_validation'], {
+            'renderer': 'modern', 'reference_count': 1, 'references': {
+                'grouped_webpages': {'count': 1, 'sources_max': 0, 'source_shapes': {'empty_array': 1}}}})
+        self.assertNotIn('private', json.dumps(result))
+        result['citation_validation']['references']['grouped_webpages']['sources_max'] = 42
+        self.assertEqual(bridge.diagnostics()['last_turn']['citation_validation']
+            ['references']['grouped_webpages']['sources_max'], 0)
+        with self.assertRaisesRegex(RouterError, 'web_bridge_turn_consumed_no_retry'):
+            await bridge.exchange(payload)
+        self.assertEqual(len(visits), 1)
+        fresh = self.payload()
+        fresh['client_metadata']['turn_id'] += '-new'
+        await bridge.exchange(fresh)
+        self.assertEqual(len(visits), 2)
+        self.assertNotIn('citation_validation', bridge.diagnostics()['last_turn'])
+
     def payload(self, turn='turn-1', thread='thread-1'):
         from test_web_model_protocol import SLUG
         return {'model': SLUG, 'input': [{'role': 'user', 'content': 'fixture'}],
@@ -962,7 +1055,7 @@ class WebResponsesBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observed['pending_call'], 'released_without_result')
         self.assertFalse(observed['public_final_returned'])
 
-    async def test_busy_other_task_cannot_take_or_cancel_pending_call(self):
+    async def test_new_task_or_turn_cannot_infer_cancellation_of_a_pending_call(self):
         async def browser(turn):
             turn.begin(turn.key)
             await turn.invoke(turn.key, 1, 'inspect', {'value': 'x'})
@@ -972,10 +1065,15 @@ class WebResponsesBridgeTests(unittest.IsolatedAsyncioTestCase):
             payload = self.payload()
             response, _ = await bridge.exchange(payload)
             active = bridge.turn
-            with self.assertRaisesRegex(RouterError, 'web_bridge_browser_busy'):
-                await bridge.exchange(self.payload(thread='other-thread'))
-            self.assertIs(bridge.turn, active)
-            self.assertFalse(active.closed)
+            # A completed tool-call HTTP response does not report whether the
+            # native user subsequently stopped while its result was pending.
+            # A different new turn is not evidence of cancellation either.
+            for other in [self.payload(thread='other-thread'), self.payload(turn='next-turn')]:
+                with self.assertRaisesRegex(RouterError, 'web_bridge_browser_busy'):
+                    await bridge.exchange(other)
+                self.assertIs(bridge.turn, active)
+                self.assertFalse(active.closed)
+                self.assertFalse(active.client_cancelled)
             call = response['output'][0]
             payload['input'] += [call, {'type':'function_call_output',
                 'call_id':call['call_id'],'output':'actual'}]
@@ -1007,6 +1105,256 @@ class WebResponsesBridgeTests(unittest.IsolatedAsyncioTestCase):
                 await bridge.exchange(self.payload())
         finally:
             await bridge.stop()
+
+    async def test_native_interruption_closes_released_call_before_reusing_browser(self):
+        observed, stopped = [], asyncio.Event()
+        async def observer(identity):
+            observed.append(identity)
+            return True
+        async def browser(turn):
+            turn.begin(turn.key)
+            if len(bridge.admitted) > 1:
+                return message(['new independent answer'])
+            try:
+                await turn.invoke(turn.key, 1, 'inspect', {'value': 'x'})
+            finally:
+                self.assertTrue(turn.closed)
+                self.assertTrue(turn.client_cancelled)
+                stopped.set()
+        bridge = WebResponsesBridge(protocol().route, WebMcpEndpoint(), browser,
+            native_interruption_observer=observer)
+        bridge.native_poll_interval = .01
+        self.addAsyncCleanup(bridge.stop)
+        await bridge.exchange(self.payload())
+        await asyncio.wait_for(stopped.wait(), 1)
+        await asyncio.sleep(.02)
+        self.assertEqual(observed, [('thread-1', 'turn-1')])
+        self.assertIsNone(bridge.turn)
+        self.assertEqual(bridge.diagnostics()['last_turn']['outcome'], 'cancelled')
+        self.assertEqual(bridge.diagnostics()['last_turn']['pending_call'], 'released_without_result')
+        with self.assertRaisesRegex(RouterError, 'web_bridge_turn_consumed_no_retry'):
+            await bridge.exchange(self.payload())
+        result, _ = await bridge.exchange(self.payload(turn='fresh'))
+        self.assertEqual(result['output'][0]['content'][0]['text'], 'new independent answer')
+        self.assertEqual(bridge.diagnostics()['native_interruption'],
+            {'sequence': 2, 'checks': 0, 'state': 'idle'})
+
+    async def test_native_metadata_unknown_does_not_retry_or_cancel_pending_call(self):
+        for value in (None, 'true'):
+            observations = []
+            async def observer(identity):
+                observations.append(identity)
+                return value
+            async def browser(turn):
+                turn.begin(turn.key)
+                await turn.invoke(turn.key, 1, 'inspect', {'value': 'x'})
+            bridge = WebResponsesBridge(protocol().route, WebMcpEndpoint(), browser,
+                native_interruption_observer=observer)
+            bridge.native_poll_interval = .001
+            try:
+                await bridge.exchange(self.payload())
+                await asyncio.wait_for(bridge.native_watch, 1)
+                await asyncio.sleep(.01)
+                self.assertEqual(len(observations), 1)
+                self.assertFalse(bridge.turn.closed)
+                self.assertFalse(bridge.turn.client_cancelled)
+                self.assertEqual(bridge.native_observation['state'], 'unavailable')
+            finally:
+                await bridge.stop()
+
+    async def test_native_observation_cannot_cancel_a_continuation_that_arrived_during_read(self):
+        started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        observed, continued = asyncio.Event(), asyncio.Event()
+        async def observer(_):
+            started.set()
+            await release.wait()
+            observed.set()
+            return True
+        async def browser(turn):
+            turn.begin(turn.key)
+            await turn.invoke(turn.key, 1, 'inspect', {'value': 'x'})
+            continued.set()
+            await finished.wait()
+            return message()
+        bridge = WebResponsesBridge(protocol().route, WebMcpEndpoint(), browser,
+            native_interruption_observer=observer)
+        bridge.native_poll_interval = .001
+        self.addAsyncCleanup(bridge.stop)
+        payload = self.payload()
+        response, _ = await bridge.exchange(payload)
+        await asyncio.wait_for(started.wait(), 1)
+        call = response['output'][0]
+        payload['input'] += [call, {'type': 'function_call_output', 'call_id': call['call_id'], 'output': 'actual'}]
+        continuation = asyncio.create_task(bridge.exchange(payload))
+        await asyncio.wait_for(continued.wait(), 1)
+        release.set()
+        await asyncio.wait_for(observed.wait(), 1)
+        self.assertFalse(bridge.turn.closed)
+        self.assertFalse(bridge.turn.client_cancelled)
+        finished.set()
+        await asyncio.wait_for(continuation, 1)
+
+    async def test_native_observation_refreshes_after_same_turn_moves_to_next_call(self):
+        observing, release, stopped = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        checks = []
+        async def observer(identity):
+            checks.append(identity)
+            if len(checks) == 1:
+                observing.set()
+                await release.wait()
+            return True
+        async def browser(turn):
+            turn.begin(turn.key)
+            try:
+                await turn.invoke(turn.key, 1, 'inspect', {'value': 'first'})
+                await turn.invoke(turn.key, 2, 'inspect', {'value': 'second'})
+                return message()
+            finally:
+                stopped.set()
+        bridge = WebResponsesBridge(protocol().route, WebMcpEndpoint(), browser,
+            native_interruption_observer=observer)
+        bridge.native_poll_interval = .001
+        self.addAsyncCleanup(bridge.stop)
+        payload = self.payload()
+        response, _ = await bridge.exchange(payload)
+        await asyncio.wait_for(observing.wait(), 1)
+        call = response['output'][0]
+        payload['input'] += [call, {'type': 'function_call_output',
+            'call_id': call['call_id'], 'output': 'actual'}]
+        await bridge.exchange(payload)
+        release.set()
+        await asyncio.wait_for(stopped.wait(), 1)
+        self.assertEqual(checks, [('thread-1', 'turn-1')] * 2)
+        self.assertEqual(bridge.last_turn['outcome'], 'cancelled')
+        self.assertEqual(bridge.last_turn['calls_released'], 2)
+        self.assertEqual(bridge.last_turn['results_received'], 1)
+        self.assertEqual(bridge.last_turn['pending_call'], 'released_without_result')
+
+    async def test_service_stop_waits_for_confirmed_native_cancellation_cleanup(self):
+        cleaning, release = asyncio.Event(), asyncio.Event()
+        async def observer(_): return True
+        async def browser(turn):
+            turn.begin(turn.key)
+            try:
+                await turn.invoke(turn.key, 1, 'inspect', {'value': 'x'})
+            finally:
+                cleaning.set()
+                await release.wait()
+        bridge = WebResponsesBridge(protocol().route, WebMcpEndpoint(), browser,
+            native_interruption_observer=observer)
+        bridge.native_poll_interval = .001
+        await bridge.exchange(self.payload())
+        await asyncio.wait_for(cleaning.wait(), 1)
+        stop = asyncio.create_task(bridge.stop())
+        try:
+            await asyncio.sleep(.01)
+            self.assertFalse(stop.done())
+            release.set()
+            await asyncio.wait_for(stop, 1)
+        finally:
+            release.set()
+            await asyncio.gather(stop, return_exceptions=True)
+
+    async def test_disconnect_during_failed_continuation_waits_for_owned_cleanup(self):
+        observing, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        browser_stopped, observer_stopped = asyncio.Event(), asyncio.Event()
+        invocations = []
+        async def observer(_):
+            observing.set()
+            try:
+                await asyncio.Future()
+            finally:
+                cleaning.set()
+                await release.wait()
+                observer_stopped.set()
+        async def browser(turn):
+            turn.begin(turn.key)
+            if len(bridge.admitted) > 1:
+                return message(['fresh answer'])
+            # Like the real browser process, its wait is independent of the
+            # endpoint handler waiting for the native tool's paired result.
+            invocations.append(asyncio.create_task(
+                turn.invoke(turn.key, 1, 'inspect', {'value': 'x'})))
+            try:
+                await asyncio.Future()
+            finally:
+                browser_stopped.set()
+        bridge = WebResponsesBridge(protocol().route, WebMcpEndpoint(), browser,
+            native_interruption_observer=observer)
+        bridge.native_poll_interval = .001
+        self.addAsyncCleanup(bridge.stop)
+        await bridge.exchange(self.payload())
+        await asyncio.wait_for(observing.wait(), 1)
+        invalid = self.payload()
+        invalid['model'] = 'unregistered-model'
+        continuation = asyncio.create_task(bridge.exchange(invalid))
+        try:
+            await asyncio.wait_for(cleaning.wait(), 1)
+            continuation.cancel()
+            await asyncio.sleep(.01)
+            continuation.cancel()  # A second disconnect must not abandon it.
+            await asyncio.sleep(.01)
+            self.assertFalse(continuation.done())
+            self.assertTrue(bridge.exchanging)
+            self.assertFalse(observer_stopped.is_set())
+            with self.assertRaisesRegex(RouterError, 'web_bridge_response_busy'):
+                await bridge.exchange(self.payload(turn='fresh'))
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(continuation, 1)
+            self.assertTrue(observer_stopped.is_set())
+            self.assertTrue(browser_stopped.is_set())
+            self.assertFalse(bridge.exchanging)
+            self.assertEqual(bridge.last_turn['outcome'], 'failed')
+            with self.assertRaisesRegex(RouterError, 'web_bridge_turn_consumed_no_retry'):
+                await bridge.exchange(self.payload())
+            result, _ = await bridge.exchange(self.payload(turn='fresh'))
+            self.assertEqual(result['output'][0]['content'][0]['text'], 'fresh answer')
+        finally:
+            release.set()
+            await asyncio.gather(continuation, *invocations, return_exceptions=True)
+
+    async def test_service_stop_joins_existing_failed_continuation_cleanup(self):
+        observing, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        browser_stopped = asyncio.Event()
+        invocations = []
+        async def observer(_):
+            observing.set()
+            try:
+                await asyncio.Future()
+            finally:
+                cleaning.set()
+                await release.wait()
+        async def browser(turn):
+            turn.begin(turn.key)
+            invocations.append(asyncio.create_task(
+                turn.invoke(turn.key, 1, 'inspect', {'value': 'x'})))
+            try:
+                await asyncio.Future()
+            finally:
+                browser_stopped.set()
+        bridge = WebResponsesBridge(protocol().route, WebMcpEndpoint(), browser,
+            native_interruption_observer=observer)
+        bridge.native_poll_interval = .001
+        await bridge.exchange(self.payload())
+        await asyncio.wait_for(observing.wait(), 1)
+        invalid = self.payload()
+        invalid['model'] = 'unregistered-model'
+        continuation = asyncio.create_task(bridge.exchange(invalid))
+        await asyncio.wait_for(cleaning.wait(), 1)
+        stop = asyncio.create_task(bridge.stop())
+        try:
+            await asyncio.sleep(.01)
+            self.assertFalse(stop.done())
+            release.set()
+            await asyncio.wait_for(stop, 1)
+            self.assertTrue(browser_stopped.is_set())
+            with self.assertRaises(RouterError):
+                await continuation
+            self.assertEqual(bridge.last_turn['outcome'], 'failed')
+        finally:
+            release.set()
+            await asyncio.gather(continuation, stop, *invocations, return_exceptions=True)
 
     async def test_browser_error_is_redacted_and_a_new_turn_can_start(self):
         count = 0
@@ -1349,6 +1697,84 @@ class WebMcpTurnTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(endpoint.methods['tools/call'], 6)
         finally:
             await endpoint.stop()
+
+    async def test_indexed_page_local_write_observation_is_bounded_and_preserves_reply(self):
+        endpoint = WebMcpEndpoint(begin_result_mode='structured_begin_v1',
+            indexed_protocol='mcp_context_records_v3')
+        url = await endpoint.start()
+        secret = 'private_source_content_' + 'x' * 70000
+        turn = endpoint.turn = WebMcpTurn(protocol([{'role': 'user', 'content': secret}]))
+        turn.prepare_indexed(wire_protocol='mcp_context_records_v3',
+            begin_result_mode='structured_begin_v1')
+        try:
+            async with ClientSession() as client:
+                async with client.post(url, json={'jsonrpc': '2.0', 'id': 0,
+                        'method': 'initialize', 'params': {'protocolVersion': '2025-11-25'}}) as reply:
+                    session = reply.headers['Mcp-Session-Id']
+                    await reply.read()
+                async with client.post(url, headers={'Mcp-Session-Id': session},
+                        json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                            'params': {'name': 'operator_begin',
+                                'arguments': {'turn_key': turn.key}}}) as reply:
+                    raw = await reply.read()
+                    self.assertEqual(reply.status, 200)
+                self.assertLessEqual(len(raw), INDEX_REPLY_BYTES)
+                page = json.loads(raw)['result']['structuredContent']
+                self.assertEqual((page['section'], page['index']), ('context', 0))
+                self.assertGreater(page['total'], 1)
+            events = [item for item in endpoint.diagnostics()['events']
+                if item['tool'] == 'operator_begin']
+            self.assertEqual([item['event'] for item in events],
+                ['received', 'reply_prepared', 'local_response_write_completed'])
+            self.assertEqual([(item['section'], item['index'], item['total']) for item in events[1:]],
+                [('context', 0, page['total'])] * 2)
+            self.assertNotIn(turn.key, json.dumps(events))
+            self.assertNotIn(secret, json.dumps(events))
+            self.assertNotIn(session, json.dumps(events))
+        finally:
+            turn.close()
+            await endpoint.stop()
+
+    async def test_indexed_page_write_failure_cancel_and_repeat_never_claim_completion(self):
+        endpoint = WebMcpEndpoint()
+        page = ('context', 0, 2)
+
+        async def write_ok(self, data=b''):
+            return None
+
+        async def write_broken(self, data=b''):
+            raise BrokenPipeError('private_socket_error')
+
+        async def write_cancelled(self, data=b''):
+            raise asyncio.CancelledError
+
+        payload = {'jsonrpc': '2.0', 'id': 'private_rpc_id', 'result': {}}
+        headers = {'X-Page-Fixture': 'same'}
+        observed = endpoint._page_response(payload, headers, page)
+        original = web.json_response(payload, dumps=dumps, headers=headers)
+        self.assertEqual(observed.body, original.body)
+        self.assertEqual(dict(observed.headers), dict(original.headers))
+        self.assertEqual((observed.status, observed.content_type),
+            (original.status, original.content_type))
+        with patch.object(web.Response, 'write_eof', write_ok):
+            await observed.write_eof()
+            await observed.write_eof()
+        with patch.object(web.Response, 'write_eof', write_broken):
+            reply = endpoint._page_response(payload, {}, page)
+            with self.assertRaises(BrokenPipeError):
+                await reply.write_eof()
+        with patch.object(web.Response, 'write_eof', write_cancelled):
+            reply = endpoint._page_response(payload, {}, page)
+            with self.assertRaises(asyncio.CancelledError):
+                await reply.write_eof()
+        events = endpoint.diagnostics()['events']
+        self.assertEqual([item['event'] for item in events],
+            ['local_response_write_completed', 'local_response_write_failed',
+                'local_response_write_failed'])
+        self.assertTrue(all((item['section'], item['index'], item['total']) == page
+            for item in events))
+        for secret in ('private_rpc_id', 'private_socket_error'):
+            self.assertNotIn(secret, json.dumps(events))
 
     async def test_endpoint_diagnostics_are_bounded_and_unknown_labels_are_redacted(self):
         endpoint = WebMcpEndpoint()

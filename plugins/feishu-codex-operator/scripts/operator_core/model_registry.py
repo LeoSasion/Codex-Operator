@@ -33,6 +33,9 @@ class ModelRoute:
     reasoning_efforts: tuple[str, ...]
     responses: ResponsesCapabilities | None = None
     web_binding: WebServiceBinding | None = field(default=None, repr=False)
+    # The Web bridge retains a provisional admission budget even when the
+    # selected browser model's actual context capacity has not been verified.
+    web_context_window_verified: bool = False
 
     def key(self) -> str:
         if self.web_binding is not None:
@@ -55,7 +58,8 @@ class ModelRegistry:
         self.beeper = deepcopy(beeper_catalog["models"][0])
         self.routes: dict[str, ModelRoute] = {}
         self.version = value["version"]
-        fields = set(ModelRoute.__dataclass_fields__) - {"responses", "web_binding"}
+        fields = set(ModelRoute.__dataclass_fields__) - {
+            "responses", "web_binding", "web_context_window_verified"}
         if self.version == 2:
             fields.add("responses")
         for row in value["models"]:
@@ -103,12 +107,23 @@ class ModelRegistry:
         existing = self.routes.get(route.slug)
         if existing is not None and existing.web_binding is None:
             raise RouterError("web_route_catalog_collision")
+        # One published Web catalog belongs to one checked service generation.
+        # Rebinding one row while its siblings still point at an older worker
+        # would make a single picker snapshot send turns to two instances.
+        if any(other.web_binding is not None and other.slug != route.slug
+               and other.web_binding != route.web_binding
+               for other in self.routes.values()):
+            raise RouterError("web_route_binding_mismatch")
         result = copy(self)
         result.routes = {**self.routes, route.slug: route}
         return result
 
     def with_web_routes(self, routes):
         """Publish a complete service catalog atomically; retain old snapshots."""
+        routes = tuple(routes)
+        if len(routes) > 100 or len({route.slug for route in routes
+                                     if isinstance(route, ModelRoute)}) != len(routes):
+            raise RouterError("web_route_duplicate_or_invalid")
         result = copy(self)
         result.routes = {slug: route for slug, route in self.routes.items() if route.web_binding is None}
         for route in routes:
@@ -141,6 +156,14 @@ class ModelRegistry:
                 raise
             raise RouterError("registry_reload_invalid_registry") from exc
         return registry, digest
+
+    def extension_catalog(self) -> dict:
+        """Publish registered custom rows without fetching an account catalog."""
+        template = deepcopy(self.beeper)
+        template["slug"] = "operator_catalog_template"
+        template["visibility"] = "list"
+        merged = self.merge({"models": [template]})
+        return {"models": [row for row in merged["models"] if row["slug"] in self.routes]}
 
     def merge(self, catalog: dict) -> dict:
         if not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list):
@@ -179,5 +202,13 @@ class ModelRegistry:
                            include_plugin_usage_instructions=False,
                            include_apps_usage_instructions=False,
                            multi_agent_version="disabled", node_repl_auto_review_required=True)
+            if route.web_binding is not None and not route.web_context_window_verified:
+                # The route's provisional 16000 is an internal admission budget,
+                # not a measured context capacity for this Web model and effort
+                # set. Let Codex retain its unknown-model defaults until evidence
+                # for this exact selection has been recorded in the Web catalog.
+                for field in ("context_window", "max_context_window",
+                              "effective_context_window_percent"):
+                    row.pop(field, None)
             added.append(row)
         return {**deepcopy(catalog), "models": deepcopy(native) + added}

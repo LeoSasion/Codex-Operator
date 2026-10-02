@@ -2,6 +2,52 @@
 
 ## 2026-09-20 当前参考策略与研究范围
 
+2026-10-02 两种入口实施采用当前官方包的精确本地源码观察和
+[Windows 注册激活接口](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-iapplicationactivationmanager-activateapplication)。
+包内私有环境启动使用微软的
+[Invoke-CommandInDesktopPackage](https://learn.microsoft.com/en-us/powershell/module/appx/invoke-commandindesktoppackage?view=windowsserver2025-ps)，
+保留其调试用途与 token 差异限制，未改签名、包 manifest 或系统安全设置。
+已有窗口置前依据微软的
+[SetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow)
+规则独立实现：保留接收点击的选择窗，核对目标进程出生身份和窗口；系统拒绝后只提供
+对该已准备窗口的再次点击，不做全局前台授权、权限放宽、重复派发或强制抢焦点。
+为解决真实请求的 hosted 搜索声明拒绝，核对
+[Codex rust-v0.159.2 spec_plan.rs](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/src/tools/spec_plan.rs)
+及同版本配置 schema，独立实现显式的官方独立搜索转发：搜索凭据只去固定官方端点，
+自定义推理保持各自凭据。没有移植第三方认证刷新、重试或配置复制。
+本地源码观察、当前 CLI 合成闭环与真实 Desktop 四轮续聊分别记录于
+[模式入口](../../common/docs/mode-entry-window.md)，不继承上游或旧版本的生产验收。
+
+2026-10-02 原生菜单这个必要缺口追加核对
+[Better Codex App Custom Provider Support](https://github.com/Keksuccino/Better-Codex-App-Custom-Provider-Support/tree/4e19e474330dc5266eb814e425410127aa7c1a4e)，
+固定提交 `4e19e474330dc5266eb814e425410127aa7c1a4e`，Unlicense。
+其 `CENTRAL_DIFF` / `PICKER_DIFF` 把模型菜单、准确型号到提供方映射和新任务启动分开，
+保留原登录；只支持 macOS，运行中的同聊切换不支持。采用研究接入思路，独立写候选策略，
+未执行安装器或移植自动结束进程、签名、固定外部模型和错误回退。当前 Windows 包的私有
+JS 候选只通过静态语法和参数边界核验。主窗口、实际路由与安全部署均未验证，详见
+[原生模型菜单候选](../../common/docs/native-menu-provider-candidate.md)。主参考策略保持不变。
+
+2026-10-01 重新核对首要参考的当前提交为
+[`2524773c8b4389c27f6c420c6a27f5a14bacbe4d`](https://github.com/totec448-spec/chat-on-steroids/tree/2524773c8b4389c27f6c420c6a27f5a14bacbe4d)。
+[Desktop bridge 草案](https://github.com/totec448-spec/chat-on-steroids/blob/2524773c8b4389c27f6c420c6a27f5a14bacbe4d/docs/codex-desktop-bridge.md)
+仍为无生产工具的 RFC，没有提供无代理的 Desktop 逐回合 provider 切换。
+此前固定 `750fad9` 的研究和许可继续保留，不能把 main 的更新当作旧证据改变。
+为启动入口隔离的具体缺口，额外研究
+[ademisler/codex-desktop-custom-models](https://github.com/ademisler/codex-desktop-custom-models/tree/10a8954ea2d8fd57d6b8943dc3c035df2e18e1ab)
+的 [architecture.md](https://github.com/ademisler/codex-desktop-custom-models/blob/10a8954ea2d8fd57d6b8943dc3c035df2e18e1ab/docs/architecture.md)（MIT）。
+其 app clone、独立 home 与 Chat Completions 代理未采用，仅借鉴将自定义提供方与原生入口分开的研究方向；未复制代码、安装该产品或引入新界面。
+本项目独立实现的 API/Local 配置投影、精确恢复和当前 CLI 合成往返见
+[直连入口候选](../../common/docs/direct-profile-entry.md)。静态 `CODEX_CLI_PATH` 线索、未继承环境的 Windows 诊断和被拒绝的基础配置 profile 均保留为未采用路径；不存在其 Windows 生产验收。
+
+2026-09-29 为原生模型选择器这个具体缺口，核对了
+[codex-chatgpt-web 的 Windows 验证报告](https://github.com/miuuyy/codex-chatgpt-web/issues/599)：
+报告者在另一台 Windows 机器上使用显式本地 provider **同时**设置全局
+`openai_base_url`，观察到 Web 型号出现在原生选择器且完成任务；该 issue 已关闭为
+not planned，并非本项目的验收。我们独立验证的是单一自定义 provider 的同任务
+模拟路由、原生辅助请求和一次性 413；尚未在本机 Desktop 验收。照搬上游全局
+`openai_base_url` 会重新引入本项目已实测的内置原生 413 重发边界，所以没有采用。
+没有复制上游代码或安装该参考产品。
+
 所有者将 [Chat On Steroids](https://github.com/totec448-spec/chat-on-steroids) 设为首要参考。
 2026-09-24 核对下列四个独立仓库均可访问，但仅在出现具体缺口时查阅：
 [WebCodex](https://github.com/yyjeqhc/webcodex)、
@@ -76,6 +122,21 @@ localmcp 最新发布仍为 v0.3.9；MCPX 候选发布为 v0.9.18，截图身份
 拒绝。不需要新的目录版本协议，也没有复制上游代码、引入依赖或安装参考产品。
 上游功能说明不代替本项目验收。旧版本源码与 G1 成功记录的
 核对结论见[当前计划](native-conversation-plan.md)，不把后来失败改写成从未成功。
+
+## 2026-09-28 停止控件兼容
+
+工具回传间隙的原生中断观察复用本项目 `operator_core/app_server.py`，沿用 Channels
+已经验证的 `thread/read(includeTurns=false)` 与 `thread/turns/list(itemsView=notLoaded)`
+元数据协议。新增 `web_native_interruption.py` 只接受准确轮次的结束中断状态，不读取
+正文或接管原生执行；对应边界测试为 `test_web_native_interruption.py` 和
+`test_web_mcp_transport.py`。这是本项目独立实现，无新增上游代码复制。
+
+为停止后复用缺口核对同一固定提交的
+[`chatgpt-dom.js` 停止控件](https://github.com/totec448-spec/chat-on-steroids/blob/750fad9378a0cf9e37791916b11f7ed9add645dd/extension/chatgpt-dom.js#L39-L41)：
+当前界面还可能使用 `composer-stop-button` 或 Stop streaming/generating/answering。
+本项目独立维护一份停止选择器，供取消、生成状态及空闲检查共用；按名称匹配限于输入表单，
+取消仍须准确请求绑定、唯一可见可用控件和点击后的稳定空闲确认。未复制上游代码、
+引入依赖或采用重试。新版控件已在实际生成中观察到；停止与接续的验收结果以发布审计为准。
 
 ## 历史实现来源与验证
 

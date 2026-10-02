@@ -30,6 +30,14 @@ LOCK_BYTES = b'operator-web-service-lock-v1\n'
 ID = re.compile(r'[a-f0-9]{32}')
 DIGEST = re.compile(r'[a-f0-9]{64}')
 START_OBSERVATION_SECONDS = 5
+DEPENDENCY_CHECK_TIMEOUT_SECONDS = 10
+DEPENDENCY_IMPORT_PROBE = (
+    "import importlib,sys;sys.path.insert(0,sys.argv[1]);"
+    "importlib.import_module('aiohttp');"
+    "importlib.import_module('operator_web_model');"
+    "importlib.import_module('operator_core.web_openai_tunnel');"
+    "importlib.import_module('operator_core.web_responses_provider')"
+)
 ERROR_CODES = frozenset('''web_manager_absolute_path_required web_manager_linked_path_rejected
 web_manager_path_unavailable web_manager_file_bound web_manager_record_invalid
 web_manager_executable_bound web_manager_source_bound web_manager_hidden_settings_required
@@ -49,7 +57,9 @@ web_service_stop_already_requested web_service_command_pending web_manager_launc
 web_service_stop_identity_changed web_manager_status_invalid web_manager_fixed_connection_in_use'''.split())
 ERROR_CODES |= frozenset('''web_manager_detached_launch_failed web_manager_detached_launch_invalid
 web_manager_recovery_not_dead web_manager_recovery_dependencies_live web_manager_recovery_changed
-web_manager_recovery_marker_invalid web_manager_recovery_required web_manager_recovery_unsupported'''.split())
+web_manager_recovery_marker_invalid web_manager_recovery_required web_manager_recovery_unsupported
+web_manager_preinit_recovery_pending'''.split())
+ERROR_CODES |= frozenset({'web_manager_python_dependencies_unavailable', 'web_service_status_invalid'})
 
 
 def checked_path(value, *, exists=True, directory=False):
@@ -75,6 +85,20 @@ def read_json(path):
     value = service.loads(read_bytes(path))
     require(isinstance(value, dict), 'web_manager_record_invalid')
     return value
+
+
+def read_status_bytes(path):
+    raw = read_bytes(path, service.LEGACY_STATUS_SNAPSHOT_BYTES)
+    service.status_snapshot_value(raw, bound_error='web_manager_file_bound')
+    return raw
+
+
+def read_status_json(path):
+    return service.status_snapshot_value(read_status_bytes(path), bound_error='web_manager_file_bound')
+
+
+def recovery_file_bytes(path, state):
+    return read_status_bytes(path) if path == state / 'status.json' else read_bytes(path)
 
 
 def digest(raw):
@@ -115,7 +139,7 @@ def settings_identity(path):
     require(isinstance(value, dict) and set(value) <= {
         'electron', 'profile_directory', 'session_partition', 'proxy_rules', 'timeout_ms',
         'software_rendering', 'citation_mode', 'window_mode', 'browser_lifecycle',
-        'startup_assistance', 'transport', 'mcp'}
+        'startup_assistance', 'transport', 'mcp', 'native_cancellation_mode', 'native_cancellation_home'}
         and value.get('window_mode', 'background') == 'background'
         and value.get('browser_lifecycle', 'session_v1') == 'session_v1'
         and value.get('startup_assistance', False) is False,
@@ -125,6 +149,7 @@ def settings_identity(path):
     mode = value.get('transport', 'text_only')
     require(mode in ('text_only', 'mcp_v1') and (mode == 'mcp_v1') == ('mcp' in value),
         'web_manager_transport_invalid')
+    service.selected_native_cancellation_home(value)
     dependencies = {'electron': {'path': str(checked_path(value['electron'])),
         'sha256': file_digest(value['electron'])}}
     checked_path(value['profile_directory'], directory=True)
@@ -492,7 +517,7 @@ def observe(profile, config, record):
     stopped_snapshot = False
     if 'instance' in record and 'session_sha256' in record and (state / 'status.json').is_file():
         session, _ = session_snapshot(state, record)
-        terminal = read_json(state / 'status.json')
+        terminal = read_status_json(state / 'status.json')
         stopped_snapshot = terminal.get('instance') == session['instance'] and terminal.get('state') == 'stopped'
     # A reused PID proves the old process has gone only together with the exact
     # bound stopped snapshot. Never control that new process or use PID reuse
@@ -501,7 +526,7 @@ def observe(profile, config, record):
     if not alive:
         require('instance' in record and 'session_sha256' in record, 'web_manager_uncertain_launch_no_retry')
         session, _ = session_snapshot(state, record)
-        details = read_json(state / 'status.json')
+        details = read_status_json(state / 'status.json')
         require(details.get('instance') == session['instance'] and details.get('state') == 'stopped',
             'web_manager_uncertain_stop_no_retry')
         return {'status': 'stopped', 'summary': '后台已正常停止，固定连接和登录配置仍保留；可从此入口再次启动。'}, None
@@ -523,7 +548,7 @@ def observe(profile, config, record):
         and type(health.get('active')) is bool and health.get('state') in
         ('ready', 'preparing', 'connection', 'reconnecting', 'assistance', 'draining', 'stopped'),
         'web_manager_health_invalid')
-    details = read_json(state / 'status.json')
+    details = read_status_json(state / 'status.json')
     require(details.get('instance') == session['instance'], 'web_manager_status_identity_changed')
     require(session_snapshot(state, record)[1] == session_hash and owned_process(record, config)
         and session_worker(session, record, config) == worker,
@@ -564,7 +589,7 @@ def resolve_route(profile, expected):
     return resolve_routes(profile, expected)[0]
 
 
-def resolve_routes(profile, expected):
+def resolve_routes(profile, expected, *, require_bound_session=False):
     """Capture one checked service generation. Only the caller retains its key."""
     from dataclasses import replace
     from operator_core.model_registry import WebServiceBinding
@@ -579,6 +604,12 @@ def resolve_routes(profile, expected):
         record = current_record(profile)
         require(record is not None and record.get('session_sha256', expected['session_sha256']) == expected['session_sha256'],
             'web_manager_route_digest_changed')
+        # Publishing a persistent Desktop endpoint requires the live worker's
+        # ownership receipt first. A read-only observation must not fabricate it.
+        if require_bound_session:
+            require(record.get('phase') == 'running' and 'worker' in record
+                and 'instance' in record and record.get('session_sha256') == expected['session_sha256'],
+                'web_manager_session_binding_required')
         result, live = observe(profile, config, record)
         require(live is not None and result['status'] == 'ready' and not result['active'],
             'web_manager_idle_ready_required')
@@ -696,6 +727,27 @@ def spawn_child(argv, profile):
         start_new_session=os.name != 'nt')
 
 
+def check_python_dependencies(runtime, profile):
+    """Import serving dependencies in the saved interpreter before any launch journal.
+
+    The probe imports modules only. Its output is discarded, and any failure is
+    one fixed public code. It cannot establish that a later launch will succeed.
+    """
+    python = checked_path(runtime['python'])
+    source_root = checked_path(runtime['source_root'], directory=True)
+    require(file_digest(python) == runtime['python_sha256'], 'web_manager_runtime_changed')
+    try:
+        result = subprocess.run(
+            [str(python), '-I', '-B', '-c', DEPENDENCY_IMPORT_PROBE, str(source_root)],
+            cwd=str(profile), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, shell=False, env=child_environment(),
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+            timeout=DEPENDENCY_CHECK_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        require(False, 'web_manager_python_dependencies_unavailable')
+    require(result.returncode == 0, 'web_manager_python_dependencies_unavailable')
+
+
 def recovery_dependencies_absent(config):
     """Conservatively reject even an unrelated live use of these exact binaries.
 
@@ -726,7 +778,7 @@ def unbound_stopped_snapshot(profile, config, record):
     require(settings_identity(config['settings']['path']) == config['settings'], 'web_manager_settings_changed')
     state = state_path(profile, record)
     session, session_hash = session_snapshot(state, record)
-    details = read_json(state / 'status.json')
+    details = read_status_json(state / 'status.json')
     require(details.get('instance') == session['instance'] and details.get('state') == 'stopped'
         and type(details.get('requests')) is int and details['requests'] == 0
         and details.get('browser', {}).get('active') is False
@@ -741,7 +793,7 @@ def unbound_stopped_snapshot(profile, config, record):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
         if os.name == 'nt': reservation.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         reservation.bind(('127.0.0.1', int(session['base_url'].split(':')[2][:-3])))
-    files = {str(path): digest(read_bytes(path)) for path in (profile / 'profile.json', profile / 'current.json',
+    files = {str(path): digest(recovery_file_bytes(path, state)) for path in (profile / 'profile.json', profile / 'current.json',
         profile / 'instances' / (record['attempt'] + '.json'), state / 'session.json', state / 'status.json')}
     value = {'version': 1, 'attempt': record['attempt'], 'instance': session['instance'],
         'session_sha256': session_hash, 'files': files, 'marker': None,
@@ -761,11 +813,11 @@ def recovery_snapshot(profile, config, record):
         'web_manager_settings_changed')
     state = state_path(profile, record)
     session, session_hash = session_snapshot(state, record)
-    details = read_json(state / 'status.json')
+    details = read_status_json(state / 'status.json')
     require(details.get('instance') == session['instance'] and details.get('state') != 'stopped',
         'web_manager_recovery_required')
     recovery_dependencies_absent(config)
-    snapshots = {str(path): digest(read_bytes(path)) for path in
+    snapshots = {str(path): digest(recovery_file_bytes(path, state)) for path in
         (profile / 'profile.json', profile / 'current.json',
          profile / 'instances' / (record['attempt'] + '.json'), state / 'session.json', state / 'status.json')}
     settings = service.loads(read_bytes(config['settings']['path']))
@@ -806,8 +858,10 @@ def recover(profile, *, expected_preview=None):
         history = checked_path(profile / 'history', directory=True)
         transaction = history / ('recovery-' + secrets.token_hex(16))
         private_directory(transaction)
+        state = state_path(profile, record)
         for index, (name, expected) in enumerate(value['files'].items()):
-            raw = read_bytes(Path(name)); require(digest(raw) == expected, 'web_manager_recovery_changed')
+            raw = recovery_file_bytes(Path(name), state)
+            require(digest(raw) == expected, 'web_manager_recovery_changed')
             (transaction / (str(index) + '.original')).write_bytes(raw)
         journal = {**value, 'phase': 'prepared', 'outcome': value.get('outcome', 'uncontrolled_exit_retired'),
             'replayed': False, 'launched': False}
@@ -831,10 +885,60 @@ def recover(profile, *, expected_preview=None):
         return {'status': 'recovered', 'summary': '旧实例占用已归档，异常退出记录和全部请求保持；可显式更新配置并启动新后台，尚未启动或重放。'}
 
 
+def require_complete_preinit_recoveries(profile):
+    """Never launch past an interrupted, malformed or linked preinit journal."""
+    history = checked_path(profile / 'history', directory=True)
+    for index, transaction in enumerate(history.glob('preinit-recovery-*')):
+        require(index < 4096, 'web_manager_preinit_recovery_pending')
+        transaction = checked_path(transaction, directory=True)
+        match = re.fullmatch(r'preinit-recovery-([a-f0-9]{32})-[a-f0-9]{32}', transaction.name)
+        require(match is not None, 'web_manager_preinit_recovery_pending')
+        receipt = read_json(transaction / 'receipt.json')
+        pointer = checked_path(transaction / 'current.json')
+        files = receipt.get('files')
+        original = read_json(pointer)
+        receipt_keys = {'version', 'attempt', 'outcome', 'files', 'sources',
+            'python_sha256', 'preview_sha256', 'phase', 'launched', 'replayed',
+            'clean_stop_claimed'}
+        require(set(receipt) == receipt_keys and receipt.get('version') == 1
+            and receipt.get('attempt') == match.group(1)
+            and receipt.get('phase') == 'retired'
+            and receipt.get('outcome') == 'uncertain_launch_preinit_import_failure_retired'
+            and receipt.get('launched') is False and receipt.get('replayed') is False
+            and receipt.get('clean_stop_claimed') is False
+            and isinstance(files, dict) and len(files) == 4
+            and all(isinstance(name, str) and isinstance(value, str)
+                and DIGEST.fullmatch(value) for name, value in files.items())
+            and isinstance(receipt.get('sources'), dict)
+            and len(receipt['sources']) == 2
+            and all(isinstance(value, str) and DIGEST.fullmatch(value)
+                for value in receipt['sources'].values())
+            and isinstance(receipt.get('python_sha256'), str)
+            and DIGEST.fullmatch(receipt['python_sha256'])
+            and isinstance(receipt.get('preview_sha256'), str)
+            and DIGEST.fullmatch(receipt['preview_sha256'])
+            and files.get(str(profile / 'current.json')) == digest(read_bytes(pointer))
+            and original == {'version': 1, 'attempt': match.group(1)},
+            'web_manager_preinit_recovery_pending')
+        preview_value = {key: receipt[key] for key in (
+            'version', 'attempt', 'outcome', 'files', 'sources', 'python_sha256')}
+        require(receipt['preview_sha256'] == digest(json.dumps(
+            preview_value, sort_keys=True).encode('utf-8')),
+            'web_manager_preinit_recovery_pending')
+        for number, expected in enumerate(files.values()):
+            require(digest(read_bytes(transaction / (str(number) + '.original'))) == expected,
+                'web_manager_preinit_recovery_pending')
+        current = profile / 'current.json'
+        if current.exists() or current.is_symlink():
+            require(read_json(current).get('attempt') != match.group(1),
+                'web_manager_preinit_recovery_pending')
+
+
 def start(profile, *, observation_seconds=START_OBSERVATION_SECONDS):
     profile, _ = load_profile(profile, validate_current=False)
     with operation_lock(profile):
         profile, config = load_profile(profile)
+        require_complete_preinit_recoveries(profile)
         record = current_record(profile)
         if record is not None:
             result, live = observe(profile, config, record)
@@ -846,6 +950,7 @@ def start(profile, *, observation_seconds=START_OBSERVATION_SECONDS):
         # All validation is complete before publishing the conservative boundary.
         require(load_profile(profile)[1] == config, 'web_manager_settings_changed')
         require(fixed_connection_available(config), 'web_manager_fixed_connection_in_use')
+        check_python_dependencies(config['runtime'], profile)
         record = {'version': 1, 'attempt': secrets.token_hex(16), 'phase': 'may_have_started',
             'runtime': config['runtime']}
         save_record(profile, record)
@@ -884,7 +989,15 @@ def start(profile, *, observation_seconds=START_OBSERVATION_SECONDS):
 
 def status(profile):
     profile, config = load_profile(profile, validate_current=False)
-    result = observe(profile, config, current_record(profile))[0]
+    record = current_record(profile)
+    result, live = observe(profile, config, record)
+    if live is not None:
+        session, session_hash, _, worker = live
+        # A late-ready child can be observed before explicit start reuse saves
+        # its receipt. Report that distinction without mutating ownership.
+        result = {**result, 'session_bound': record.get('phase') == 'running'
+            and record.get('instance') == session['instance']
+            and record.get('session_sha256') == session_hash and record.get('worker') == worker}
     try:
         load_profile(profile)
     except Exception:
@@ -948,6 +1061,8 @@ def error_result(error):
         summary = '已有保存的入口，请直接查看状态或启动；未覆盖原配置。'
     elif code == 'web_manager_fixed_connection_in_use':
         summary = '固定连接仍有占用记录，本次未启动后台。请先核对原实例；无需重新创建插件、连接或密钥。'
+    elif code == 'web_manager_python_dependencies_unavailable':
+        summary = '保存的 Python 未通过服务依赖导入检查；本次未启动后台，也未写入启动记录。'
     else:
         summary = '当前后台状态尚未核实，请检查现有实例；系统未自动重启、清除连接记录或重做请求。'
     return {'status': 'unavailable', 'code': code, 'summary': summary}

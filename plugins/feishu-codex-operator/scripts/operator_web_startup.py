@@ -24,6 +24,8 @@ PLAN = 'web-startup.json'
 ACTIVATION_ERRORS = frozenset({
     'managed_config_changed', 'existing_provider_requires_explicit_migration',
     'existing_route_catalog_or_profile_requires_explicit_migration',
+    'existing_voice_route_requires_explicit_migration',
+    'existing_voice_ws_route_requires_explicit_migration', 'legacy_router_voice_route_unprotected',
     'existing_router_journal_conflict', 'bom_config_requires_explicit_normalization',
     'official_route_recovery_lock_active', 'recovery_shortcut_required_before_activation',
     'activation_config_changed', 'model_cache_requires_regular_file', 'router_not_ready',
@@ -132,14 +134,15 @@ def entry_active(plan):
     state, home = Path(plan['router_state']), Path(plan['home'])
     # Recovery blocks activation, not observation or cleanup of an owned entry.
     # arm_entry/start still enforce the lock through activation_preflight/activate.
-    expected = config.BEGIN + 'openai_base_url = ' + json.dumps(config.url(state, plan['port'])) + '\n' + config.END
     journal = state / 'codex-entry.json'
     if not journal.exists():
         return False
     value = manager.read_json(journal)
-    require(value == {'config': str((home / 'config.toml').resolve()), 'block': expected},
+    expected = ({'config': str((home / 'config.toml').resolve()), 'block': block.decode()}
+                for block in config.managed_entry_blocks(state, plan['port']))
+    require(value in expected,
         'web_startup_entry_ownership_changed')
-    require(manager.read_bytes(home / 'config.toml', 1024 * 1024).startswith(expected.encode()),
+    require(manager.read_bytes(home / 'config.toml', 1024 * 1024).startswith(value['block'].encode()),
         'web_startup_entry_changed')
     return True
 
@@ -238,6 +241,11 @@ def start(plan_path, *, services_only=False):
         activation = manager.read_json(activation_path) if activation_path.exists() else None
         armed = not active and activation is not None and activation.get('phase') == 'armed'
         require(services_only or active or armed, 'web_startup_entry_not_active')
+        if active:
+            # An old owned prefix can still be stopped or removed, but starting
+            # Desktop through it requires both Voice routes to be verified.
+            config.activation_preflight(Path(plan['router_state']), plan['port'],
+                Path(plan['home']) / 'config.toml')
         if armed:
             require(activation.get('plan_sha256') == manager.file_digest(plan_path)
                 and activation.get('config_sha256') == manager.file_digest(Path(plan['home']) / 'config.toml'),

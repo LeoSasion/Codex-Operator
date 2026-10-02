@@ -22,7 +22,7 @@ sys.path.insert(0, str(_OPERATOR_PLUGIN_ROOT / "scripts"))
 from operator_core.model_registry import ModelRegistry
 from operator_core.responses_capabilities import RouterError, UpstreamProtocolError
 from operator_core.responses_tool_adapter import EXEC_GRAMMAR, NAMED_OUTPUT_PREFIX, dumps
-from operator_core.web_model_protocol import WebModelProtocol, public_web_message
+from operator_core.web_model_protocol import WebModelProtocol, public_web_message, public_citation_shape
 
 
 CAPS = {"protocol": "responses-tools-v1", "function_tools": True,
@@ -69,6 +69,44 @@ def response(protocol, *items, **changes):
 
 
 class WebModelProtocolTests(unittest.TestCase):
+    def test_citation_failure_shape_bounds_and_redacts_untrusted_fields(self):
+        private = 'PRIVATE_URL_OR_TEXT'
+        raw = message([private], id=private, metadata={'operator_web_renderer': private},
+            public_references=[{'type': 'sources_footnote', 'sources':
+                [{'url': private, 'title': private}] * 1000}] * 1000)
+        original = deepcopy(raw)
+        shape = public_citation_shape(raw)
+        self.assertEqual(shape['renderer'], 'unknown')
+        self.assertEqual(shape['reference_count'], 129)
+        self.assertEqual(shape['references'], {'sources_footnote': {
+            'count': 128, 'sources_max': 65, 'source_shapes': {'array': 128}}})
+        self.assertLess(len(json.dumps(shape).encode()), 2048)
+        self.assertNotIn(private, json.dumps(shape))
+        self.assertEqual(raw, original)
+        for value in (None, True, private, {}, {'public_references': private}):
+            with self.subTest(value=value):
+                result = public_citation_shape(value)
+                self.assertIsNone(result['reference_count'])
+                self.assertEqual(result['references'], {})
+                self.assertNotIn(private, json.dumps(result))
+
+    def test_citation_failure_shape_distinguishes_empty_missing_null_and_invalid(self):
+        refs = [{'type': 'sources_footnote', 'sources': []},
+            {'type': 'sources_footnote'}, {'type': 'sources_footnote', 'sources': None},
+            {'type': 'grouped_webpages', 'items': 'PRIVATE'},
+            {'type': 'url', 'item': {'url': 'PRIVATE', 'title': 'PRIVATE'}},
+            {'type': 'PRIVATE'}, {'type': ['PRIVATE']}, None]
+        shape = public_citation_shape(message(public_references=refs))
+        self.assertEqual(shape['renderer'], 'legacy')
+        self.assertEqual(shape['reference_count'], 8)
+        self.assertEqual(shape['references'], {
+            'sources_footnote': {'count': 3, 'sources_max': 0,
+                'source_shapes': {'empty_array': 1, 'missing': 1, 'null': 1}},
+            'grouped_webpages': {'count': 1, 'sources_max': None, 'source_shapes': {'invalid': 1}},
+            'url': {'count': 1, 'sources_max': 1, 'source_shapes': {'item': 1}},
+            'unsupported': {'count': 3, 'sources_max': None, 'source_shapes': {}}})
+        self.assertNotIn('PRIVATE', json.dumps(shape))
+
     def test_description_refresh_candidates_preserve_source_presence_and_execution_contract(self):
         tools = [FUNCTION, {'type': 'namespace', 'name': 'functions', 'tools': [EXEC]}]
         payload = {'input': [{'role': 'user', 'content': 'original'}], 'tools': deepcopy(tools)}
@@ -298,6 +336,45 @@ class WebModelProtocolTests(unittest.TestCase):
         plain['content']['parts'] = ['Unannotated [link](https://example.test)']
         self.assertEqual(public_web_message(plain,
             citation_mode='markdown_links_v1')['content'][0]['text'], plain['content']['parts'][0])
+
+    def test_modern_empty_sources_footer_preserves_plain_answer(self):
+        raw = message(['plain answer\n第二行 😀'],
+            metadata={'operator_web_renderer': 'modern_content_references_v1'},
+            public_references=[{'type': 'sources_footnote', 'matched_text': ' ',
+                'start_idx': 7, 'end_idx': 7, 'sources': []}])
+        original = deepcopy(raw)
+        result = public_web_message(raw, citation_mode='markdown_links_v1')
+        self.assertEqual(result['content'][0]['text'], raw['content']['parts'][0])
+        self.assertEqual(raw, original)
+        for mutate in (
+            lambda v: v['public_references'].append(deepcopy(v['public_references'][0])),
+            lambda v: v['public_references'][0].update(sources=None),
+            lambda v: v['public_references'][0].pop('sources'),
+            lambda v: v['public_references'][0].update(matched_text=''),
+            lambda v: v['public_references'][0].update(end_idx=9),
+            lambda v: v['content'].update(parts=['[unbound](https://example.test)']),
+            lambda v: v['content'].update(parts=[':chatgpt-content-reference{index="0"}']),
+            lambda v: v['public_references'].append({'type': 'grouped_webpages',
+                'matched_text': '\ue200cite\ue202source1\ue201', 'start_idx': 0,
+                'end_idx': 16, 'items': []}),
+            lambda v: v['public_references'].append({'type': 'grouped_webpages',
+                'matched_text': '\ue200cite\ue202source1\ue201', 'start_idx': 0,
+                'end_idx': 16, 'items': [{'title': 'source', 'url': 'https://example.test'}]}),
+        ):
+            altered = deepcopy(raw)
+            mutate(altered)
+            with self.subTest(altered=altered), self.assertRaises(RouterError):
+                public_web_message(altered, citation_mode='markdown_links_v1')
+
+    def test_modern_empty_footer_keeps_bound_inline_sources(self):
+        raw = self.citation_fixture()
+        raw['metadata'] = {'operator_web_renderer': 'modern_content_references_v1'}
+        # Use the fixture's actual source identity; the empty footer removes none.
+        url = raw['public_references'][0]['items'][0]['url']
+        raw['content']['parts'] = [f'[source](<{url}>)']
+        raw['public_references'][1]['sources'] = []
+        result = public_web_message(raw, citation_mode='markdown_links_v1')
+        self.assertEqual(result['content'][0]['text'], raw['content']['parts'][0])
 
     def test_modern_parenthesized_urls_preserve_exact_links_and_source(self):
         prefix = 'https://example.test/'

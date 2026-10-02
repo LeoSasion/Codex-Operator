@@ -9,8 +9,8 @@
     "max": {"index": 4, "labels": ["Pro"]}
   },
   "models": {
-    "gpt-5.6-sol": {"display_name": "Web GPT-5.6 Sol", "generation": "5.6", "picker_labels": ["GPT-5.6 Sol"], "reasoning_efforts": ["high", "none", "medium", "xhigh"]},
-    "gpt-5.6-pro": {"display_name": "Web GPT-5.6 Pro", "generation": "5.6", "picker_labels": ["GPT-5.6 Sol"], "reasoning_efforts": ["max"]},
-    "gpt-6-pro": {"display_name": "Web GPT-6 Pro", "generation": "6", "picker_labels": ["最新", "Latest"], "reasoning_efforts": ["max"]}
+    "gpt-5.6-sol": {"display_name": "Web GPT-5.6 Sol", "generation": "5.6", "picker_labels": ["GPT-5.6 Sol"], "reasoning_efforts": ["high", "none", "medium", "xhigh"], "context_window": {"status": "unverified"}},
+    "gpt-5.6-pro": {"display_name": "Web GPT-5.6 Pro", "generation": "5.6", "picker_labels": ["GPT-5.6 Sol"], "reasoning_efforts": ["max"], "context_window": {"status": "unverified"}},
+    "gpt-6-pro": {"display_name": "Web GPT-6 Pro", "generation": "6", "picker_labels": ["最新", "Latest"], "reasoning_efforts": ["max"], "context_window": {"status": "unverified"}}
   }
 }

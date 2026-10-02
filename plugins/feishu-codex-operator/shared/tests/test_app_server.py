@@ -12,10 +12,12 @@ _prepare_test_imports(_OPERATOR_PLUGIN_ROOT)
 
 
 import io
+import os
 from pathlib import Path
 import queue
 import sys
 import time
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -24,6 +26,16 @@ from operator_core.app_server import AppServerError, AppServerSession
 
 
 class AppServerSessionTests(unittest.TestCase):
+    def test_explicit_home_changes_only_native_child_environment(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'CODEX_HOME': 'unrelated'}), \
+                patch('operator_core.app_server.subprocess.Popen') as popen, \
+                patch('operator_core.app_server.threading.Thread'):
+            AppServerSession(Path('codex.exe'), 2, codex_home=Path(directory).resolve())
+            self.assertEqual(popen.call_args.kwargs['env']['CODEX_HOME'], str(Path(directory).resolve()))
+            self.assertEqual(os.environ['CODEX_HOME'], 'unrelated')
+            AppServerSession(Path('codex.exe'), 2)
+            self.assertIsNone(popen.call_args.kwargs.get('env'))
+
     def session(self) -> AppServerSession:
         session = AppServerSession.__new__(AppServerSession)
         session._error_type = AppServerError

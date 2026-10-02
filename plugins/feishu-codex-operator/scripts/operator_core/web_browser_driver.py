@@ -241,6 +241,85 @@ def safe_generation_progress(value):
     return {k: value[k] for k in counts + flags}
 
 
+def safe_public_turn_state(value):
+    """Fixed public-row observations only; no identities, text or readiness claim."""
+    counts = ('legacyUserRows', 'legacyAssistantRows', 'modernUserRows', 'modernAssistantRows')
+    states = ('userSource', 'assistantSource')
+    flags = ('sourceExact', 'userIdentityExact', 'sameTurnObject', 'sameUnitTurn',
+        'assistantCompleted', 'assistantFinalPhase', 'latestIdentityExact', 'sourceIdentityExact',
+        'turnCompleted', 'workCompleted', 'turnIdentityListValid', 'turnBoundUserPresent',
+        'turnBoundUserFirst', 'turnAssistantLast', 'turnInitialPrefixExact',
+        'requestRecordPresent', 'requestDocumentExact', 'requestRootExact', 'requestArmed',
+        'requestBound', 'requestInvalid', 'requestUserIdentityExact', 'requestSourceExact',
+        'conversationIdentityUuid', 'conversationIdentityBounded', 'conversationIdentityExact',
+        'requestTemporaryDocument', 'conversationIdentityEmpty',
+        'pendingAssistantIdentityAvailable', 'pendingAssistantConversationExact', 'pendingAssistantTurnIdentityExact')
+    fields = counts + states + flags
+    if (not isinstance(value, dict) or set(value) != set(fields)
+            or any(type(value[k]) is not int or not 0 <= value[k] <= 10000 for k in counts)
+            or any(value[k] not in ('available', 'absent', 'unavailable') for k in states)
+            or any(value[k] is not None and type(value[k]) is not bool for k in flags)):
+        return {'valid': False}
+    return {'valid': True, **{k: value[k] for k in fields}}
+
+
+def safe_public_identity_structure(value):
+    """Fixed public-unit field types/comparisons; never copy IDs or contents."""
+    names = {'id', 'messageId', 'parentId', 'parentMessageId', 'parentUserMessageId',
+        'userMessageId', 'initialUserMessageId', 'inputMessageId', 'firstMessageId', 'latestMessageId',
+        'previousMessageId', 'previousTurnId', 'turnId', 'requestId', 'conversationId',
+        'sourceMessageIds', 'messageIds', 'type', 'status', 'userMessage', 'userItem',
+        'parentMessage', 'user', 'item', 'items', 'message', 'parent', 'parentTurnId',
+        'rootMessageId', 'anchorMessageId', 'precedingUserMessageId', 'startMessageId',
+        'endMessageId', 'userId', 'author', 'node', 'messageNode', 'conversationNode',
+        'userMessageNode', 'parentMessageNode', 'source', 'turn', 'entry', 'previousEntry',
+        'precedingEntry', 'previousUserMessage', 'precedingUserMessage', 'previousUserTurn',
+        'precedingUserTurn', 'userTurn', 'userEntry', 'parentEntry', 'turnIndex', 'entryIndex',
+        'index', 'conversationTurnId', 'parentConversationTurnId', 'parent_message_id', 'parent_id'}
+    kinds = {'accessor', 'null', 'array', 'string', 'object', 'number', 'boolean', 'undefined', 'function', 'other'}
+    groups = {'item', 'turn', 'entry', 'entryUserMessage', 'entryUserItem', 'turnUserMessage', 'itemParentMessage',
+        'itemNode', 'turnParent', 'entryParent', 'entryUserMessageNode', 'entryMessageNode'}
+    if (not isinstance(value, dict) or set(value) != {'role', 'groups', 'renderAncestors', 'userBubbles', 'visibleUserBubbles', 'bubbleBound'}
+            or value['role'] not in ('user', 'assistant')
+            or any(type(value[k]) is not int or not 0 <= value[k] <= 10000 for k in ('userBubbles', 'visibleUserBubbles'))
+            or (value['bubbleBound'] is not None and type(value['bubbleBound']) is not bool)
+            or not isinstance(value['groups'], dict) or set(value['groups']) != groups):
+        return {'valid': False}
+    for group in value['groups'].values():
+        if (not isinstance(group, dict) or set(group) != {'present', 'unknownFields', 'fields'}
+                or type(group['present']) is not bool or type(group['unknownFields']) is not int
+                or not 0 <= group['unknownFields'] <= 10000 or not isinstance(group['fields'], list)
+                or len(group['fields']) > len(names)):
+            return {'valid': False}
+        observed = set()
+        for field in group['fields']:
+            if (not isinstance(field, list) or len(field) != 4 or not isinstance(field[0], str)
+                    or field[0] not in names or field[0] in observed or not isinstance(field[1], str)
+                    or field[1] not in kinds or type(field[2]) is not bool or type(field[3]) is not bool):
+                return {'valid': False}
+            observed.add(field[0])
+    arrays = {'entries', 'turns', 'conversationTurns', 'renderEntries', 'turnEntries', 'items', 'rows',
+        'data.entries', 'data.turns', 'data.items', 'data.rows', 'context.entries', 'context.turns'}
+    ancestors = value['renderAncestors']
+    if not isinstance(ancestors, list) or len(ancestors) > 20:
+        return {'valid': False}
+    for depth, ancestor in enumerate(ancestors):
+        if (not isinstance(ancestor, dict) or set(ancestor) != {'depth', 'fields'}
+                or type(ancestor['depth']) is not int or ancestor['depth'] != depth
+                or not isinstance(ancestor['fields'], list) or len(ancestor['fields']) > len(arrays)):
+            return {'valid': False}
+        observed = set()
+        for field in ancestor['fields']:
+            if (not isinstance(field, list) or len(field) != 8 or not isinstance(field[0], str)
+                    or field[0] not in arrays or field[0] in observed or not isinstance(field[1], str)
+                    or field[1] not in {'accessor', 'null', 'array', 'object', 'other'}
+                    or any(v is not None and (type(v) is not int or not 0 <= v <= 128) for v in field[2:7])
+                    or field[7] is not None and type(field[7]) is not bool):
+                return {'valid': False}
+            observed.add(field[0])
+    return {'valid': True, **value}
+
+
 def safe_effort_diagnostic(value):
     """Retain only bounded, public model-control labels; never page or request text."""
     result = {}
@@ -509,7 +588,7 @@ class WebTextBrowserDriver:
                             and not ui_failures and not final_timeouts and not network_errors and public_interruption_code(interruption) is None,
                             'web_browser_final_identity_invalid')
                         finals.append(value['publicMessage'])
-                    if kind in ('dispatch_started', 'model_verified', 'public_user_binding', 'generation_state', 'prompt_ready_gate', 'prompt_mismatch_shape', 'modern_identity_shape', 'fresh_chat_control_structure', 'completed', 'failed', 'exit_requested', 'cancel_requested',
+                    if kind in ('dispatch_started', 'model_verified', 'public_user_binding', 'generation_state', 'public_turn_state', 'public_identity_structure', 'prompt_ready_gate', 'prompt_mismatch_shape', 'modern_identity_shape', 'fresh_chat_control_structure', 'completed', 'failed', 'exit_requested', 'cancel_requested',
                                 'cancel_click_attempted', 'cancel_click_unavailable', 'effort_initial_state', 'effort_step_verified',
                                 'effort_step_unavailable', 'effort_pro_unavailable', 'effort_pro_verified', 'effort_target_verified',
                                 'effort_range_unavailable'):
@@ -519,6 +598,10 @@ class WebTextBrowserDriver:
                                 and value['error'] in self.codes else None}
                         if kind == 'generation_state':
                             event['progress'] = safe_generation_progress(value.get('progress'))
+                        if kind == 'public_turn_state':
+                            event['state'] = safe_public_turn_state(value.get('state'))
+                        if kind == 'public_identity_structure':
+                            event['shape'] = safe_public_identity_structure(value.get('shape'))
                         if kind == 'prompt_ready_gate':
                             event['send_ready'] = value.get('sendReady') if type(value.get('sendReady')) is bool else None
                             event['composer_exact'] = value.get('composerExact') if type(value.get('composerExact')) is bool else None
@@ -710,6 +793,9 @@ class WebMcpBrowserDriver(WebTextBrowserDriver):
         text = ('This is a Codex conversation with an explicit MCP continuation transport. '
             'The transport fields below are labelled JSON data for this one current request. '
             + preview_guidance + 'Call operator_begin once with the root turn_key below. ' + representation +
+            'operator_begin is a required read-only transport step, including when the user asks for no task tools or search. '
+            'It retrieves the complete source request; it does not execute a Codex tool or perform a web search. '
+            'Honor the source request and user instructions when deciding whether to call operator_call or use page search. '
             'Follow each next_read_key by calling operator_begin with that key as turn_key, once per key. '
             + context_guidance +
             'An individual json_fragment need not be valid standalone JSON; continue with its next_read_key. '

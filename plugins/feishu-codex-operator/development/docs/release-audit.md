@@ -7,6 +7,812 @@ counts refer to their individual runs; the current source must be checked with
 the [test instructions](testing.md). A later source-only pass never changes an
 earlier live-task result or proves that installed services were updated.
 
+2026-10-03 status and public-page integrity follow-up:
+
+- Five completed/terminal Web attempts produced a 67,951-byte observation file, then a
+  68,011-byte stopped observation. The ordinary 64 KiB reader rejected both. The exact
+  idle service was checked through its authenticated health endpoint before normal
+  extension/router shutdown and one explicit Web stop; original bytes are retained.
+  New status publication budgets the complete serialized snapshot and omits only the
+  oldest whole browser diagnostic events, with an omission count. Other counters,
+  request records, context and capacity bounds are unchanged. A dedicated legacy reader
+  accepts only the prior writer's exact representation whose complete compact JSON still
+  fits 64 KiB; recovery hashes and copies the original bytes without normalization.
+- A non-null modern request binding now requires modern completion and fresh-chat checks.
+  Mixed or legacy-only page rows cannot downgrade an existing modern binding. A separate
+  local fixture reproduced a cancellation race: a page changing after host verification
+  could receive the old Stop click. Exact source/user/binding verification and the unique
+  Stop click now share one synchronous page operation; post-cancellation idle checks remain.
+  Focused page/surface regression passed 157 Node cases. Full and live results are recorded
+  separately below when available; these fixtures alone do not prove Desktop acceptance.
+- Fresh read-only schema export from CLI 0.159.0-alpha.12.1 confirms supported granular
+  approval and distinct permission-request response shapes; the selected granular policy
+  is recorded separately in the exact native rollout's `turn_context`. No real approval/denial
+  was observed. This Web catalog does not enable native freeform patch; ordinary native
+  file reading/editing/testing is a separate acceptance case, not evidence of patch or approval.
+- Frozen complete regression ran 1,648 Python cases (30 conditional skips) and 157 Node cases,
+  with no failures and unchanged implementation throughout, in 2,277.808 seconds. One earlier
+  focused run retained its document-inventory mismatch; that case passed after the inventory
+  was synchronized. The final diagnostic-only change preserves `web_service_status_invalid`
+  through the manager's exact fixed-code whitelist while still redacting unknown text. Its full
+  manager module passed 44 cases on a separately frozen final tree. Only that manager file and
+  its test differ from the whole-suite tree; both original receipts and the complete file map remain.
+- Before deployment, the native configuration differed from the whole-suite starting digest.
+  Two later snapshots matched each other and still selected the built-in OpenAI configuration;
+  a dated selection also shows a reasoning preference change. The exact earlier bytes were
+  unavailable, so a complete difference and its cause are unconfirmed. Current bytes were retained,
+  with no rollback; a new paired-entry preview protects that current configuration. The original
+  native process remained alive. This observation does not claim the entire config was unchanged.
+- The current saved Web service was explicitly configured, started and bound using the final
+  implementation. A fresh digest-bound paired entry refresh completed without native configuration
+  writes; the owned extension shortcut opened a new isolated Desktop process with the existing chats.
+  A different new file case completed in 70.055 seconds: two actual paired native `exec_command`
+  calls read both fixtures, changed only the faulty fee expression and ran the specified Python with
+  `-B`. Both executions exited zero, all three tests passed, source bytes exactly matched the expected
+  result and test bytes were unchanged. The exact final was visible in the restored extension window;
+  accessibility briefly lagged the screenshot. This is ordinary file read/edit/test acceptance only.
+- A different new Stop case ended as native `turn_aborted` after 84.425 seconds, with no tools
+  or accepted final. Two native UI click attempts were needed: the first coordinate action did not
+  visibly stop it; a fresh accessibility-button action did. Saved browser evidence records one
+  request-bound `cancel_click_attempted` followed by `cancel_idle_verified`. A different new
+  continuation completed in 34.437 seconds with the correct integer and original marker, visible
+  in the same window. The same browser birth survived; this instance had three dispatches, two
+  completions, one cancellation and zero failures. Its retained cancellation snapshot was collected
+  after the continuation, and is labelled accordingly. Native config changed again during this
+  period; configuration invariance is not claimed. No cancelled input was replayed.
+- The unchanged Huihui 32768 load/prediction configuration was checked independently before
+  three different ordinary-composer CSV cases in its existing Desktop chat. The first completed
+  in 19.697 seconds, read all 24 rows once and correctly continued the prior successful result;
+  native last usage reached 30,455 with an effective window of 31,129. The next ordinary input
+  produced one new same-turn native `ContextCompaction` event and a retained `compacted` record
+  with complete replacement-history evidence. No manual compact action or threshold override was
+  used. That case completed in 76.046 seconds with the correct result; its first tool arguments
+  were rejected before execution for an invalid `justification` combination, and a subsequent
+  corrected call performed the sole complete CSV read. The rejection remains separately recorded,
+  not an approval success or transport retry. A different post-compaction case completed in
+  14.162 seconds with one exact paired read and the correct historical integer/marker. All three
+  CSVs remained byte-identical, and the final result was visible in the extension window.
+  The initial private observer only recognized an older terminal-output envelope, yielding a
+  retained false file-read classification for the first case. The observed current `Output:`
+  envelope and exact native command/result evidence were reviewed separately; original evidence
+  is not rewritten. These cases establish this model/configuration's observed natural compaction
+  and continuation, not every model, context or tool. Approval/denial and native freeform patch
+  remain unverified.
+
+2026-10-02 later current-window visual review:
+
+- After a prior retry displayed the Windows lock screen, a different current capture showed the
+  exact recovered extension window. Its saved search answer, both official links and expanded
+  native search execution row were visible. The black/lock-screen capture cause remains unconfirmed;
+  no privacy settings, login, routing or service lifecycle was changed by this review.
+- One different new ordinary-composer continuation completed in 28.853 seconds and returned the
+  correct integer and original marker. The final was visible without re-selecting or reloading the
+  chat. The accessibility snapshot temporarily lagged the visible result; closing the model menu
+  with Escape showed the exact final, empty composer and Send control with no Stop. Native completion
+  duration is not a first-token or exact visual-paint latency measurement.
+- The same source-bound browser remained alive with one launch, five dispatches, four completions,
+  one retained cancellation and no failures in this instance. At that checkpoint, implementation matched
+  the frozen 417 Python / 152 Node run. The nine prior acceptance receipts and their native history
+  byte prefixes remained unchanged, as did native configuration and both existing Desktop process births.
+  This dated visual case does not establish general UI stability, approval, freeform patch,
+  automatic full-capacity compaction, other models or legacy runtime ownership.
+
+2026-10-02 follow-up after the update closed the extension window:
+
+- Current public rendering unmounts the user unit and bubble while showing the assistant. Its user
+  and assistant identity lists are separate role turns; neither user membership nor the user's entire
+  ID prefix binds the assistant. The current ancestor render list also contains only the mounted role.
+  Five different diagnostic cases remain cancelled with closed workers; none was replayed.
+- The fresh-document candidate admits an empty page, binds the original full source and public user
+  identity, and monitors public user/document changes. Its first live case terminated in 13.955 seconds
+  at capture with `web_page_state_timeout`, with one dispatch, no tool and no final. The next candidate
+  treats the renderer's conversation key as an exact bounded opaque key, arms after model selection,
+  and exposes only fixed binding booleans. These changes require new independent live evidence.
+- Before that later key/diagnostic change, frozen complete Web regression passed 417 Python cases and
+  all 145 Node cases in 380.981 seconds, with unchanged source. It does not reclassify the live failure.
+  The next complete run passed 417 Python and 146 Node cases in 374.100 seconds, with unchanged source;
+  its different live case still failed capture in 14.263 seconds. Diagnostics established exact source,
+  user and document/root with a conversation field outside the assumed UUID/simple-key format.
+- The final temporary-document path preserves an exact opaque string up to 128 characters, rejects
+  control characters/accessors/nontext fields, and permits an explicit empty field only on the checked
+  temporary route. It retains the original user UUID/source, one-request nonce, document/root and
+  mutation fences; the field alone never supplies identity or authentication. Its complete frozen run
+  passed 417 Python and 147 Node cases in 369.753 seconds, with unchanged implementation throughout.
+  New ordinary Desktop text returned the correct integer in 11.749 seconds; a different same-chat
+  continuation returned the correct new integer and original marker in 15.924 seconds. One browser
+  worker remained alive, with two dispatches, two completions and no failed/cancelled turns in that instance.
+- A new file case completed in 33.624 seconds with one exact native `exec_command`/result pair,
+  a zero exit status, the expected fixture contents and correct arithmetic/history/fixture markers.
+  The fixture stayed byte-identical. A different native Stop case was interrupted after 136.328 seconds,
+  but the thinking unit had no final selection marker; page binding rejected and its worker closed.
+  That cancelled request remains terminal. The next repair separates public assistant-unit identity
+  from readable final-message content for cancellation only; it cannot return a pending answer.
+  Its affected suites passed 48 Python and 148 Node cases. Its complete frozen run then passed
+  417 Python and 148 Node cases in 386.432 seconds. A different fast live continuation left the
+  document armed but unbound: the user vanished between source reads and a later controls snapshot.
+  It was cancelled from the native window after 446.866 seconds, without a final or worker retention.
+- Atomic dispatch capture now compares the complete source, checks the selected app projection,
+  obtains the user identity and binds the document in one synchronous page evaluation. It rejects a
+  managed modern dispatch without that binding before waiting for a final. Affected checks passed
+  87 Python and all 152 Node cases. A different native continuation completed in 19.412 seconds with
+  the correct integer and original marker while its user row was absent; the current binding stayed
+  exact and its worker remained alive. Complete frozen Web regression passed 417 Python and 152 Node
+  cases in 369.416 seconds, with unchanged source. A different thinking-stage native Stop interrupted
+  its exact turn in 66.827 seconds; the Web side clicked Stop once and confirmed stable idle without
+  closing the worker. A different new continuation then completed in 22.962 seconds with the correct
+  integer and original marker. The same browser process birth predates all three cases; its saved
+  lifecycle records show one launch and no replacement. Cancelled inputs remain terminal.
+- A different new native search completed in 52.263 seconds. Its one actual search call contains the
+  current request's two `pathlib` methods and official-domain restriction; the identity-paired result
+  includes the supporting Python documentation. The final answer and two official links match those
+  results. Re-selecting the current chat as a read-only view showed the answer and links in native
+  accessibility state, with an empty input and no Stop. Screenshot capture was black for that running
+  window; immediate visual painting is not attested by the persisted result or this accessibility review.
+- A failed paired refresh retained a may-have-written pending transaction and all originals, while
+  every current installed byte matched the validated old baseline. Explicit digest-bound rollback
+  review preserved the failed stage and pending transaction and wrote only cross-bound review receipts.
+  The old transaction was never reapplied. Different new paired refreshes completed normally, with
+  the same home, old receipt chain and unresolved legacy runtime ownership. No original history,
+  native configuration or native shortcut bytes were rewritten.
+- The complete frozen maintenance run passed 54 cases in 641.709 seconds. It covers original-file
+  retention, changed/missing rollback material, later edits, live-process rejection, actual PowerShell
+  receipt reading and unchanged locked files. Identical installed files keep their entity while still
+  receiving complete transaction backups. Running-native process identity remains a separate check.
+
+2026-10-02 backend acceptance and official-update recovery:
+
+- On Desktop 26.928.3736.0 / CLI 0.159.2, Huihui passed fresh text and same-chat continuation,
+  three paired terminal calls and five file tests. A different manual-compaction case retained complete
+  replacement history, then read only a new fixture and correctly continued its prior number/marker.
+  One native argument rejection before the corrected execution remains in that case. A separate
+  intervening Local HTTP 500 remains failed and unattributed; approval and freeform patch are unverified.
+- Web GPT-5.6 Sol/high returned the correct 43-line final answer in 12.140 seconds. Its later
+  continuation was cancelled by an actual native Stop click. The bridge recorded cancellation,
+  but could not bind its page Stop and closed the worker; stable retained-browser reuse did not pass.
+  The earlier 598.579-second browser-final timeout remains failed with no business calls or final.
+  New inputs and explicit closed-browser recovery never replayed those originals. GPT-6 Pro is excluded
+  following the owner's quota report. Search, full-context understanding and other model entries remain
+  separate live gates, not inferred from HTTP 200 or a context-read count.
+- The owner's official update installed package 26.930.2377.0. The actual native and recovered
+  extension App Servers use CLI 0.159.0-alpha.12.1. The old extension has a genuine normal exit;
+  the vanished router has a separate digest-bound absence review, with no fabricated clean-stop record.
+  The explicit paired package update retained original entry bytes, historical receipts, native
+  shortcuts and the same chat home. The actual new extension window restored its chat list and selected
+  Web model while the owner's running native window and configuration stayed unchanged by this work.
+- On the updated package, the same Huihui weight and complete load/prediction settings were restored;
+  context remains 32768 and parallel remains four. The `lms ps` observation woke the service and is
+  recorded as a side effect. One pre-restoration transport failure and one post-restoration reasoning-only
+  capacity failure remain failed. A new actual manual compaction completed in 25.557 seconds, then a
+  different new file case completed in 32.006 seconds with one successful native read and the correct
+  continuation of the last successful number/marker. Failed-turn additions were not incorporated.
+- Updated-package Web search completed two exact paired native tool calls but returned no final answer;
+  the 598.759-second browser-final timeout remains failed. A different Sol/medium turn was cancelled by
+  one actual native Stop click. Initial public-text binding was exact, but Stop revalidation returned
+  `web_cancel_user_binding_required`; its worker closed and stable retained-browser reuse did not pass.
+  The page's precise identity failure cause is not established, and no check was relaxed. Explicit
+  empty-browser recovery and current-page review reached ready/idle after the owner completed verification.
+  No cancelled or failed input was replayed. Readiness never reclassifies the original cases.
+- The package/recovery checks passed 17 Python maintenance cases, 21 existing entry cases (one symlink
+  skip), and six real PowerShell pair cases in disposable folders. Package changes after preview,
+  unlabelled rebinding, altered native settings, live old processes and modified retained records reject.
+  Nine separately enabled current-CLI fixtures passed in 5.723 seconds, including paired historical
+  functions with an empty current tool catalog, standalone search and manual/automatic compaction.
+- Before this update repair, one complete frozen-source run passed 1,624 Python cases (30 skips) and
+  all 134 Node cases, with unchanged source throughout. The new package/absence implementation passed
+  its separate complete frozen-source run: 1,632 Python cases (30 skips), all 134 Node cases, zero failures,
+  unchanged implementation throughout 2,072.182 seconds. The earlier result retains its original binding.
+  Native process birth, both actual windows and unchanged native configuration were separately rechecked.
+  Approval, freeform patch, automatic full-capacity Desktop compaction and all models/tools remain unverified.
+  Packaging is local preview only, with no external publication or claim that every live gate passed.
+
+2026-10-02 isolated native/extension entry implementation:
+
+- Current Windows package 26.928.3736.0 and CLI 0.159.2 have separate native and extension homes,
+  userData and windows. The original native process remained running; its configuration stayed
+  byte-identical. Exact local onboarding initialization reached the ordinary empty chat UI without
+  role selection, consent, login copying or permission changes. Unknown builds retain official onboarding.
+- Six custom entries appeared in the actual conversation menu. Four new turns in one extension
+  chat passed: GLM text, DeepSeek history continuation, a real standalone `web.run` with paired official
+  documentation results, and return to GLM after that tool history. Native turn metadata confirms the
+  actual model IDs. GLM used low; DeepSeek metadata used none despite a medium-looking UI label.
+- The earlier hosted-tool rejection is retained. Local current-CLI fixtures reproduce that declaration
+  and verify standalone search plus credential isolation. Official search credentials stay restricted
+  to the fixed official endpoint and are never copied to the extension or sent to model providers.
+- A separate service `http_connect` transport failure remains unattributed by the bounded diagnostic
+  counts. Do not label it a title failure, replay it, or erase it because the four selected turns passed.
+  Local model/Web backend operation, all tools, long contexts and universal Windows/package-version
+  support are not established. The package helper's documented debugging/token limitations remain.
+- The reviewed paired shortcut is installed. Actual extension-link launches passed cold extension
+  startup, the native button, and same-process extension foreground reuse. Both the picker and outer
+  launcher exited while the service remained alive. Actual native-shortcut double-click returned to
+  the unchanged original native process. A background shell launch that did not foreground native is
+  retained separately; it is not treated as the user-click case.
+- A prior foreground denial and an unwritten entry-lock denial remain failed. Narrow stopped reviews
+  retained their exact originals; bound pair refresh updated both the isolated entry and legacy
+  ownership chain without changing native link bytes, configuration, login or chat history. No failed
+  model request was replayed. Disposable pair refresh also passed restoration of the legacy pair.
+- The earlier full run finished with 1,588 Python cases: four failures, one error and 29 skips;
+  all 134 Node cases passed. The five Python failures were stale fixtures (four still expected Explorer
+  activation, one omitted explicit router diagnostic fields). After correcting those fixtures, the
+  final six-module run completed 50 cases in 107.456 seconds, with 49 passes and one environment-dependent
+  symlink skip. This includes actual Windows pair refresh and a background-child lifetime test. It is
+  a targeted final regression, not a claimed fresh full-suite pass. Source packaging checks remain a
+  separate gate.
+
+2026-09-29 follow-up to the Web-service incident and unified-picker candidate:
+
+- A one-shot, pre-initialization recovery retained the failed Web launch record
+  after verifying its process had exited, its state/session had never been
+  created, and its dependencies were absent. The saved service was configured
+  with the project interpreter, explicitly started, then observed ready and idle.
+  The independent Desktop Web provider was rebound to that generation, and the
+  running API/Local router reported the matching bound Web generation. No model
+  request was sent by this maintenance. See the
+  [recovery contract](../../models/web/docs/web-preinit-recovery.md).
+- After that maintenance, one new synthetic short-text request to the bound
+  `api/chatgpt-web/gpt-5.6-sol` route completed over local HTTP in about nine
+  seconds and returned the exact requested marker. The router then reported
+  ready, idle and Web-bound. This verifies one live basic text path through the
+  current service; it does not verify Desktop menu selection or task switching.
+- The reviewed [unified cold-launch consumer](../../models/common/docs/unified-cold-launch.md)
+  now calls the Windows config replacement witness in disposable tests. The
+  real home remains on the official native route with its recovery marker; no
+  real cold launch, main-window picker selection or same-task mixed-provider
+  turn has been accepted. The explicit unified retirement path has since
+  passed disposable recovery tests for prepared, armed and witnessed plans;
+  an uncertain attempt still blocks uninstall. No real retirement or Desktop
+  acceptance is inferred from those tests.
+- The owner approved a one-time adoption of the previously edited Desktop
+  `Codex拓展入口` shortcut. Its current bytes matched the retained September 19
+  review copy; the adoption saved a private backup and receipt without changing
+  either shortcut. The entry-only config upgrade then selected the reviewed
+  unified startup workflow. Read-only checks confirmed exact shortcut ownership
+  and that the running Desktop would open its existing window. A new real
+  unified activation plan is `prepared_not_armed`; the native-route-only marker
+  and official direct configuration remain intact. Desktop subsequently wrote
+  new bytes to its model cache, so the original prepared plan is stale and
+  cannot be released or armed. A new explicit prepared-only supersede path now
+  retains that plan and its exact files in a witnessed archive before a fresh
+  preparation; incomplete archive attempts block reuse. Its ten disposable
+  tests pass, but no real supersede has run. The recovery/retirement/entry
+  integration passed disposable tests and the 226-file release audit; no live
+  cold launch, picker click, same-task switch or voice call has passed yet.
+- The first live Desktop-exit handoff timed out with a retained review result.
+  The second started but disappeared without a result or stage event when the
+  Desktop was closed; the owner had to reopen it manually, and the first manual
+  login failed before a later launch succeeded. The native-route-only marker
+  remained, but Desktop rewrote its Computer Use pipe-location value; the old
+  plan is still prepared and its whole-config digest is now stale. The missing
+  result does not prove exactly why the runner exited, and the login failure has
+  no demonstrated relation to routing. The launcher now requests a detached
+  Windows process group, witnesses startup, refuses duplicate or uncertain
+  launches and writes a bounded waiting heartbeat. Prepared-plan supersession
+  accepts only that exact scoped value-line change, retaining the old copy and
+  binding the refreshed config through preview and post-move checks. Other
+  changes remain blocked. Independent process survival was probed without
+  closing the live app; the repair has not yet run a real cold launch.
+  The old plan's exact router process is also absent and port 4317 is free.
+  Read-only preparation reports `unified_router_service_unverified`; the
+  handoff preflight now refuses this state without creating another run.
+  Router `start` now uses the same detached Windows process boundary. An
+  isolated empty router survived its launching command, reported the same PID,
+  then accepted authenticated stop and released its port. The real router was
+  not restarted, and the prepared plan remains blocked pending a separately
+  reviewed recovery of its stale service binding.
+  A successful real cold launch, picker click, same-task switch and voice call
+  remain unverified.
+
+2026-09-29 native-picker implementation candidate, still inactive:
+
+- The mixed registry now publishes one checked Web service generation alongside
+  untouched native and registered API/Local rows. It rejects duplicate or
+  mixed-generation Web rows. Its provisional per-route 16k admission budget is
+  not advertised as any Web model's verified context window. Current CLI
+  `model/list` accepted native, API and three Web rows in an isolated home.
+- The router accepts an exact token-bound `/backend-api/codex` alias. Loopback
+  tests preserved native Responses, search, image-generation/edit payloads
+  and native WebSocket traffic through it, rejecting other endpoints. A
+  current-CLI synthetic task listed native-shaped and Web model rows in one catalog,
+  switched its next input to the Web slug in the same task, and reached the
+  corresponding local fixture. That fixture did not run ChatGPT Web.
+- With a synthetic API key, a separate custom `OpenAI`-named provider used the
+  alias for the native search tool, fetched the model catalog through
+  `model_catalog_url`, and sent exactly one upstream 413 request with both
+  retry settings at zero. The built-in `openai` provider sent six HTTP POSTs
+  on a comparable isolated 413. A synthetic ChatGPT login failed in workspace
+  discovery with 401 before reaching the local router. A separate fresh CLI
+  App Server using the current signed-in home and process-local provider
+  overrides completed only `initialize` and `model/list`: the loopback catalog
+  saw Authorization present and the synthetic row appeared. It sent no model
+  turn. This also unexpectedly replaced the real model cache with the probe
+  catalog; a later read found nine ordinary models and no probe row, but no
+  original digest was saved to prove byte identity. No manual cache restore was
+  attempted. Desktop authentication and picker behavior remain untested.
+- New managed global-entry preparation pins both WebRTC call creation and
+  realtime WebSocket voice to the official address, preserving an existing
+  identical user setting and rejecting a conflicting setting before writes.
+  Existing three/four-line entry journals remain removable, but cannot be
+  reaccepted as fully voice-protected when either pin is missing. Cross-review
+  caught and fixed the emergency-recovery case of a new active block followed
+  by the one permitted inert commented legacy block; the original comments
+  remain byte-for-byte after recovery. No real voice request or global
+  activation was performed; both Codex override fields are experimental.
+- The standalone recovery source now recognizes the exact unified candidate
+  prefix and provider table, removing only those owned bytes while retaining
+  an inert legacy comment and later independent tables. Its 15 disposable
+  Windows PowerShell tests passed. The owned installed recovery shortcut and
+  script copy were updated through the retained-original installer; read-only
+  inspection confirmed the current Desktop location, target, working directory,
+  empty arguments and source match. This changed no route configuration. The
+  real native-only marker remains in place.
+- A disposable-home unified provider candidate now has a journaled,
+  reversible configuration transaction. Its generated config was parsed by
+  the current CLI and listed both synthetic native and Web rows through a
+  local catalog with no model turn. It cannot apply to the real Codex home;
+  startup and uninstall do not yet own it. The updated recovery shortcut can
+  remove only its exact block and is not activation ownership.
+  Existing native tasks remain bound to their prior provider. Focused review
+  found protected-home, cache and concurrent-journal races; all were fixed,
+  and the candidate's 18 focused cases passed. See the
+  [candidate contract](../../models/common/docs/unified-picker-candidate.md).
+- Read-only unified-entry inventory checked the real home without starting a
+  model or changing configuration. After the recovery shortcut update, the
+  retained native-only marker and old Web activation record blocked the
+  candidate. The old record was version 1/activated with no active entry journal;
+  the old Desktop entry was native and its router receipt said stopped. Current
+  Web-startup status instead returned `web_startup_runtime_changed`, so those
+  observations alone did not authorize deleting the old record. A forged
+  recovery receipt plus an arbitrary same-named file was found and fixed in
+  the preview: Windows now verifies the current Desktop shortcut target,
+  working directory and empty arguments. Its ten focused tests passed.
+- An independent one-shot retirement compared the old plan and original config
+  hashes, installed native entry, old process birth identities, exclusive old
+  router port and complete file snapshot. Its ten disposable tests passed;
+  the terminal status also rejects later changes to every journaled historical
+  workflow, registry, token and profile file.
+  A fresh real preview returned `ready_to_retire`; the exact three digests were
+  supplied to `retire`, which preserved the original activation bytes in a
+  private backup, archived the active record and wrote a terminal receipt.
+  Read-only follow-up reported `retired`, the real config digest was unchanged,
+  and unified-entry inventory now reports only the native-route-only lock.
+  No service was restarted, no route was enabled and no model request was sent.
+- At this checkpoint, the separate Windows config replacement primitive was
+  still unconnected to activation. Its eight temporary-directory tests passed,
+  including 20 deterministic rename races and a process exit after the native
+  replace.
+  It retains both the reviewed original and the file replaced at the native
+  boundary, checks their bytes and file identities, and reports uncertainty
+  without retrying. It has not modified the real Codex config. See
+  [transaction limits](../../models/common/docs/windows-config-transaction.md).
+- During explicit idle Web-service maintenance, I ran `configure` with the
+  system Python rather than the saved project interpreter. The new source
+  profile was accepted, but its first `start` child exited before creating a
+  state/session directory because that interpreter lacks `aiohttp`. The
+  resulting launch record is `uncertain`; no second start was attempted.
+  Read-only inspection found the saved process dead, the new state absent,
+  the fixed connection available and saved dependency processes absent.
+  The previously saved project interpreter imports `aiohttp`. At that point,
+  this was a Web-service availability regression until an explicit reviewed
+  recovery retired the failed pointer and restored the correct interpreter;
+  it is not a model-turn or login failure.
+- Uninstall preflight originally scanned raw configuration bytes for the
+  candidate marker. A valid TOML Unicode escape could hide the parsed provider
+  identity and bypass the stop. It now checks both raw managed markers and the
+  parsed provider selector/table; 20 uninstall and 13 installation tests passed.
+  The isolated candidate writer still has a race between its last snapshot
+  read and file replacement when an unrelated editor writes concurrently.
+  That writer remains disposable-home-only and must not be promoted to real
+  activation. No live Desktop picker or voice test was performed.
+- The opt-in common suite passed 319 cases with 3 skips using current CLI
+  0.158.0-alpha.2.1 and the project interpreter. The affected configuration,
+  emergency recovery, uninstall and cold-start tests passed 77 cases. All
+  134 browser Node checks passed. These isolated results do not establish
+  the actual Desktop menu, ChatGPT login reuse, or normal voice. Official
+  native traffic remains direct and its recovery lock remains in place.
+
+2026-09-29 basic Web text path after explicit service maintenance:
+
+- The saved Web service was initially ready and idle, with a bound session and
+  unchanged settings, but its source registration differed from three current
+  model-catalog files. One fresh direct-provider GPT-5.6 Sol/Instant request
+  asked for a short text answer without tools or search. It returned the fixed
+  local HTTP 400 `web_browser_driver_failed_no_retry` envelope (cause 502).
+  The browser recorded one attempt, zero generation dispatches, zero tool calls,
+  no public final answer and a closed worker. Its only failure event was the
+  generic `driver_failed/rejected`; neither a login challenge nor the specific
+  rejection stage was observed. This failed input was not replayed.
+- The old instance was then explicitly stopped. Its saved settings and process
+  ownership were checked, the source registration was updated while stopped,
+  and a new service was started, bound through explicit reuse and reconnected
+  to the existing independent Desktop provider. A **different** fresh direct-
+  provider GPT-5.6 Sol/High text request returned HTTP 200, the exact requested
+  marker and the selected model slug. The new service's request count increased
+  once, no tool call was released, a public final answer was recorded, and the
+  same instance returned ready and idle. This verifies the managed provider's
+  basic text path only; it does not establish an existing Desktop task's route,
+  same-task model switching, voice, or complex tools. The before/after result
+  does not isolate source drift as the first failure's cause because the effort
+  and browser instance also changed. Official native routing remained direct.
+- A fresh App Server task then sent one short text request with an explicit
+  no-tools/no-search instruction. It failed with local 502
+  `web_mcp_context_not_read`: none of its three context pages was read and no
+  native tool call was released. A different, app-native follow-up failed before
+  browser dispatch with 503 `assistance_pending` after the inspection preview
+  was explicitly opened; no current login requirement was established. These
+  failed turns were retained and not replayed. The idle service was explicitly
+  stopped, configured from the same saved settings, restarted and rebound.
+- The Web composer guidance now identifies `operator_begin` as a required
+  read-only transport step even for a request that forbids task tools or search.
+  It does not grant a business tool call or relax complete-context checks;
+  [44 focused driver tests](../../models/web/tests/test_web_browser_driver.py)
+  passed. A **new** App Server task on the recovered service answered `17 + 25`
+  with the exact `42`, using the intended Web provider and no business tool
+  call. An app-native message to that same task returned `50` for the next
+  arithmetic prompt, but also issued one unwanted
+  `codex_app.send_message_to_thread` call to the originating task. That second
+  result is therefore not clean no-tool acceptance, and neither task-tool
+  delivery proves ordinary Desktop composer entry. The service returned ready
+  and idle; existing failed turns were not retried.
+- A separate fresh task bound to the exact independent Web provider and
+  GPT-5.6 Sol/High completed two App Server `userMessage` turns: the first
+  answered `19`, and the second referred to it and answered `25`. Native task
+  history showed only paired user/agent messages and no `mcpToolCall` in either
+  turn; the service ended ready/idle with zero accepted, released or returned
+  business calls and a final answer. This verifies two-turn Web provider
+  protocol continuation, not ordinary Desktop composer input.
+- The owner then authorized Computer Use for a fresh ordinary Desktop composer
+  check in that exact task. The
+  visible window showed the prior `19` and `25` turns. One new composer message
+  asked to add 11 to the preceding final answer; the same window displayed the
+  submitted message and `36`. Native history recorded one new completed
+  `userMessage`/`agentMessage` turn
+  with no tool call. Its turn context selected
+  `api/chatgpt-web/gpt-5.6-sol`/High, and the session remained bound to
+  its independent Web provider. Local Web status returned ready/idle,
+  `session_bound=true`, `configuration_current=true` and zero accepted,
+  released or returned business calls for the last turn. This verifies the
+  basic same-task text path through the visible Desktop composer; it does not
+  establish fresh-task model selection from the main picker, native voice,
+  file tools or long-running requests.
+- A subsequent read-only native catalog check showed the Web provider registered
+  while its model was absent from `model/list`; the official native provider
+  remained the default. In that task, the visible `自定义 高` control opened a
+  reasoning-strength slider, not a provider picker. No model selection or
+  configuration change was made. Fresh-task model choice remains a separate
+  usability gap despite the working bound-task text path.
+
+2026-09-28 native model onboarding and remaining fixes:
+
+- Follow-up review found the native `prepare` summary lacked the model ID,
+  bound Codex home and original-file presence required by its own guide.
+  `prepare`, repeated preparation, `status`, `install` and `restore` now give
+  those validated, non-secret identity fields without exposing the endpoint or
+  key reference. API and Local preview tests check the fields and no target
+  writes. This changes no saved plan format or installed profile bytes.
+- The correction passed 86 focused cases and a full regression of 1025 Python
+  cases (1015 passed, 10 existing skips) plus all 134 Node cases. An initial
+  focused run used system Python without the project's Web dependency and ran
+  before reviewed-document hashes were synchronized; both harness conditions
+  were corrected before the passing runs. A second reviewed legacy maintenance
+  transaction changed only `operator_native_models.py` in the stopped real
+  runtime. All sixty-two installed code hashes and the startup Hook matched;
+  Channels returned to full readiness. The saved Web service was explicitly
+  started, reused once to register its ready worker, and rebound to the same
+  independent provider without sending a model request. Desktop adoption of
+  that new Web service generation remains unverified.
+- Read-only native protocol schema at CLI 0.158.0-alpha.2.1 confirmed that
+  `model/list` has no per-model provider and `turn/start` has no provider
+  parameter. `thread/start.modelProvider` starts a separate task. These gates
+  prevent claiming a mixed-provider main-window picker from the seven installed
+  file profiles or from a combined catalog alone.
+- A suspected Web v3 scalar-input schema mismatch was disproven by an offline
+  emitted-page check. The complete page entry's outer `value` is always a record
+  object, as the output schema requires; a scalar `request.input` stays unchanged
+  inside that record's `input_value.value`. The observed 1/14 failure also used
+  array input. No tool declaration or installed app snapshot was changed.
+- An opt-in isolated App Server test on CLI 0.158.0-alpha.2.1 sent two models
+  through one fake loopback Responses provider in the same task and observed
+  the exact selected slug at each new user request. Codex sent a checkpoint to
+  the old model before the switch; a synthetic 413 made one upstream dispatch
+  with both custom-provider retry settings at zero and kept its failed turn.
+  This proves neither real mixed-provider Desktop switching nor global routing.
+- A second opt-in test used the current `ModelRouter` between that disposable
+  App Server and separate fake native/external endpoints. The same task completed
+  both model turns, retained history and a distinct failed 413 turn, and routed
+  each new input to the selected endpoint with its own synthetic credential.
+  Native token-usage events reported effective windows of 32000 and 15200 for
+  catalog rows set to 32000 and 16000 respectively. The targeted suite passed
+  two cases with one optional catalog case skipped; all 53 router tests passed.
+  This does not establish actual Web model limits, official-provider 413 retry
+  behavior or live Desktop rendering. The owner rejected a separate same-UUID
+  App Server wrapper because Desktop cannot display its execution process;
+  that route was stopped and no wrapper was added.
+- A later [isolated CLI 413 probe](../../models/common/tests/test_native_official_413_cli.py)
+  used one new failed turn per condition, a disposable home with a fake API key,
+  and only loopback Router/upstream fixtures. CLI 0.158.0-alpha.2.1's built-in
+  `openai` provider sent **six HTTP POST attempts** for an upstream 413 plus
+  seven separate WebSocket handshake attempts; the handshakes are not model
+  executions. A local Router capacity 413 likewise caused six HTTP attempts
+  but zero upstream POSTs. Both failed turns remained in native history; no
+  request content was retained by the probe. Under the same fixtures, an
+  explicitly configured custom provider with `requires_openai_auth=true`,
+  `request_max_retries=0`, `stream_max_retries=0` and HTTP-only transport sent
+  one POST per 413 condition, zero upstream POSTs for the local rejection, and
+  retained both failures. That result covers only fake API-key authentication,
+  not the owner's Desktop ChatGPT login or plugin connection. [Official config
+  guidance](https://learn.chatgpt.com/docs/config-file/config-advanced#azure-provider-and-per-provider-tuning)
+  says the built-in `openai` ID cannot be overridden with a provider table;
+  its supported `openai_base_url` override does not expose those retry knobs.
+  Native global routing remains disabled; changing 413 to a 400 is not an
+  authorized repair for native or other upstream errors.
+- Explicit API/Local file profiles now have preparation, installation, read-only
+  status and exact restoration. They preserve base configuration and reject
+  unknown existing target files and base-provider name collisions. Independent
+  native checks reproduced both old-header inheritance and permission loss when
+  those conflicts were not rejected. The new workflow is documented only in
+  [native model onboarding](../../models/common/docs/native-models.md).
+- Independent fixtures reproduced two ownership faults: concurrent transactions
+  could both claim one profile, and restoring a failed first install could remove
+  a later transaction's identical files. Installation/restoration now serialize
+  the exact home/profile and retain a state-bound claim after uncertain writes.
+  Only its original interrupted transaction can use that claim for explicit
+  recovery. Complete old installation receipts remain compatible; old interrupted
+  receipts without ownership evidence stop for review. Twenty-two focused cases
+  cover those races, later lock edits and partial restoration.
+- Seven profiles were installed in the real Codex home: five local models plus
+  DeepSeek Flash and GLM-5.3. Each generated catalog passed an isolated native
+  `config/read` and `model/list` check. A separate temporary profile completed
+  the public prepare/install/status/restore workflow in that same home, removing
+  only its two files. Base configuration was byte-identical; the official default
+  stayed OpenAI with nine catalog entries, seven visible. This is independent
+  profile support, not the Desktop main-window mixed-provider picker.
+- New isolated native CLI read-only cases passed for `deepseek-flash`, `glm-5.3`,
+  `gemma-4-e2b-it@q4_k_m`, `zai-org/glm-4.7-flash`,
+  `qwen3.6-27b-neo-code-here-2t-ot` and `huihui-qwen3.8-27b-abliterated`.
+  Each executed one exact displayed read command, returned the complete file
+  marker and preserved the fixture hash. `qwen3-0.6b` made no tool call and
+  returned only the marker prefix: that case failed despite CLI exit zero.
+  All cases were sequential, with no automatic request retries. API credentials
+  stayed in the scoped CLI environment; model-launched shells did not inherit
+  them. These guided single-read cases prove neither write/search/multiround
+  capabilities nor Desktop acceptance; model labels remain unverified overall.
+- Two earlier acceptance-harness stops remain failed: a native development
+  warning was misclassified as a tool, and Windows parsing was incorrectly used
+  on Codex's POSIX command-display encoding. Offline checks corrected the harness
+  before new fixtures were used. Earlier completion and dispatch uncertainty
+  are retained; the native request and command text were not rewritten. See the
+  [command evidence boundary](../../models/common/docs/responses-acceptance.md#native-cli-command-display-2026-09-28).
+- Native metadata cancellation can bind an explicit non-default Codex home;
+  the read-only child alone receives it. Desktop writes reject a mismatched home.
+  Source and isolated tests cover the binding; the live service keeps its
+  already configured default home.
+- Fresh installation omitted the metadata observer despite the release package
+  containing it. An isolated installed-directory import reproduced the failure;
+  copy and hash inventories now include both the observer and native-model entry.
+- The actual old runtime and startup Hook still listed sixty files, so adding
+  the two dependencies also exposed a legacy upgrade rejection. A separately
+  reviewed schema 2 supports exactly that pair with absent-before records and
+  changes only the startup Hook's literal inventory. Original bytes and all
+  other integrations remain protected; this does not establish first-install
+  ownership. Normal upgrade/restore and independent failure injection passed;
+  the maintenance contract is in [installation and removal](../../shared/docs/installation-and-removal.md#reviewed-legacy-runtime-cutover).
+- The reviewed cutover was then applied once to the actual stopped installation:
+  seventeen code files changed, all sixty-two installed hashes and the startup
+  Hook hash matched, and the complete original runtime was retained. Channels
+  restarted with every readiness gate passing. This maintenance still does not
+  resolve historical first-install ownership for general uninstall.
+- One authorized user CLI `/model list` then received the exact bot's unique
+  reply in 3.68 seconds. Its seven official models and full-ID/default-effort
+  example matched the current catalog. The control event completed with no
+  model turn, relay or business callback; the existing binding and selection
+  were unchanged. API/Local profiles are not exposed through this official-only
+  Channels selector until native provider switching is verified.
+- The earlier 12-page read failure below was subsequently confirmed by retained
+  MCP endpoint events as a local `web_mcp_read_key_unavailable` rejection. Its
+  exact key category remains unknown. New fixed-category counters distinguish
+  invalid, consumed and unknown keys without retaining request data in diagnostics.
+- After explicit idle deployment, a new native task-tool message completed two
+  sequential file reads and returned both markers in 59.2 seconds. Both commands
+  exited zero; the two source files remained unchanged. The bridge observed
+  13/13 context pages, one relevant catalog page, one schema and two paired
+  calls/results, with one hidden browser dispatch and no replay. This is a new
+  success, not a reclassification of the earlier failed input or a full manual
+  composer/Stop verification.
+- A subsequent service-maintenance check failed: for a new native task-tool
+  request, the local endpoint consumed page 1/14 and prepared its reply, then
+  received no second read or native tool call before the webpage finished.
+  `web_mcp_context_not_read` correctly rejected the incomplete result; the new
+  fixture remained unchanged. The request was not replayed. Saved login and the
+  provider registration remain intact, but this prevents claiming a reliable
+  long-context Web workflow from the earlier two-read success alone. Complete
+  endpoint events contain no read rejection; the initial RPC body and public
+  final text were not retained, so neither remote delivery nor the stopping
+  cause can be established. No local defect, network cause or login requirement
+  was confirmed; the complete-context gate remains unchanged.
+- A later distinct native request on that same task failed at 4/14 pages in
+  21.5 seconds, with zero native tool calls and no file write. Each of its four
+  indexed replies reached local socket `write_eof`; no fifth read or local
+  read-key rejection occurred. The selected Web model/effort matched the prior
+  13/13 success (`gpt-6-pro/max`). Its browser recorded one dispatch, a model
+  response starting with HTTP 200, and a completed public page, without a
+  recorded network or page error. The successful 13/13 case and this failure
+  both initialized an MCP session for each tool call, so session churn did not
+  distinguish them. Local writes and HTTP 200 do not establish cloud receipt,
+  model comprehension or a reason for stopping. The complete-context rejection
+  and both original failed turns remain unchanged. A separate 14-page synthetic
+  request failed before any page read with a generic browser-driver error, so it
+  did not test long-page comprehension; an explicit stopped restart and rebind
+  restored the saved service to ready/idle with its connection intact, without
+  replaying any request.
+- The real Web task's `task_started.model_context_window` was 258400 in the
+  13/13 success and both later failures. No global model catalog or window
+  override was configured, and the task's project had no config. Current Codex
+  [fallback metadata](https://github.com/openai/codex/blob/rust-v0.158.0-alpha.2.1/codex-rs/models-manager/src/model_info.rs)
+  gives unknown slugs 272000 tokens with 95% usable, explaining 258400. A
+  local-only temporary-home/App Server probe with the same Web slug reproduced
+  258400 without a catalog; a global 16000 Web catalog row produced 15200.
+  When the App Server started outside a trusted project's directory, its
+  project-level catalog left the task at 258400 and absent from `model/list`.
+  A trusted project's `model_context_window = 16000` or a new task's equivalent
+  start override instead yielded 15200 effective; setting that override on
+  `thread/resume` for an already loaded UUID left its next turn at 258400.
+  Codex's [same-version model metadata](https://github.com/openai/codex/blob/rust-v0.158.0-alpha.2.1/codex-rs/protocol/src/openai_models.rs)
+  computes a default auto-compaction limit from 90% of the declared window,
+  but no compaction event occurred in these short synthetic probes or the
+  retained real task. Neither task-scoped setting proves live Desktop adoption
+  or compaction. The long history may contribute to page growth; it does not
+  prove the 4/14 stop cause. A Web-only global catalog would omit official
+  models and was not installed.
+- The current source checkpoint passed 1030 Python cases (1019 passed, 11
+  skipped) and all 134 Node checks. The opt-in same-task native fixture passed
+  separately. These are source and isolated protocol results, not renewed live
+  long-context acceptance.
+
+Final source regression passed 1023 Python cases (1013 passed, 10 existing skips)
+and all 134 Node cases. The first expanded run retained eleven failures from an
+obsolete runtime-file-count assertion; its fixture now checks both new required
+files and exact migration sets. Ownership and interrupted-recovery guards remain.
+Windows junction rejection also covers Python versions without `is_junction`;
+an actual reparse-point fixture failed before the fix and passed afterward.
+
+2026-09-28 global product follow-up:
+
+- `/model list` now derives its example from an exact currently selectable model
+  ID and supported default effort. Two Luna generations reproduced the previous
+  ambiguous example; the new example can actually save a valid choice. Ambiguous
+  aliases still fail, and an empty catalog offers no unavailable command.
+- Read-only saved Web status distinguishes an observed ready process from its
+  persisted session receipt. A missing receipt directs explicit `start` reuse
+  before Desktop publication; status does not save ownership or launch a child.
+  An active request still takes precedence over this setup guidance.
+- Product route diagnostics check endpoint environment and same-name provider
+  overrides instead of treating the name `openai` as official-direct proof.
+  This describes the inspecting process's environment and saved configuration,
+  not the route already cached by a running Desktop task. No routing is changed.
+- A failed tool continuation followed by repeated caller cancellation reproduced
+  an orphaned browser driver and prematurely reopened admission. One shared
+  cleanup now retains the observer and driver until both finish; concurrent stop
+  joins it, and cancellation still reaches the caller afterward. Regressions
+  verify the admission fence, cleanup completion, consumed old turn and new input.
+  This race was reproduced with isolated asynchronous fixtures, not a live replay.
+- A result arriving during metadata observation also reproduced a lost watcher
+  for the same turn's second tool call. Identity changes still end observation;
+  a concurrent continuation instead waits for the next owned call gap and reads
+  fresh metadata before cancellation. Unknown observations remain terminal.
+  The two-call regression verifies two observations, two released calls and one
+  returned result before cancellation, without reusing the old observation.
+
+At this checkpoint native-metadata cancellation only targeted the default Codex
+home. The later explicit binding fix is recorded above; the verified live
+default-home Stop case below still does not establish live non-default-home use.
+
+Final regression for these follow-ups passed 978 Python cases (968 passed,
+10 existing skips) and all 134 Node cases on Python 3.14.3, Node 24.14.0 and
+PowerShell 7.6.6. The earlier 977-case full pass preceded the two-call watcher
+regression and remains separate evidence. Private receipts retain both runs.
+
+After explicit idle deployment, the real overview reported `needs_registration`
+and explicit start reused the same ready process before Desktop rebind. A new
+native two-file read then failed its business acceptance in 39.1 seconds: no
+native call was released, all 12 context pages were read, and zero catalog/schema
+pages were read. The assistant reported `web_mcp_read_key_unavailable`; subsequent
+endpoint-event inspection confirmed that local rejection, while its exact key
+category remains unknown. The final text was delivered; the requested files were
+not read by the task and their hashes remained unchanged. Keep this as a failed
+case, without replay or inferred attribution to the new cancellation code.
+The service remained ready with one process launch and the preview was closed.
+Channels changes have source/isolated validation, not a new installed-chat test.
+
+2026-09-28 Stop/lifecycle verification:
+
+- Shared Stop recognition now covers the current composer controls. Cancelled
+  worker reuse binds the exact public user-message ID and full dispatched text,
+  with one Stop click and stable idle. Exact URL and literal-title checks were
+  rejected by live cases because the page changes both during generation.
+  Origin, login/plugin routes, challenge/approval, draft, identity and hidden
+  worker checks remain. Fixed diagnostic codes contain no page text or IDs.
+- A native interruption after a released tool call initially left the browser
+  waiting for its result: that interval has no pending HTTP exchange to close.
+  Explicit `app_server_metadata_v1` cancellation now reads only bounded native
+  metadata and requires the exact completed interrupted turn. Unknown evidence
+  stops that turn's watcher; ownership and concurrent result changes are checked
+  again before cancellation. The default remains disabled.
+- With that option enabled, a new native case was interrupted through the
+  Desktop Stop button at 61.1 seconds, with one released call and no returned
+  result. Metadata confirmed that exact interruption, the Web Stop was clicked
+  once, and the same browser became ready. A new request in the same native task
+  then actually read its new fixture, exited zero and returned the exact marker
+  in 41.0 seconds; its SHA-256 was unchanged. Browser totals were two dispatches,
+  one cancellation, one completion and one process launch. Messages were sent
+  through the native task tool, so this does not claim ordinary-composer delivery
+  for the whole Stop/next-message case, all approval paths or billing cessation.
+- Separate new HTTP cancellations also retained the browser and accepted native
+  task-tool reads in 47.3 and 41.3 seconds. These remain separate from the native
+  Stop case above. One 2,931-character direct story completed in 21.8 seconds;
+  the following native file read completed in 35.4 seconds in the same process.
+  A complete answer snapshot must now remain identical for 500 ms before release;
+  the existing next-turn mismatch check still rejects later changes. One passing
+  long-answer continuation does not prove all late renderer updates are gone.
+- Desktop connect/rebind now rejects a live service whose starting record lacks
+  the exact worker/session receipt, before writes. Explicit start reuse records
+  the same ready child without a second launch; read-only status stays read-only.
+  The owner approved one earlier stopped-unbound-instance recovery despite its
+  one failed request. Original hashes, process/dependency absence and an exclusive
+  port check were verified; only the pointer was retired. Original evidence stays
+  retained and this exception does not relax ordinary zero-request recovery.
+- Failed cases remain failed: missing Stop recognition, title/URL rejection,
+  cancellation after the public Stop had already disappeared, late answer change,
+  a story returning only a process claim, and another story wrongly forwarded
+  back to its originating task. The latter was not task success. UI navigation
+  to unrelated tasks blocked several clicks; a finish/click race opened the voice
+  error page, which was closed without retrying voice. No failed input was replayed.
+
+Final full regression passed 971 Python cases (961 passed, 10 existing skips)
+and all 134 Node checks. The native cancellation, transport, lifecycle and
+manager checks also passed 165 focused Python cases. They cover unknown/duplicate native
+metadata, bounded content-free reads, child cleanup, racing continuation and
+service stop, consumed turns, changed public identities, legacy one-shot Stop,
+and complete/citation snapshot stability. Reference provenance remains in the
+implementation sources document; raw receipts and synthetic fixtures stay private.
+
+Earlier 2026-09-28 stop acceptance: one new ordinary-composer input
+ended in 20.4 seconds before the attempted Stop could cancel it. The local
+terminal gate rejected its public citation sources, with no native tool calls
+and no returned final. Read-only inspection showed ten lines of plain test
+text; the browser recorded one public reference, but its type was not retained.
+An empty-source footer is a hypothesis, not an established cause. The original
+failed turn remains retained and was not replayed; the distinct follow-up input
+was not sent.
+
+Source diagnostics now retain bounded reference kinds and source-list shapes
+only after an actual local citation validation failure. They appear in the
+private transport snapshot, contain no answer, title, URL or identity, and are
+absent after a successful new turn or a browser exception claiming the same
+error. After explicit idle service maintenance, three distinct task-tool inputs
+returned the exact short text, all 20 requested lines, and a source-bound answer
+consistent with the [Python documentation](https://docs.python.org/3/library/stdtypes.html#str.casefold).
+No citation error recurred. These were forwarded inputs, not composer or Stop
+acceptance, and do not identify the original failure's reference type.
+
+A separate synthetic regression demonstrated that the browser projection
+preserves an empty `sources_footnote`, while the modern renderer rejected it
+even for plain text. Modern empty footers now cite nothing and preserve the
+answer bytes; present/absent state is separate so duplicates remain rejected.
+Empty inline groups, unmatched links/markers, missing/null sources and malformed
+footers still fail. Legacy handling is unchanged. This compatibility is verified
+synthetically, not evidence that the earlier live failure had an empty footer.
+The 125 focused checks and full regression passed: 957 Python cases (947 passed,
+10 existing environment skips), all 123 Node checks and the 181-file release
+audit. The initial two failing regression cases remain in private evidence.
+
+After deploying the compatibility into the saved idle service and explicitly
+reloading the same idle native task, a distinct read-only fixture completed in
+29.8 seconds: one paired native command, exit zero, unchanged file hash and the
+exact final marker. The saved browser selected GPT-6 Pro/max and stayed hidden.
+All 28 product/package checks also passed. This is task-tool delivery, not a new
+ordinary-composer Stop test; the empty-footer shape was not observed in this
+live result. Saved login, fixed connection and official native defaults remain.
+
 2026-09-28 review follow-up: a new regression first reproduced rejection of a
 source-bound Markdown URL containing balanced parentheses. The modern citation
 reader now scans nested parentheses within the existing URL bound and preserves
@@ -472,9 +1278,742 @@ The 2026-09-20 saved-entry reuse and diagnostic improvements passed 39 focused c
 
 Known failures remain: occasional Web cold-page timeout, long-context/task-selection failures, and global-routing request-size/retry concerns. Official native direct routing is retained. Preview scope explicitly defers stability work without removing permissions, capacity limits or no-replay boundaries.
 
+2026-09-29 stopped-router handoff repair: the never-armed prepared plan now has
+a reviewed archive path when its exact saved router process is absent, its
+port is exclusively free, and the saved Web route remains idle and ready.
+The handoff starts a fresh detached router only after that archive has a
+witnessed receipt; a concurrent listener or wrong process identity stops the
+sequence before new preparation. It still preserves the original plan,
+native-route-only marker, config and failed runs, and does not retry a turn.
+The focused handoff, supersede and router-config tests cover order, changed
+state, and process mismatch. These are isolated checks; the earlier live
+Desktop-exit attempt still has a missing terminal result and no confirmed
+cause. No new Desktop exit, global activation or model request occurred during
+this repair. Synthetic scratch from the independent router survival check was
+moved to `.codex/recycle-bin/operator-router-lifecycle-probe/` at the owner's
+request for later manual disposal.
+
+A subsequent owner-performed Desktop exit left the detached handoff at
+`waiting_for_exit`, with a launch intent and a last heartbeat but no terminal
+result. The owner then ended residual GPT/Codex processes and reopened manually.
+The saved plan and native-route-only marker remained in place; there was no
+activation attempt or model request. Current config differed only in the
+Desktop-owned Computer Use pipe value. The helper's exact termination cause
+remains unobserved. Local Scheduled Task registration was denied for the
+current unelevated user, so no scheduled task was retained. A disposable WMI
+process-create probe ran under the same user and interactive session with a
+`WmiPrvSE.exe` ancestor, and the actual handoff launcher function witnessed
+its start after the controlling Python command exited. The launcher now uses
+that independent hidden process path and verifies the started worker's
+ancestry. The bounded heartbeat reports the number of remaining Desktop
+processes, without exposing process arguments. These isolated results do not
+yet establish successful live Desktop exit or automatic reopen. The probe
+files were moved to the same project recycle-bin area.
+
+2026-09-30 live handoff findings: the independent WMI worker did survive a
+normal Desktop exit and witnessed the old plan's archive, but the router's
+Windows virtual-environment launcher handed the listener to its one-hop base
+Python child. The former exact-PID test rejected that actual child. An explicit
+new request-free start reproduced `router_fresh_service_identity_mismatch`;
+the bounded one-hop, birth and executable check then started an exact ready
+listener. Explicit Web binding was also required before a new plan could pass
+preparation. A later plan prepared while Desktop was open bound a router
+started from the Desktop's process tree; that router disappeared on exit, so
+the handoff stopped before any config or model request. Its native fallback
+launched the WindowsApps executable without package identity, matching the
+owner's visible ChatGPT error. The official packaged application ID and the
+current Desktop process's package identity were checked read-only. The handoff
+now uses Windows packaged-app activation for fallback and directly runs the
+existing one-shot consumer after arming; the installed entry is unchanged.
+The subsequent independent-worker run witnessed the configuration switch,
+retained the router across exit, and reopened the official app; the owner
+confirmed automatic reopening and process inspection verified package identity.
+The handoff nevertheless recorded a terminal failure because Explorer returned
+a nonzero exit code after dispatch. That record is retained. A regression first
+reproduced this false failure; activation now judges only the stable exact app
+identity, without waiting for Explorer or relaunching. Negative tests reject an
+unrelated package, executable or changed process birth. The focused
+router/unified tests pass 92 cases. The strict transaction status became
+review-only after Desktop changed its auxiliary connection pipe directory;
+read-only TOML comparison found no other changed field, including model routing.
+The earlier completion and later changed configuration remain distinct evidence,
+not permission to replay activation. At that checkpoint, main-window model
+selection and new-turn acceptance were unverified; UI inspection stopped when the owner switched to
+another task. The installed entry and its normal-launch path remain unchanged.
+
+2026-09-30 ordinary Desktop picker/composer acceptance: the unified menu showed
+native, Local, API and three Web choices. A new Desktop-owned unified-provider
+task first failed a native setup turn with a transport 502 before upstream
+headers; its cause remains unconfirmed. A subsequent unauthenticated, read-only
+network check received 401 and did not replay that turn. Three distinct composer
+turns then passed: GPT-6 Luna/low arithmetic (2.746 seconds), Web GPT-5.6 Sol/high
+using the previous answer (14.796 seconds), and native Luna/low using the Web
+answer after switching back (3.488 seconds). Turn metadata and exact final
+answers matched; no service restart, login prompt or separate App Server task
+takeover was used. This proves this short text sequence, not every history shape,
+tool, model, stop state or voice path.
+
+An intervening GLM 5.3 Flash/low composer turn failed locally with
+`reasoning_summary_not_supported`; metadata confirmed Desktop's detailed
+summary setting. The active API registry predates the source candidates' summary
+passthrough, named create-task result and standard-tool contracts. Offline
+fixtures reproduced rejection by both old API registrations and acceptance of
+the unchanged detailed-summary parameter by both source candidates. A private
+replacement preview retains endpoint/model/credential-variable/context identities;
+it was not applied to the running registry and requires reviewed stopped
+maintenance. Updated contracts alone do not prove live API acceptance.
+
+LM Studio was initially stopped. Its existing server was explicitly started on
+loopback, and a single subsequent Qwen3 0.6B composer turn was rejected with
+`opaque_cross_provider_context_not_supported` in this same native-history task.
+The synthetic opaque-input guard preserved its input while reproducing the
+rejection. No historical content was deleted, no failed turn was repeated, and
+no local-model answer is claimed. The task was left selecting native Luna and
+the UI returned to the owner's development chat. The first native 502, GLM
+contract failure and local-history failure remain separate retained outcomes.
+
+The subsequent read-only review found an actual `compacted` record during the
+Qwen3 0.6B turn, with one encrypted `compaction` item in its replacement history.
+The selected model's registered context is 40,960 and Desktop reported 38,912
+effective tokens, whereas the preceding native turns reported 258,400. No earlier
+standalone encrypted response item was found in this exact fixture. The evidence
+therefore identifies native compaction during the switch, rather than a failed
+local inference. It does not establish compatibility for other histories/models;
+no ciphertext was printed or discarded and no capacity was enlarged.
+
+Existing API contracts can now be maintained by explicit `update-contracts`
+preview/apply. The transaction binds old and candidate registry digests, permits
+only `responses` changes, preserves an original backup and unrelated rows, and
+uses the stopped lifecycle/port and callback checks. Twelve new tests cover the
+summary regression, preview/apply, identity protection, digest drift, lifecycle,
+concurrent edits, backup conflicts, locks/write failures, no-op, verification-label protection,
+restoration retaining later registrations and CLI wiring.
+The related registry, adapter, label, discovery and product-preview suites passed 137 tests.
+The real two-API preview succeeded without network requests or live registry
+changes; deployment and new Desktop API acceptance remain outstanding.
+
+A later ordinary Desktop composer test selected LM Studio Gemma 4 E2B Instruct
+in a new projectless conversation. Its first input (23 + 34) returned exactly
+57 in 23.261 seconds without a tool call. The endpoint reported 129,460 input
+tokens against Desktop's effective 124,518-token window (registered 131,072).
+A distinct follow-up asking to subtract nine failed during remote compaction
+with `unsupported_history_item` after 71 ms. The exact rejected input shape was
+not captured, so this is not attributed to encrypted history, a particular
+codec or LM Studio inference. The first success and failed continuation remain
+separate evidence; no request was retried, no history/config was changed, and
+the development chat was visually restored. Basic local first-turn text is
+verified for this exact model; local multi-turn and cross-model acceptance are
+still incomplete. Private turn metadata is retained alongside the picker audit.
+
+The subsequent source repair selects the official client's text-compaction
+path in newly generated unified configurations and preserves recovery of both
+old and new provider names. The version-bound cause, native-model behavior
+change, migration requirements and unsupported existing encrypted histories
+are documented once in the [router compaction contract](../../models/common/docs/model-router.md#client-owned-compaction-2026-09-30).
+The focused candidate/preparation/cold-start/recovery/router/adapter suites
+passed 193 tests, including eight opt-in installed-client cases with synthetic
+credentials. Those cases include both automatic and manual compaction followed
+by continuation, native passthrough compaction, search and single-attempt 413.
+No real-home configuration or running service was changed by this repair.
+Live Gemma follow-up, Web continuation and signed-in native behavior with the
+new provider name remain unverified; the earlier failure remains terminal.
+
+Closure work added an explicit witnessed-activation upgrade handoff. It retains
+reviewed Desktop preference changes, archives the complete recovered activation,
+binds optional API contract updates, and refreshes a source-stale Web service only
+after normal stop. The focused lifecycle/registry/installed-client suites passed
+175 tests; subsequent handoff/retirement/product checks passed 70, and the latest
+six upgrade cases passed. These overlapping counts are not a full-suite total.
+Synthetic process observations were used for upgrade lifecycle tests; Windows
+config replacement, recovery, retirement and archive witnesses used real
+disposable files. The later 50 installation/recovery checks passed. The live
+Desktop-exit handoff recovered native routing, retired and archived the previous
+activation, applied the two API contracts, refreshed the saved Web service and
+bound its new idle router. It then stopped at entry selection: first-install
+setup cannot claim ownership of this machine's entry-only migration. The worker
+reopened the official packaged app in native mode; this was recovery, not a
+successful activation of the new provider. The original failed handoff is retained.
+
+The repair restores only the exact recovered entry bytes against their old
+witness, keeping launcher/shortcut ownership and all recovery originals. It also
+uses one canonical Python module identity for handoff errors, so imported fixed
+failure codes are not mislabeled as unknown. The upgrade/handoff/migration checks
+passed 39 tests, including real disposable migration ownership checks; the final
+upgrade/handoff rerun passed 26 after adding the pending-activation guard. The
+live recovered entry was then restored from its exact original with a witnessed
+replacement backup. Native protection remains active and the official app stays
+on its native route. No service start, contract update or model turn was repeated.
+Post-upgrade
+local/API/Web acceptance remains outstanding. The maintenance
+contract is maintained in [cold-launch guidance](../../models/common/docs/unified-cold-launch.md#replacing-a-witnessed-activation-during-an-explicit-upgrade).
+
+The next live handoff ended in the exit-wait stage after its original ten-minute
+budget. Its final observation counted remaining same-name processes; it created
+no activation attempt and changed no configuration. This does not establish why
+those processes remained, or whether the owner's close action completed.
+The owner subsequently opened the official app manually. This failure is retained.
+
+The maintenance experience now requires one shown status-window child before
+asking the owner to exit. New plans wait two minutes by default, allow defer
+before maintenance and retain a visible terminal outcome. Waiting failures do
+not launch the app; process-observation failures are distinct from normal waiting.
+The window has no process-kill, service-control or retry capability. A real Windows
+concurrent-reader test reproduced status-file replacement denial; the bounded
+append-only status journal fixes it without retrying maintenance. Control tests
+exercise the actual Windows Forms defer button and terminal labels, and rendered
+waiting/timeout layouts were inspected. Computer Use did not enumerate the
+PowerShell-hosted window, so those controls were exercised by the isolated UI
+test harness, not claimed as user-driven Desktop acceptance. The full real
+exit/update/reopen flow with this UI remains a release gate; this work did not
+start a new live handoff, change native routing or replay any failed turn.
+The focused feedback/handoff/upgrade/preparation/cold-launch/product regression
+passed 89 tests. A final feedback/handoff rerun passed 32, including a display
+failure after successful activation that must not overwrite the witnessed
+result or reopen the app again. These counts overlap.
+
+2026-09-30 final entry closure, source and disposable integration evidence:
+
+The shared startup helper and retained native-only executable now activate the
+checked Windows package through AppsFolder. A direct `WindowsApps/app/ChatGPT.exe`
+launch can omit the package identity; compilation and isolated activation tests
+exercise the actual C# fallback and PowerShell helper without opening the real
+app. This repairs a launch path, not every earlier exit-wait failure.
+
+Fresh-install desktop pairs bind the default native home, successful build
+metadata and exact shortcut/helper
+bytes. Disposable real Windows shortcuts passed install, unchanged reuse,
+uninstall and reinstall. Regression tests cover partial-link rollback, edited
+files, pending activation, mismatched uninstall home and preservation of the
+native helper's read-only flag across imports. A prepared pair build cannot fall
+back to legacy shortcut creation after failure. Pair ownership is checked by
+unified-entry preparation and its helper sources are bound into new handoff
+manifests. Existing entry-only journals are not adopted as first installations.
+
+The final default suite ran 1,290 Python tests in 532.867 seconds with 26 skips
+and no failures; Node passed 134 tests. The default skips remain optional
+environment/CLI cases and unavailable Windows symlink privileges. The separate
+eight current-CLI synthetic search/413/compaction/catalog cases passed earlier
+in this closure run; they do not establish Desktop acceptance. The first full
+baseline's two release-inventory failures and intermediate integration failures
+remain in private evidence; the final inventory includes all four new files.
+All 197 public-document local links and 37 anchors resolve. Root and packaged
+project rules are byte-identical.
+
+No real shortcuts, login, task history, routing or installed services were changed
+by this closure. Legacy-to-pair migration, in-place pair build upgrades, the real
+status-window exit/update/reopen flow and post-upgrade Local/API/Web basic turns
+remain unaccepted. Current legacy entry and failed handoff records are retained.
+
 The public package includes five reviewed documents at their original source
 paths, including this audit and the plugin README. The release inventory binds
 their reviewed SHA-256 digests, and the builder screens the complete allowlisted
 source before packaging without substituting document copies. Personal accounts,
 credentials, browser profiles, runtime databases, private evidence and task
 histories are not included. Raw private evidence remains local.
+
+2026-09-30 entry upgrade continuation, source verification:
+
+A private compiled candidate now supports digest-bound replacement of an owned
+pair build. A separate legacy pair record preserves the original migration,
+adoption and config-only upgrade chain. Its Desktop link is renamed in place,
+retaining the Windows file identity, while the Start menu entity remains intact.
+The current native settings are not replaced by these operations. Recovery
+returns the old Desktop name before the earlier migration can restore its
+original shortcuts; the repaired build and native pin helpers remain available.
+
+The legacy COM integration passed five tests, including build-chain upgrades,
+restoration, changed historical recovery material and corrupted new-backup
+rejection before public writes. Unified entry preview passed 23 tests, including
+seven new real-shortcut legacy cases and a complete older adoption/config-upgrade
+chain. The focused pair, build upgrade, desktop experience, uninstall and handoff
+suite passed 73 tests. These counts overlap earlier component checks. Failed
+intermediate implementation checks were corrected without operating on live
+shortcuts or replaying model requests.
+
+A read-only inspection of the saved unused launch plan found later legitimate
+native settings changes, so the original strict supersede preview refused it.
+The separate unused-plan withdrawal path preserves that original plan and current
+native state; it does not relax the original supersede contract or permit failed
+activation reuse. Real installation and normal-exit/reopen acceptance remain
+separate from these source and disposable tests.
+
+2026-09-30 reviewed entry/runtime deployment:
+
+The second full regression passed 1,360 Python tests in 929.498 seconds with 26
+skips and 134 Node tests. The initial full run's ten hidden-PowerShell encoding
+errors remain recorded; explicit UTF-8 fixed that process boundary. A subsequent
+completion-boundary change passed all 47 runtime-cutover tests: changed process,
+queue or Web recovery evidence prevents a completed receipt even after the last
+file write. These component counts overlap the full run.
+
+The first real pair upgrade stopped before creating a transaction because two
+independent PowerShell processes serialized identical nested dictionaries in
+different orders. New preview hashing now sorts keys without changing historical
+journal serialization. Both legacy and ordinary pair public CLI tests perform
+preview and upgrade in separate processes; the complete pair upgrade suites
+passed 20 tests. The rejected preview, unused candidate and original output are
+retained rather than relabelled as a successful installation.
+
+A new compiled candidate then completed the reviewed legacy pair installation.
+The dated Desktop link retains its prior Windows file identity, the Start menu
+link remains the same entity, and the added native helper and repaired launcher
+match their recorded bytes. Current native settings and the original migration,
+adoption and configuration-upgrade receipts remained intact. The unused old
+prepared launch plan was separately withdrawn with its complete original files.
+
+After explicit retirement of a proven-dead Web instance, a receipt-bound runtime
+cutover updated 15 code files. All 62 installed code files and the public entry
+matched current source, and the installed command facade passed its read-only
+check. Old runtime bytes and abnormal Web records remain retained; unresolved
+legacy first-install ownership is not converted into a new ownership claim.
+
+The new request-free Web startup encountered a disconnected Windows desktop
+before launching its browser. Its zero-request service was explicitly stopped;
+saved login and connection settings remain. This is not evidence of a ChatGPT
+login requirement. Real exit/update/reopen, post-upgrade ordinary Local/API/Web
+continuation and actual voice remain unaccepted pending their own observations.
+
+The startup preflight exception is now inside the owned session's failure
+boundary. A locked/disconnected desktop or changed source closes that session
+before browser launch and records only a fixed failure code. The service leaves
+`preparing`, publishes `unavailable`, and fences new requests while retaining an
+explicit stop path. All 37 lifecycle tests passed, including zero-launch,
+zero-request cases and refusal to restart the closed session after conditions
+improve. The first new integration assertion expected the wrong existing health
+state; it was corrected to distinguish stopped admission from service availability,
+and its original failure remains recorded. These are disposable fixture checks,
+not a successful live browser startup or model conversation.
+
+After independent review, the saved stopped profile was explicitly rebound to
+the same settings and updated source. A separate digest-bound cutover deployed
+this one runtime file and retained its complete predecessor backup. Final
+read-only verification matched all 62 installed files to source, preserved the
+pair fingerprint and current native configuration, and confirmed stopped
+Operator/router/Web services with empty actionable inbox and callback queues.
+The Windows desktop was still disconnected, so no new browser or model request
+was launched and the remaining live acceptance gates were not marked complete.
+
+### 2026-09-30 native client update: read-only and synthetic evidence
+
+The installed official Desktop package was separately observed as 26.928.2636.0,
+with its exact executable path and digest retained privately. A fresh native
+App Server using CLI 0.159.2 returned GPT-6.1 Sol as a visible default model,
+with low configured and low/medium/high/xhigh/max/ultra advertised. The probe
+preserved the current configuration and model-cache bytes, timestamps and file
+identities. It started or resumed no task and sent no model request. This is
+native metadata evidence, not live Desktop picker or model-execution acceptance.
+
+Seven private synthetic checks passed. The dynamic native catalog preserves
+GPT-6.1 entries and unknown fields; Channels accepts the complete model identifier
+and advertised ultra effort while rejecting the ambiguous sol alias. Business
+delivery retains the selected arguments, and Beeper remains Luna/low. An existing
+router cache rejects an unlisted native slug without dispatch or automatic
+refresh. After an explicit catalog refresh, a different new request passes through
+unchanged; the rejected input is not replayed. One initial harness assertion
+expected the wrong error field; its failure remains retained, and only the
+harness was corrected. No production compatibility change was needed.
+
+The dated Web catalog remains separate and gains no GPT-6.1 entry from this
+native update. These checks do not establish Web readiness, cold-launch/reopen
+acceptance, voice or broad Desktop compatibility. Any new handoff must bind the
+current official executable separately from the CLI and retain older manifests.
+
+The unlocked desktop allowed a later zero-request Web startup to reach an empty,
+logged-in temporary chat. Closing its assistance window then made the worker
+unavailable. That failure and its explicit normal stop remain retained. Source
+inspection found that the Host's existing `modernRows` diagnostic field was
+missing from both strict Python field tables; the deployed bytes matched source.
+No evidence tied this defect to the native model update.
+
+The fix adds only those two field declarations. Exact shapes, enums, assistance
+identity, phase order and the requirement for zero modern message rows remain
+unchanged. All 39 Python lifecycle tests and 59 Node browser tests passed,
+including actual Host diagnostic functions and emission expressions delivered to
+the Python receiver. Independent review confirmed the two-line production diff.
+The saved stopped profile was explicitly updated with the same settings, and a
+separate digest-bound cutover deployed one runtime file. Read-only checks matched
+all 62 files, the public entry and existing pair fingerprint, preserved the
+current GPT-6.1 native configuration, and found no actionable inbox or callbacks.
+These deployment and fixture results alone do not establish cold-launch or live
+conversation acceptance.
+
+The next source-bound Web instance became ready while hidden, without assistance
+or a model request. Explicit reuse saved its exact session receipt; a fresh
+request-free router was started and bound to that generation. Native routing
+remained protected. The initial unified preview rejected the older legacy
+activation recognizer, which required the pre-pair manifest and build bytes.
+Its original retirement evidence was intact; this was another entry integration
+defect, not evidence that GPT-6.1 routing failed.
+
+The read-only recognizer now accepts only a completed legacy entry pair whose
+first historical build matches the original config-upgrade receipt. It validates
+the current build through the complete pair ownership chain, rechecks bounded
+files, and preserves all original retirement, process and exclusive-port gates.
+Fifteen tests passed, including an actual temporary Windows migration/adoption/
+config-upgrade/pair chain and 19 mutation categories with unchanged file-byte
+snapshots. Independent review passed. Forty-seven preparation/cold-start/handoff
+tests also passed; the verifier source is now bound into fresh review digests
+and handoff manifests. A new live preview accepted the complete old-to-current
+chain, leaving only Desktop-open and native-protection conditions. No old
+receipt was rewritten or retirement repeated, and no model request was sent.
+
+Later preparation failed before writing a plan; a second attempt retained an
+ordinary empty allocation after its exact readiness digest changed. Bounded
+subsequent observations found Desktop refreshing the cache timestamp with an
+unchanged catalog. Those observations do not retroactively establish either
+failure's complete cause. The current GPT-6.1/xhigh native settings remain
+preserved rather than restored to an earlier snapshot.
+
+Preparation now freezes the exact existing config/cache bytes and Windows
+identities before directory allocation, rechecks full readiness and retains the
+short read handles through journal completion. Sixteen preparation tests passed.
+A separate explicit empty-allocation archival operation binds the original
+failure JSON, source identity and current protected snapshots. It moves the same
+empty directory by one Windows handle rename, retains the failure, and keeps a
+completion fence until its post-receipt witness. It creates no plan, journal or
+installation ownership. Thirty-seven withdrawal tests passed, covering old and
+new archive coexistence, actual Windows sharing and rename behavior, partial
+archives and final-boundary mutations. Independent review found two boundary
+gaps during development; both were fixed and their failure evidence retained.
+Seventy-four combined preparation/cold-start/handoff/supersede tests passed with
+unchanged source hashes. These scoped counts overlap earlier runs.
+
+The idle router and Web service were explicitly stopped and witnessed before a
+separate runtime transaction deployed the new public entry commands. A fresh
+Web instance then became hidden-ready; its exact session was explicitly bound
+to a fresh router with zero inference requests. The real empty allocation was
+witnessed into its independent archive with its original directory identity and
+failure copy. Read-only verification matched all 62 runtime files, the public
+entry and unchanged pair fingerprint, retained the current GPT-6.1/xhigh config
+and native protection, and accepted all four retained archive generations.
+These source, deployment and preparation checks do not yet establish normal
+Desktop exit/reopen, ordinary same-task model continuation or voice acceptance.
+
+The owner later performed a normal Desktop exit during a new handoff. That
+handoff reached `consume`, reported `unified_cache_changed`, retained its
+exclusive attempt and stopped for review without trying to reopen Desktop or
+sending a model request. The owner manually reopened the official application.
+Read-only inspection found no cache-retirement backup, config transaction or
+completion receipt. Current config differed from the retained native original
+only in Desktop's Computer Use pipe; GPT-6.1 Sol/xhigh and the official native
+provider remained selected. The current cache retained its original Windows
+identity and catalog, with only `fetched_at` changed. This later observation does
+not identify the original writer or prove the complete failure cause.
+
+Source inspection found an unprotected in-place-write gap between the
+consumer's full preflight and cache retirement. The consumer now holds a Windows
+read handle denying writes through preflight, retirement and completion. Delete
+sharing retains the existing one-shot rename; exact byte and identity checks
+still reject path replacement before or during that move. Missing-cache and
+reappearance checks are unchanged. The config parent is held against directory
+rename, and every created attempt remains terminal. No timestamp is filtered,
+no failed plan reset, and no business request replayed.
+
+One initial test expected a native Win32 error from Python's ordinary file API;
+its original failure log is retained. The assertion was corrected to check the
+observed permission-denied errno and rejected child-process write. Seventeen
+cold-start tests passed, including real Windows writer contention, an already
+open writer, equal-byte identity replacement, a rename-boundary swap, missing
+cache creation and interruption. A combined 138 preparation, cold-start,
+handoff, marker-release, supersession, retirement and withdrawal tests passed;
+these counts overlap. The exact idle router and Web service were normally
+stopped, with process absence, exclusive router-port reservation and empty
+actionable inbox/callbacks checked before source changes.
+
+This consumer fix is source evidence, not a repaired real activation or a new
+Desktop acceptance. The original failed attempt and released-marker evidence
+remain in place. Ordinary retirement deliberately rejects attempts without a
+completion witness; the failure therefore needs separate explicit reviewed
+maintenance before a new plan can be prepared. The old source-pinned workflow
+must not be edited or rerun to bypass that boundary. Same-task model and voice
+acceptance remain pending.
+
+A separate native-entry recovery preview selected only the absent protection
+marker and the verified entry configuration. The existing recovery command
+retained the original entry and completed both changes with no warnings. Exact
+post-checks matched the entire failed activation tree and current config bytes
+and Windows identity. The entry is now native, the protection marker is restored,
+and the owner's running Desktop was neither closed nor restarted. This recovery
+does not retire or repair the failed attempt, deploy the consumer fix, or finish
+the pending unified model acceptance.
+
+Separate reviewed archival now has a narrow source implementation for the exact
+September 30 cache-prewrite consumer and saved failure result. It checks the
+retained marker release, native-entry recovery, stopped services, empty inbox
+and callbacks, workflow and ownership evidence before allocating an independent
+archive. The original failed attempt keeps its verdict; no completion is
+manufactured and no config, cache or entry bytes are restored by archival.
+Current root native effort may be reviewed within the observed native values,
+while all other config changes retain the existing conservative checks. This
+does not widen ordinary retirement or any cold-launch equality check.
+
+Disposable tests cover the actual Windows directory move and its required
+closed-child-handle boundary. Original bytes are copied before that boundary;
+changed children, directory replacement, destination collision and final source
+changes retain a completion fence and remain uncertain. Current native files
+stay guarded through the move. Static archive integrity gates also block new
+preparation and uninstall when any independent archive is incomplete. The
+dated historical consumer fixture is provenance only. A combined 158 tests and
+a final 66 failed-archive/handoff tests passed; these scoped counts overlap.
+Full regression, real archival, workflow renewal and Desktop acceptance remain
+separate pending steps. The owner's current GPT-6.1 Sol/high preference remains
+preserved. Existing failed records have not been reset or replayed.
+
+The first full traversal used a base interpreter without the optional aiohttp
+dependency. It ran 1,236 Python cases in 1,241.321 seconds, with one failure and
+nine errors, all reporting that missing dependency, and 115 skips. All 134 Node
+cases passed. That unsuccessful log remains retained. The existing saved venv
+then ran all affected modules, including the optional aiohttp cases previously
+skipped: 351 cases passed in 87.197 seconds. These runs overlap; they are not a
+claim that the first traversal passed or that every opt-in CLI gate ran. No
+dependency was installed and no real model request was sent.
+
+A fresh real review then archived the exact failed allocation in its independent
+namespace. Post-checks matched the complete original tree and Windows identities,
+retained the failed attempt without a completion, and matched current config,
+cache, marker and entry snapshots. The current native effort is high, as selected
+after the owner's manual reopen. A separate stopped runtime transaction updated
+one public entry file and its source binding, retaining all originals. Read-only
+verification matched all 62 runtime files and protected integrations, empty
+inbox/callbacks, stopped Web state and an exclusively reservable router port.
+No Desktop restart or routing activation occurred. The old source-pinned startup
+workflow remains retained; its renewal, fresh handoff and live model/voice
+acceptance are still pending.
+
+The replacement workflow now has a separate source implementation bound to the
+completed failed archive, original workflow identities, exact recovery path,
+entry ownership and current protected native state. It retains the old directory,
+creates a current source-pinned workflow and reselects the original entry bytes
+with the existing replacement witness. It does not mutate the historical plan
+or prepare/arm an activation. Partial renewal gates preparation and uninstall.
+The first disposable run exposed a wrong use of the archived recovery copy;
+that failed log remains retained. The implementation now checks the original
+recovery path and its retained identity. Six cases passed after that correction,
+then 83 combined renewal, preparation, handoff, upgrade and uninstall cases
+passed, including four additional sharing, source and backup-identity boundaries.
+Those counts overlap. Full regression and the real renewal remain separate.
+
+The saved dependency-complete environment then ran the full suite: 1,454 Python
+cases passed in 1,360.091 seconds, with 26 explicit opt-in CLI cases skipped;
+all 134 Node cases passed. During that run a final optional-entry-file presence
+check was tightened. A separate fresh 11-case renewal run passed, including
+the added later-owner-file boundary; it is supplemental, not an additional
+11 distinct full-suite cases. Source syntax, inventory and content audit passed.
+
+A fresh real preview then completed the independent workflow renewal. Checks
+matched the old workflow bytes and Windows identities, retained the failed
+activation archive, verified the new source-pinned workflow and reselected
+the exact recovery-bound entry bytes with unchanged ownership. Native config,
+cache and protection snapshots matched, all 62 runtime files and the public
+entry matched their sources, and no Desktop restart, routing activation or
+model request occurred. The saved Web configuration was current and normally
+stopped before one explicit new service start. Fresh cold-launch and ordinary
+same-task model/voice acceptance remain separate pending gates.
+A live preparation preview then exposed one remaining compatibility gate:
+legacy pair retirement compared its historical workflow against the explicitly
+renewed current files. Read-only recognition now binds the complete renewal,
+old workflow identities, current replacement identities and retained failed
+archive, while all original upgrade/pair/retirement checks remain active.
+Thirteen real Windows renewal cases and sixteen retirement cases passed.
+
+A fresh full run partitioned all 81 canonical Python modules exactly once among
+four independent disposable test processes, with Node tests in one partition.
+Raw summaries report 1,458 Python cases OK and 134 Node cases passed, zero Node
+failures. Python sources remained byte-identical through the run. The collector
+exited 1 after children completed because a retained Windows console log was not
+UTF-8; no child exit-code receipts were retained. Independent read-only review
+verified every complete unittest OK summary and the Node result without rewriting
+raw logs or reclassifying the collector failure. Source/PowerShell syntax and
+inventory audit passed. These tests and the real no-write preview do not establish
+cold-launch, model switching, conversation continuity or voice acceptance.
+2026-10-01 follow-up: the owner's normal exit was observed, but the bound
+router process was absent at the handoff check. A separate reviewed stopped
+router handoff then failed before plan supersession and safely reopened native
+Codex. Its terminal result remains `stopped_for_review` with
+`handoff_unexpected_error`, not successful activation. Current direct and
+independent read-only diagnostic previews passed; they cannot reconstruct the
+old missing cause. The untouched, unarmed plan was independently withdrawn
+with complete originals and current snapshots retained; native config, cache
+and entry were unchanged. An explicit idle Web stop reached saved `stopped`
+status. The first immediate status observation raced worker shutdown and was
+retained separately; no duplicate stop or request replay occurred.
+
+The handoff now preserves allowlisted typed supersession/preparation/file codes
+and bounded Windows error numbers in its new terminal results. Unknown text and
+untyped lookalikes remain redacted. It does not change admission, activation,
+retry, recovery, permissions or old outcomes. Fifty-seven affected cases passed.
+Fresh full coverage of all 81 canonical modules in four disposable processes
+passed 1,460 Python tests; Node passed 134, failed zero. Every child exit code
+was zero and Python source hashes were unchanged throughout. Raw console bytes,
+child exits and prior collector failure remain separately retained. Source and
+syntax audits passed. A fresh independent background preparation and live
+cold-launch acceptance remain distinct from these diagnostic checks.
+
+The next independently prepared background router survived the owner's normal
+Desktop exit. A fresh handoff completed supersession, preparation, marker release,
+arming, config/cache consumption and witnessed official-package reopen. Retained
+before/candidate copies, boundary backup, retired cache and their original Windows
+identities matched the plan and completion. The old failed attempts were retained.
+After reopen, only Desktop's managed CUA pipe value differed from the candidate;
+the strict transaction inspection remains `uncertain`/`target_not_candidate`.
+The independent read-only review reports this explicitly and matches the current
+native default/high setting, registry and exact idle Web/router bindings. It does
+not reclassify the strict current-target check or retry an activation.
+
+Ordinary Desktop selection then displayed native, Local, API and Web model rows
+in the exact existing local acceptance task. One new input selected GPT-6.1 Sol
+with low effort through its ordinary picker and composer. The saved new turn's
+model/effort metadata agrees, but the turn failed after 2,840 ms with
+`array_above_max_length` on `input[4].content` (maximum zero, observed one), with
+no assistant answer or tool call. Its remaining four continuity inputs were not
+submitted. The old successful Local turn, old compaction failure and this new
+native failure remain preserved. A plaintext, unencrypted Local reasoning item
+exists in history; because the complete upstream packet was not captured, its
+exact correspondence to the reported input index is an inference. Native wire
+passthrough and reasoning representation remain unchanged. The current receipt
+does not establish same-task conversation or voice acceptance, nor publication.
+
+## 2026-10-01: native-first direct entry research and pure candidate
+
+The owner chose provider/model switching through the extension entry, accepted
+limited custom-model capabilities and prioritized keeping official native traffic
+direct. This new candidate does not deploy a model menu, mutate the real config,
+change shortcuts, start/stop services, rewrite history or revive an old plan.
+
+Fresh CLI 0.159.2 standard and experimental schema exports still lack provider
+identity in model entries and per-turn/settings updates; start/resume/fork retain
+it. The exact installed Desktop 26.928.2636.0 ASAR was read without execution or
+modification. CODEX_CLI_PATH is present, but no production wrapper was adopted.
+The Windows package diagnostic did not inherit its process marker. The legacy
+base-config `profile` selector was rejected with a specific error; the first
+generic-error and temporary-directory-cleanup failure remain retained separately.
+
+Two independent synthetic direct-provider cases used the installed CLI and a
+private, account-free home. One resumed the same UUID across native, external and
+native providers, retained text history and completed three distinct new inputs
+at the expected direct endpoints, exactly once each. The other retained foreign
+reasoning content; its native return turn was rejected and remained failed. That
+case passed its negative-boundary assertions, not native conversation acceptance.
+Neither used the Operator router, contacted a real model or touched real history.
+
+The new `operator_direct_profile.py` pure projection/recovery and read-only
+preview reuse the installed native profile contract. Seventeen meaningful checks
+passed. The preceding combined run passed 56 checks: the then-16 candidate checks
+and 40 existing native-profile/recovery checks. The final 17-check run follows
+recovery-description validation changes; overlapping totals are not added.
+Seven actually installed API/Local profiles passed source-bound previews against
+a private proposed-native snapshot, with `baseline_is_live_config=false`.
+That does not prove current native configuration, endpoint connectivity or tools.
+
+A third, fresh installed-CLI case used the actual new renderer and recovery
+output. Its same UUID completed three native/external/native turns at three
+expected direct requests, with text history and byte-identical restored config.
+It remains a synthetic CLI check. Live Desktop, entry transactions, independent
+native recovery, current cache and each real model require their own acceptance.
+The already installed native entry's read-only check currently reports
+`normal_exit_required`; no real configuration or launch occurred.
+
+Current Chat On Steroids research is pinned to `2524773c8b4389c27f6c420c6a27f5a14bacbe4d`;
+its Desktop bridge is still a design draft. For entry isolation alone, the MIT
+Codex Desktop Custom Models architecture was read at
+`10a8954ea2d8fd57d6b8943dc3c035df2e18e1ab`. Its app clone, separate home,
+Chat Completions proxy and automations were not adopted. No upstream code was
+copied or installed. The new direct candidate and its limitations are documented
+in `models/common/docs/direct-profile-entry.md`; older evidence stays unchanged.
+
+## 2026-10-01: actual native recovery after reported reopen
+
+The owner reported reopening in native mode. Exact packaged Desktop processes
+had new birth times, but the observed disk still selected the unified provider,
+with no native protection. The exact shortcut fields and frozen native helper
+were checked; its read-only status required normal exit. No cause is inferred
+from the owner's report alone. The old bound router PID was absent; a lifecycle
+GET at its saved port timed out and no listener was observed. This is not a clean
+service-stop receipt or permission to restart/replay an old plan.
+
+The existing standalone official-route recovery preview passed without warnings.
+Its explicit application completed only its managed config/entry/protection
+changes and retained private originals. A subsequent preview showed native mode
+with no remaining changes. No Desktop process was killed, model request sent,
+history rewritten or custom entry deployed.
+
+One fresh native App Server ran initialization, `config/read`, and a single
+bounded `model/list`. It loaded the official default provider and eight native
+model identities. Its config and model-cache snapshots remained byte-identical.
+All seven saved native API/Local profiles then passed source-bound previews
+against the current real native config, with `baseline_is_live_config=true`.
+These are configuration/catalog/preparation evidence, not real endpoint or main
+window acceptance. The existing running Desktop predates the recovery and its
+native entry check still returns `normal_exit_required`. Cold main-window
+acceptance and direct entry deployment remain pending. Old failures and uncertain
+lifecycle evidence stay retained.
+
+## 2026-10-01: native cold-start review and durable direct-entry source
+
+After the owner's next normal restart, every observed process belonged to the
+exact official package and was born after the actual native configuration
+recovery. The current config still selected the official default provider, with
+native protection and no custom root catalog or active unified/direct projection.
+The only parsed difference from the retained recovered native bytes was the
+native tool's CUA pipe leaf. Config stayed unchanged during this read-only
+review; actionable inbox and pending callbacks were zero. No diagnostic model
+request or task operation was sent. This establishes configuration and startup
+order, not a selected task's observed upstream packet or voice acceptance.
+
+New canonical source adds immutable profile plans, one-shot direct cycles and
+witnessed Windows config replacement. The independent PowerShell helper restores
+only validated owned bytes and retains later settings without Python or model
+services. v1 remains strict; explicit v2 permits only the same manifest model and
+listed effort values. A new recovery epoch retains exact native-after bytes and
+completion time; the running-native guard accepts only an exact later CUA pipe
+change. Legacy recovery dates do not acquire this authority. Per-cycle Shell
+launch intent/result records retain failed or uncertain attempts without replay.
+
+The chooser and pair build bind a separate direct workflow and retain the legacy
+origin, original files and every prior ownership step. Retirement preview now
+binds the current CUA-only delta after validated historical recovery. Archived
+entry witnesses distinguish current and historical checks; no previous build or
+failed result is rewritten. Actual retirement, archive, direct entry installation
+and real model/Desktop acceptance remain unperformed at this source stage.
+
+Targeted tests cover real disposable Windows replacement, independent recovery,
+later CUA/effort changes, poisoned records, stale sources, pending cycles,
+credential scope, picker cancellation/process identity and failed Shell attempts.
+Earlier source-digest races, a test-placement error and diagnostic stderr decoder
+errors remain retained as development failures. The native-epoch test exposed
+PowerShell ISO-date coercion; its repair reads the original JSON string and the
+five revised epoch checks pass. The initial private restart-observation script
+had a syntax error before any record/write, then the repaired bounded review
+completed. Full regression and candidate readiness are recorded separately.
+
+The frozen implementation's full run completed 1,544 Python tests in 1,414.159
+seconds, with 26 skips and three failures limited to the already loaded legacy
+pair fixture missing the new immutable profile-plan binding. The failure log
+remains unchanged. Only that test fixture was corrected; its fresh nine-test
+suite passed in 146.824 seconds. All 134 Node tests passed. This is a full run
+plus an affected-suite correction, not a rewritten successful full-run receipt.
+No implementation source changed between the compiled candidate, the full run
+and the corrected affected suite.
+
+The actual private candidate and seven direct plans passed a separate read-only
+review of all 76 script-source bindings, exact Python/helper/entry identities,
+candidate files and seven live-config previews. Config, cache, protection and
+the owned live entry stayed byte-identical. The current release source collector
+accepted 254 files and five reviewed documents; 162 Python source files compiled
+without imports. The candidate remains uninstalled and the old unified plan has
+not been retired or archived.
+
+Cold entry selection changes the application default provider, not a per-task
+provider boundary. Existing task model caches, automatic Desktop tasks and
+foreign reasoning history remain separate live acceptance risks. An entry
+upgrade followed by native opening does not establish custom-model routing or
+same-chat acceptance. No custom turn is dispatched by the planned maintenance
+handoff.
+
+After that frozen candidate review, the canonical maintenance renderer gained
+one additive `native_entry_updated` outcome for this private entry-maintenance
+handoff. Existing `complete` behavior is unchanged. It explicitly labels entry
+upgrade plus native opening rather than implying custom-model activation. Its
+PowerShell parse check and eight existing feedback tests passed in 7.321 seconds.
+This later renderer change is separate from the retained full run and does not
+change any candidate or direct-plan source binding.

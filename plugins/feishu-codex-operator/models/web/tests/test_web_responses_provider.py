@@ -348,6 +348,7 @@ class WebResponsesProviderTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(error['code'],'web_browser_driver_failed_no_retry')
                     self.assertNotIn('尚未读完',error['message'])
                     self.assertNotIn('读取容量',error['message'])
+                    self.assertNotIn('citation_validation', provider.bridge.diagnostics()['last_turn'])
                 await provider.stop()
 
     async def test_rejected_native_result_reports_only_current_transport_without_replay(self):

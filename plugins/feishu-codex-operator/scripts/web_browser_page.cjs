@@ -166,7 +166,7 @@ function pluginMaintenanceReady() {
   const visible = e => !!e && e.getClientRects().length > 0
     && !e.closest('[hidden],[inert],[aria-hidden="true"]');
   if (document.readyState !== 'complete' || !/^ChatGPT(?: - .+)?$/.test(document.title)) return false;
-  if ([...document.querySelectorAll('[data-message-author-role],[data-testid="stop-button"],[aria-busy="true"]')].some(visible)) return false;
+  if ([...document.querySelectorAll('[data-message-author-role],[aria-busy="true"],' + stopControlSelector())].some(visible)) return false;
   if ([...document.querySelectorAll('button,a')].some(e => visible(e)
     && (/^(登录|Log in|Sign in)$/.test(e.textContent.trim())
       || /^(刷新|Refresh)$/.test(e.textContent.trim()) && (e.disabled || e.getAttribute('aria-disabled') === 'true')))) return false;
@@ -179,22 +179,24 @@ function pluginMaintenanceReady() {
       || document.getElementById(e.getAttribute('aria-labelledby'))?.textContent?.trim() || ''))) return false;
   return true;
 }
-function startFreshChat(expectedPrompt = null, expectedId = null) {
+function startFreshChat(expectedPrompt = null, expectedId = null, requestBinding = null) {
   const composer = uniqueComposer();
   const users = document.querySelectorAll('[data-message-author-role="user"]');
   const assistants = document.querySelectorAll('[data-message-author-role="assistant"]');
   const modernRows = document.querySelectorAll('[data-chatgpt-search-unit-key]');
-  const legacyIdle = !modernRows.length && users.length === 1 && assistants.length === 1;
+  const legacyIdle = requestBinding === null && !modernRows.length
+    && users.length === 1 && assistants.length === 1;
   // The current renderer no longer exposes data-message-author-role. Recheck
   // the exact completed public turn immediately before navigating away from it.
   const modernFinal = modernRows.length && users.length === 0 && assistants.length === 0
     && typeof expectedPrompt === 'string' && typeof expectedId === 'string'
-    ? modernPublicFinal(expectedPrompt, false, true) : null;
+    ? modernPublicFinal(expectedPrompt, false, true, requestBinding) : null;
   const modernIdle = !!modernFinal && modernFinal.id === expectedId;
-  if (!composer || composer.textContent !== ''
-      || (!legacyIdle && !modernIdle)
-      || [...document.querySelectorAll('[data-testid="stop-button"]')].some(e => e.getClientRects().length))
-    throw new Error('web_new_chat_idle_page_required');
+  if (!composer) throw new Error('web_new_chat_idle_page_required_composer');
+  if (composer.textContent !== '') throw new Error('web_new_chat_idle_page_required_empty');
+  if (!legacyIdle && !modernIdle) throw new Error('web_new_chat_idle_page_required_identity');
+  if ([...document.querySelectorAll(stopControlSelector())].some(e => e.getClientRects().length))
+    throw new Error('web_new_chat_idle_page_required_stopped');
   const links = [...document.querySelectorAll('a[data-testid="create-new-chat-button"]')]
     .filter(e => e.getClientRects().length);
   const buttons = [...document.querySelectorAll('nav[aria-label="首页"] button,nav[aria-label="Home"] button,nav[aria-label="聊天记录"] button,nav[aria-label="Chat history"] button')]
@@ -248,7 +250,7 @@ function emptyFreshChat() {
   const composer = uniqueComposer();
   return !!composer && composer.textContent === ''
     && document.querySelectorAll('[data-message-author-role],[data-chatgpt-search-unit-key]').length === 0
-    && ![...document.querySelectorAll('[data-testid="stop-button"]')]
+    && ![...document.querySelectorAll(stopControlSelector())]
       .some(e => e.getClientRects().length);
 }
 function enableTemporaryChat() {
@@ -725,9 +727,40 @@ function sendOnce() {
   if (buttons.length !== 1) throw new Error("web_send_control_ambiguous");
   buttons[0].click();
 }
-function cancelGeneration() {
-  const buttons = [...document.querySelectorAll('[data-testid="stop-button"]')]
-    .filter(e => e.getClientRects().length && !e.disabled && e.getAttribute("aria-disabled") !== "true");
+function stopControlSelector() {
+  // Public composer controls only. Localized labels are scoped to a form;
+  // generic page text and voice controls never authorize cancellation.
+  return '[data-testid="stop-button"],button[data-testid="composer-stop-button"],'
+    + ['Stop streaming', 'Stop generating', 'Stop answering', '停止', '停止生成', '停止回复']
+      .map(label => `form button[aria-label="${label}"]`).join(',');
+}
+function cancelGeneration(prompt, expectedUserId, requestBinding = null, connectorName = null) {
+  // Identity and the Stop click share one synchronous page evaluation. A host
+  // observation can become stale before this operation reaches the renderer.
+  if (typeof prompt !== 'string' || !prompt || prompt.length > 65536
+      || typeof expectedUserId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(expectedUserId))
+    throw new Error('web_cancel_user_binding_required');
+  let url;
+  try { url = new URL(location.href); } catch { throw new Error('web_cancel_page_binding_required'); }
+  if (url.origin !== 'https://chatgpt.com' || url.username || url.password
+      || url.pathname === '/auth/login' || url.pathname === '/plugins' || url.pathname.startsWith('/plugins/'))
+    throw new Error('web_cancel_page_binding_required');
+  const interruption = publicInterruptionState(connectorName);
+  const loginVisible = [...document.querySelectorAll('button,a')].some(element => element.getClientRects().length
+    && !element.closest('[hidden],[inert],[aria-hidden="true"]')
+    && /^(登录|Log in|Sign in)$/.test((element.textContent || '').trim()));
+  const composer = uniqueComposer();
+  if (interruption.sessionExpired || interruption.approvalCards > 0 || interruption.connectorDialogs > 0
+      || interruption.subscriptionUnavailable || interruption.responseError
+      || /just a moment|请稍候/i.test(document.title) || loginVisible
+      || !composer || composer.textContent !== '') throw new Error('web_cancel_page_interrupted');
+  const identity = requestBinding !== null
+    ? publicBoundUserIdentity(prompt, expectedUserId, requestBinding)
+    : publicUserBindingShape(prompt, true, true);
+  if (identity !== expectedUserId) throw new Error('web_cancel_user_binding_required');
+  const buttons = [...document.querySelectorAll(stopControlSelector())]
+    .filter(e => e.getClientRects().length && !e.disabled && e.getAttribute("aria-disabled") !== "true"
+      && !e.closest('[hidden],[inert],[aria-hidden="true"]'));
   if (buttons.length > 1) throw new Error("web_stop_control_ambiguous");
   if (!buttons.length) return false;
   buttons[0].click();
@@ -830,7 +863,7 @@ function currentPublicFiber(fiber) {
   return resolve(fiber);
 }
 
-function modernPublicItem(role, committedView = false) {
+function modernPublicItem(role, committedView = false, identityOnly = false) {
   // The current renderer binds a visible message unit to one item, rather
   // than exposing the former message row. Read only that row's item and the
   // containing turn's terminal flags; never walk a turn-wide message list.
@@ -838,6 +871,7 @@ function modernPublicItem(role, committedView = false) {
     .filter(row => row.getAttribute('data-chatgpt-search-unit-key')?.endsWith(':' + role));
   if (!rows.length) return null;
   if (rows.length !== 1) throw new Error('web_public_message_ambiguous');
+  const unitOnly=role==='assistant' && identityOnly===true;
   const row = rows[0], key = row.getAttribute('data-chatgpt-search-unit-key');
   const rawIds = row.getAttribute('data-chatgpt-search-message-ids');
   const ids = typeof rawIds === 'string' ? rawIds.trim().split(/\s+/) : [];
@@ -854,22 +888,141 @@ function modernPublicItem(role, committedView = false) {
     const selected = row.querySelectorAll('[data-chatgpt-selection-message-id]');
     // During a tool step the assistant unit can exist before its final
     // selection marker. It is not a completed public answer yet.
-    if (selected.length === 0) return null;
-    if (selected.length !== 1 || selected[0].getAttribute('data-chatgpt-selection-message-id') !== id)
+    if (selected.length === 0 && !unitOnly) return null;
+    if (selected.length > 1 || selected.length === 1
+        && selected[0].getAttribute('data-chatgpt-selection-message-id') !== id)
       throw new Error('web_public_message_identity_invalid');
   }
   const fiberKey = Object.keys(row).find(name => name.startsWith('__reactFiber$'));
-  let fiber = fiberKey ? row[fiberKey] : null, item = null, turn = null;
+  let fiber = fiberKey ? row[fiberKey] : null, item = null, turn = null, entry = null, entryFiber = null;
   for (let depth = 0; fiber && depth < 45; depth++, fiber = fiber.return) {
     const current = committedView ? currentPublicFiber(fiber) : fiber;
     const props = current.memoizedProps;
-    if (props?.item?.messageId === id && props.item.type === role + '-message')
+    if (!unitOnly && props?.item?.messageId === id && props.item.type === role + '-message')
       item ??= props.item;
-    if (props?.entry?.turn && turn === null) turn = props.entry.turn;
-    if (item && turn) break;
+    if (props?.entry?.turn && turn === null) {turn = props.entry.turn; entry = props.entry; entryFiber = current;}
+    if (turn && (unitOnly || item)) break;
   }
+  // Cancellation reads only the current public unit's identity/entry. During
+  // thinking there may be no final selection marker or readable message item.
+  // This metadata object never supplies content or a completed answer.
+  if (unitOnly && turn) return {id,turn,entry,entryFiber,element:row,identityOnly:true,publicRole:'assistant'};
   if (!item || !turn) throw new Error('web_public_message_source_unavailable');
-  return { id, item, turn };
+  return { id, item, turn, entry, entryFiber, element: row };
+}
+
+function publicIdentityStructure(role, expectedUserId, prompt) {
+  // Fixed fields on this public unit only. Descriptor inspection never invokes
+  // getters or walks message bodies, arrays, account stores or unknown fields.
+  const current = modernPublicItem(role, true);
+  if (!current) return null;
+  const names = ['id', 'messageId', 'parentId', 'parentMessageId', 'parentUserMessageId',
+    'userMessageId', 'initialUserMessageId', 'inputMessageId', 'firstMessageId', 'latestMessageId',
+    'previousMessageId', 'previousTurnId', 'turnId', 'requestId', 'conversationId',
+    'sourceMessageIds', 'messageIds', 'type', 'status', 'userMessage', 'userItem',
+    'parentMessage', 'user', 'item', 'items', 'message', 'parent', 'parentTurnId',
+    'rootMessageId', 'anchorMessageId', 'precedingUserMessageId', 'startMessageId',
+    'endMessageId', 'userId', 'author', 'node', 'messageNode', 'conversationNode',
+    'userMessageNode', 'parentMessageNode', 'source', 'turn', 'entry', 'previousEntry',
+    'precedingEntry', 'previousUserMessage', 'precedingUserMessage', 'previousUserTurn',
+    'precedingUserTurn', 'userTurn', 'userEntry', 'parentEntry', 'turnIndex', 'entryIndex',
+    'index', 'conversationTurnId', 'parentConversationTurnId', 'parent_message_id', 'parent_id'];
+  const own = (object, key) => object && typeof object === 'object'
+    ? Object.getOwnPropertyDescriptor(object, key) : undefined;
+  const child = (object, key) => own(object, key)?.value;
+  const sources = {item:current.item, turn:current.turn, entry:current.entry,
+    entryUserMessage:child(current.entry,'userMessage'), entryUserItem:child(current.entry,'userItem'),
+    turnUserMessage:child(current.turn,'userMessage'), itemParentMessage:child(current.item,'parentMessage'),
+    itemNode:child(current.item,'node'), turnParent:child(current.turn,'parent'),
+    entryParent:child(current.entry,'parent'), entryUserMessageNode:child(current.entry,'userMessageNode'),
+    entryMessageNode:child(current.entry,'messageNode')};
+  const groups = {};
+  for (const [name, object] of Object.entries(sources)) {
+    const present = !!object && typeof object === 'object' && !Array.isArray(object);
+    const fields = [];
+    if (present) for (const field of names) {
+      const descriptor = own(object,field);
+      if (!descriptor) continue;
+      const accessor = !Object.hasOwn(descriptor,'value'), value = descriptor.value;
+      const kind = accessor ? 'accessor' : value === null ? 'null'
+        : Array.isArray(value) ? 'array' : ['string','object','number','boolean','undefined','function'].includes(typeof value)
+          ? typeof value : 'other';
+      fields.push([field,kind,!accessor && typeof value === 'string' && value === expectedUserId,
+        !accessor && typeof value === 'string' && value === current.id]);
+    }
+    groups[name] = {present, unknownFields:present
+      ? Math.min(10000,Object.keys(object).filter(key => !names.includes(key)).length) : 0, fields};
+  }
+  const bubbles = [...document.querySelectorAll('[data-user-message-bubble="true"]')];
+  let bubbleBound = null;
+  if (bubbles.length === 1) {
+    try {
+      const key = Object.keys(bubbles[0]).find(name => name.startsWith('__reactFiber$'));
+      let fiber = key ? bubbles[0][key] : null;
+      for (let depth=0;fiber && depth<45;depth++,fiber=fiber.return) {
+        const props = currentPublicFiber(fiber).memoizedProps;
+        if (props?.item?.type === 'user-message') {
+          bubbleBound = props.item.messageId === expectedUserId && props.item.message === prompt; break;
+        }
+        if (own(props,'allMessages') || own(props,'store')) break;
+      }
+    } catch { /* Unknown is not a current binding. */ }
+  }
+  const renderAncestors = [];
+  const arrayNames = ['entries','turns','conversationTurns','renderEntries','turnEntries','items','rows',
+    'data.entries','data.turns','data.items','data.rows','context.entries','context.turns'];
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+  const arrayValues = value => {
+    if (!Array.isArray(value) || value.length > 128) return null;
+    const result = [];
+    for (let i=0;i<value.length;i++) {
+      const descriptor=own(value,String(i));
+      if (!descriptor || !Object.hasOwn(descriptor,'value')) return null;
+      result.push(descriptor.value);
+    }
+    return result;
+  };
+  let parent = current.entryFiber;
+  for (let depth=0;parent && depth<20;depth++,parent=parent.return) {
+    const props=currentPublicFiber(parent).memoizedProps, fields=[];
+    for (const name of arrayNames) {
+      const parts=name.split('.');
+      const owner=parts.length===1?props:child(props,parts[0]);
+      const descriptor=own(owner,parts[parts.length-1]);
+      if (!descriptor) continue;
+      const accessor=!Object.hasOwn(descriptor,'value'), value=descriptor.value;
+      const kind=accessor?'accessor':value===null?'null':Array.isArray(value)?'array':typeof value==='object'?'object':'other';
+      const values=accessor?null:arrayValues(value);
+      let entryIndex=null,turnIndex=null,userCount=null,typedUserCount=null,lastEntry=null;
+      if (values) {
+        const entries=values.map((v,i)=>v===current.entry?i:null).filter(i=>i!==null);
+        const turns=values.map((v,i)=>v===current.turn || child(v,'turn')===current.turn?i:null).filter(i=>i!==null);
+        entryIndex=entries.length===1?entries[0]:null;
+        turnIndex=turns.length===1?turns[0]:null;
+        lastEntry=entries.length===1?entryIndex===values.length-1:null;
+        // Only identity metadata of an ordered current-render collection that
+        // contains this exact committed entry/turn. Never read message bodies.
+        if (entryIndex!==null || turnIndex!==null) {
+          userCount=0;typedUserCount=0;
+          for (const value of values) {
+            const turn=child(value,'turn') || value;
+            const ids=arrayValues(child(turn,'messageIds'));
+            if (ids && ids.length && ids.every(id=>typeof id==='string'&&uuid.test(id))
+                && new Set(ids).size===ids.length && ids.includes(expectedUserId)) userCount++;
+            const items=arrayValues(child(turn,'items'));
+            if (items && items.some(item=>child(item,'type')==='user-message'
+                && child(item,'messageId')===expectedUserId)) typedUserCount++;
+          }
+        }
+      }
+      fields.push([name,kind,values?values.length:null,entryIndex,turnIndex,userCount,typedUserCount,lastEntry]);
+    }
+    renderAncestors.push({depth,fields});
+    if (own(props,'allMessages') || own(props,'store')) break;
+  }
+  return {role,groups,renderAncestors,userBubbles:Math.min(10000,bubbles.length),
+    visibleUserBubbles:Math.min(10000,bubbles.filter(row => row.getClientRects().length
+      && !row.closest('[hidden],[inert],[aria-hidden="true"]')).length),bubbleBound};
 }
 
 function modernIdentityShape() {
@@ -896,6 +1049,147 @@ function modernIdentityShape() {
       selectedLast: !!chosen && chosen === ids[ids.length - 1],
       selectedAny: !!chosen && ids.includes(chosen) };
   }) };
+}
+
+function armPublicFreshRequest(nonce) {
+  // Managed fresh-page admission only. This page-local record is neither a
+  // conversation store nor authentication; it grants no tool permission.
+  if (typeof nonce !== 'string' || !/^[a-f0-9]{32}$/.test(nonce)
+      || !emptyFreshChat() || !document.documentElement) return false;
+  try {
+    const url=new URL(location.href);
+    if(url.origin!=='https://chatgpt.com' || url.pathname!=='/'
+        || url.search!=='?temporary-chat=true' || url.hash) return false;
+  } catch {return false;}
+  const key = Symbol.for('codex.operator.public-request-document.v1');
+  const previous = Object.getOwnPropertyDescriptor(globalThis,key);
+  if (previous) {
+    if (!Object.hasOwn(previous,'value') || previous.value?.kind !== 'modern_fresh_document_v1'
+        || previous.value.nonce === nonce) return false;
+    previous.value.observer?.disconnect();
+  }
+  Object.defineProperty(globalThis,key,{configurable:true,writable:false,enumerable:false,
+    value:{kind:'modern_fresh_document_v1',nonce,document,root:document.documentElement,
+      phase:'armed',temporaryDocument:true,invalid:false,observer:null,checkChanges:null,userId:null,prompt:null,conversationId:null}});
+  return true;
+}
+
+function capturePublicRequestBinding(prompt, expectedUserId, nonce) {
+  // Bind the exact first user source in this independently admitted empty
+  // document. Role-specific turn lists cannot contain both user and assistant.
+  const key = Symbol.for('codex.operator.public-request-document.v1');
+  const owned = Object.getOwnPropertyDescriptor(globalThis,key)?.value;
+  if (!owned || owned.kind !== 'modern_fresh_document_v1' || owned.nonce !== nonce
+      || owned.document !== document || owned.root !== document.documentElement
+      || owned.phase !== 'armed' || typeof MutationObserver !== 'function') return null;
+  if (document.querySelectorAll('[data-message-author-role="user"],[data-message-author-role="assistant"]').length)
+    return null;
+  const user = modernPublicItem('user', true);
+  if (!user || user.id !== expectedUserId || typeof prompt !== 'string'
+      || prompt.length > 65536 || user.item.message !== prompt || !user.element
+      || !owned.root.contains(user.element)) return null;
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+  const conversationId = Object.getOwnPropertyDescriptor(user.entry,'conversationId')?.value;
+  // Preserve the renderer's exact bounded key. An explicit empty key is valid
+  // only in this independently admitted temporary document; it supplies no
+  // conversation identity or authentication by itself.
+  if (!uuid.test(user.id) || typeof conversationId !== 'string'
+      || conversationId.length>128 || /[\u0000-\u001f\u007f]/.test(conversationId)
+      || owned.temporaryDocument!==true) return null;
+  if(conversationId==='') {
+    try {
+      const url=new URL(location.href);
+      if(url.origin!=='https://chatgpt.com' || url.pathname!=='/'
+          || url.search!=='?temporary-chat=true' || url.hash) return null;
+    } catch {return null;}
+  }
+  Object.assign(owned,{phase:'bound',userId:user.id,prompt,conversationId});
+  const changed = records => {
+    const inspect = node => {
+      if (node?.nodeType !== 1) return;
+      const rows = [node,...node.querySelectorAll('[data-chatgpt-search-unit-key]')];
+      for (const row of rows) {
+        if (!row.getAttribute('data-chatgpt-search-unit-key')?.endsWith(':user')) continue;
+        const raw = row.getAttribute('data-chatgpt-search-message-ids');
+        if (typeof raw !== 'string' || raw.length > 2048) {owned.invalid=true;continue;}
+        const ids=raw.trim().split(/\s+/);
+        if (!ids.length || ids.length > 8 || ids.some(id=>id!==owned.userId)) owned.invalid=true;
+      }
+    };
+    for (const record of records) {
+      if (record.type==='characterData' && user.element.getAttribute('data-chatgpt-search-unit-key')?.endsWith(':user')
+          && user.element.contains(record.target)) owned.invalid=true;
+      if (record.type==='attributes') inspect(record.target);
+      if (record.type==='childList') for (const node of record.addedNodes) inspect(node);
+    }
+    // A second or edited mounted source is never explained away as virtualization.
+    try {
+      const present=modernPublicItem('user',true);
+      if (present && (present.id!==owned.userId || present.item.message!==owned.prompt)) owned.invalid=true;
+    } catch {owned.invalid=true;}
+  };
+  owned.checkChanges=changed;
+  owned.observer=new MutationObserver(changed);
+  owned.observer.observe(owned.root,{subtree:true,childList:true,characterData:true,attributes:true,
+    attributeFilter:['data-chatgpt-search-unit-key','data-chatgpt-search-message-ids']});
+  return {kind:'modern_fresh_document_v1',userId:user.id,prompt,conversationId,nonce};
+}
+
+function modernBoundTurnMatches(current, prompt, binding, finalIdentity = false) {
+  // Only this managed request's fresh document and original public conversation
+  // identity permit an absent user. Keep current assistant identity/terminal
+  // checks; a fallback unit key, title, text or completion flag supplies no binding.
+  if (!binding || typeof binding !== 'object' || Array.isArray(binding)
+      || Object.keys(binding).length !== 5
+      || !Object.keys(binding).every(key => ['kind', 'userId', 'prompt', 'conversationId', 'nonce'].includes(key))
+      || binding.kind !== 'modern_fresh_document_v1'
+      || typeof binding.prompt !== 'string' || binding.prompt.length > 65536
+      || binding.prompt !== prompt) return false;
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+  if (typeof binding.userId !== 'string' || typeof current?.id !== 'string'
+      || !uuid.test(binding.userId) || !uuid.test(current.id)
+      || typeof binding.conversationId !== 'string' || binding.conversationId.length>128
+      || /[\u0000-\u001f\u007f]/.test(binding.conversationId)
+      || typeof binding.nonce !== 'string' || !/^[a-f0-9]{32}$/.test(binding.nonce)) return false;
+  const owned=Object.getOwnPropertyDescriptor(globalThis,Symbol.for('codex.operator.public-request-document.v1'))?.value;
+  if (!owned || owned.kind!==binding.kind || owned.phase!=='bound' || owned.nonce!==binding.nonce
+      || owned.document!==document || owned.root!==document.documentElement
+      || owned.userId!==binding.userId || owned.prompt!==binding.prompt
+      || owned.conversationId!==binding.conversationId || owned.temporaryDocument!==true
+      || !owned.observer || !current.element
+      || !owned.root.contains(current.element)) return false;
+  if(binding.conversationId==='') {
+    try {
+      const url=new URL(location.href);
+      if(url.origin!=='https://chatgpt.com' || url.pathname!=='/'
+          || url.search!=='?temporary-chat=true' || url.hash) return false;
+    } catch {return false;}
+  }
+  owned.checkChanges(owned.observer.takeRecords());
+  if (owned.invalid || Object.getOwnPropertyDescriptor(current.entry,'conversationId')?.value!==binding.conversationId)
+    return false;
+  const ids = current.turn?.messageIds;
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 128
+      || Array.from(ids).some(id => typeof id !== 'string' || !uuid.test(id))
+      || new Set(ids).size !== ids.length) return false;
+  if(current.identityOnly===true) return !finalIdentity && current.publicRole==='assistant'
+    && current.id!==binding.userId && ids.includes(current.id);
+  if (current.item?.type==='user-message') return !finalIdentity && current.id===binding.userId
+    && current.item.message===binding.prompt && ids.includes(current.id);
+  return current.item?.type==='assistant-message' && current.id!==binding.userId
+    && (finalIdentity ? ids[ids.length - 1]===current.id : ids.includes(current.id));
+}
+
+function publicBoundUserIdentity(prompt, expectedUserId, binding) {
+  // A changed or ambiguous mounted user is never treated as virtualization.
+  const users = document.querySelectorAll('[data-message-author-role="user"]');
+  const assistants = document.querySelectorAll('[data-message-author-role="assistant"]');
+  const modern = [...document.querySelectorAll('[data-chatgpt-search-unit-key]')];
+  if (users.length || assistants.length) return null;
+  if (binding?.userId !== expectedUserId) return null;
+  const current = modern.some(row=>row.getAttribute('data-chatgpt-search-unit-key')?.endsWith(':user'))
+    ? modernPublicItem('user',true) : modernPublicItem('assistant',true,true);
+  return current && modernBoundTurnMatches(current, prompt, binding) ? expectedUserId : null;
 }
 
 function projectPublicReferences(references) {
@@ -935,7 +1229,9 @@ function projectPublicReferences(references) {
   });
 }
 
-function modernPublicFinal(prompt, includeCitations = false, committedView = false) {
+function modernPublicFinal(prompt, includeCitations = false, committedView = false, requestBinding = null) {
+  if (requestBinding !== null && document.querySelectorAll(
+      '[data-message-author-role="user"],[data-message-author-role="assistant"]').length) return null;
   const currentItem = role => {
     try { return modernPublicItem(role, committedView); }
     catch (error) {
@@ -946,14 +1242,20 @@ function modernPublicFinal(prompt, includeCitations = false, committedView = fal
     }
   };
   const user = currentItem('user');
-  if (!user) return null;
-  if (typeof user.item.message !== 'string' || user.item.message !== prompt)
+  if (!user && requestBinding === null) return null;
+  if (user && (typeof user.item.message !== 'string' || user.item.message !== prompt))
+    throw new Error('web_user_turn_mismatch');
+  if (user && requestBinding !== null && user.id !== requestBinding?.userId)
     throw new Error('web_user_turn_mismatch');
   const final = currentItem('assistant');
   if (!final) return null;
-  // Identical prompt text and a completed assistant item cannot bind a reply
-  // from an earlier turn. Both visible units must share their exact turn.
-  if (final.turn !== user.turn) return null;
+  // Without a dispatch binding, retain the original mounted-object gate.
+  // Bound requests retain the original fresh document and complete user source.
+  // The assistant must pass that binding and its own terminal identity checks,
+  // even when virtualization removes the user from the current render tree.
+  if (requestBinding !== null
+      ? !modernBoundTurnMatches(final, prompt, requestBinding, true)
+      : final.turn !== user.turn) return null;
   const message = final.item;
   if (message.completed !== true || message.phase !== 'final_answer'
       || message.latestMessageId !== final.id
@@ -977,11 +1279,15 @@ function modernPublicFinal(prompt, includeCitations = false, committedView = fal
   return result;
 }
 
-function publicFinal(prompt, includeCitations = false, committedView = false) {
-  if (document.querySelector('[data-testid="stop-button"]')) return null;
+function publicFinal(prompt, includeCitations = false, committedView = false, requestBinding = null) {
+  if (document.querySelector(stopControlSelector())) return null;
+  // A managed modern request cannot downgrade to an unbound legacy reader if
+  // its page changes. The modern gate also rejects mixed renderer rows.
+  if (requestBinding !== null)
+    return modernPublicFinal(prompt, includeCitations, committedView, requestBinding);
   const users = [...document.querySelectorAll('[data-message-author-role="user"]')];
   if (!users.length && document.querySelector('[data-chatgpt-search-unit-key]'))
-    return modernPublicFinal(prompt, includeCitations, committedView);
+    return modernPublicFinal(prompt, includeCitations, committedView, requestBinding);
   if (users.length !== 1) return null;
   // Long user bubbles can add presentation controls. Bind the current row's
   // structured public source instead of trimming those controls from text.
@@ -1053,14 +1359,16 @@ function publicFinal(prompt, includeCitations = false, committedView = false) {
   return found.size === 1 ? found.values().next().value.result : null;
 }
 
-function publicUserBindingShape(prompt, committedView = false) {
+function publicUserBindingShape(prompt, committedView = false, identityOnly = false) {
   const users = [...document.querySelectorAll('[data-message-author-role="user"]')];
   if (!users.length && document.querySelector('[data-chatgpt-search-unit-key]')) {
     const user = modernPublicItem('user', committedView);
     if (!user) return null;
     const source = user.item.message;
     if (typeof source !== 'string' || source.length > 1024 * 1024 || prompt.length > 65536)
-      return { supportedTextShape: false };
+      return identityOnly ? null : { supportedTextShape: false };
+    // Private request binding only; default diagnostics never export identity.
+    if (identityOnly) return source === prompt ? user.id : null;
     let firstDifference = 0;
     while (firstDifference < Math.min(source.length, prompt.length)
         && source[firstDifference] === prompt[firstDifference]) firstDifference++;
@@ -1088,10 +1396,11 @@ function publicUserBindingShape(prompt, committedView = false) {
       const content = message.content;
       if (content?.content_type !== 'text' || !Array.isArray(content.parts)
           || content.parts.length !== 1 || typeof content.parts[0] !== 'string')
-        return { supportedTextShape: false };
+        return identityOnly ? null : { supportedTextShape: false };
       const text = content.parts[0];
       if (text.length > 1024 * 1024 || prompt.length > 65536)
-        return { supportedTextShape: false };
+        return identityOnly ? null : { supportedTextShape: false };
+      if (identityOnly) return text === prompt ? id : null;
       let firstDifference = 0, sharedSuffix = 0;
       while (firstDifference < Math.min(text.length, prompt.length)
           && text[firstDifference] === prompt[firstDifference]) firstDifference++;
@@ -1118,6 +1427,35 @@ function publicUserBindingShape(prompt, committedView = false) {
     if (Array.isArray(props?.allMessages) || (props?.turn && typeof props.turn === 'object')) break;
   }
   return null;
+}
+
+function capturePublicDispatchBinding(prompt, nonce = null, allowAppSpaceProjection = false) {
+  // One synchronous page evaluation must check the original source, obtain its
+  // identity and retain the admitted document before a fast reply unmounts it.
+  if (typeof prompt !== 'string' || prompt.length > 65536
+      || (nonce !== null && (typeof nonce !== 'string' || !/^[a-f0-9]{32}$/.test(nonce)))
+      || typeof allowAppSpaceProjection !== 'boolean') throw new Error('web_user_identity_unavailable');
+  const legacy = document.querySelectorAll('[data-message-author-role="user"],[data-message-author-role="assistant"]');
+  const modern = document.querySelectorAll('[data-chatgpt-search-unit-key]').length > 0;
+  if (legacy.length && modern) throw new Error('web_user_identity_unavailable');
+  if (!legacy.length && !modern) return null;
+  let shape = publicUserBindingShape(prompt, true);
+  if (!shape) return null;
+  if (shape.exact === false && allowAppSpaceProjection && shape.appSeparatorOnly === true) {
+    const head = /^\[\$[a-z0-9-]{1,32}\]\(app:\/\/asdk_app_[a-f0-9]{32}\)/.exec(prompt)?.[0];
+    if (head && prompt[head.length] === '\u00a0') {
+      prompt = head + ' ' + prompt.slice(head.length + 1);
+      shape = publicUserBindingShape(prompt, true);
+    }
+  }
+  if (shape?.exact !== true) return {prompt, userId:null, shape, modern, requestBinding:null};
+  const userId = publicUserBindingShape(prompt, true, true);
+  if (typeof userId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(userId))
+    throw new Error('web_user_identity_unavailable');
+  const requestBinding = modern && nonce !== null ? capturePublicRequestBinding(prompt, userId, nonce) : null;
+  if (modern && nonce !== null && requestBinding === null) throw new Error('web_user_identity_unavailable');
+  // This packet is private host state. Only its bounded shape is diagnostic.
+  return {prompt, userId, shape, modern, requestBinding};
 }
 
 function publicInterruptionState(connectorName = null) {
@@ -1191,6 +1529,114 @@ function inspectionSnapshot(messageId) {
   return { notices };
 }
 
+function publicTurnState(prompt, expectedUserId, requestBinding = null) {
+  // Diagnostic projection only. Never export IDs, source text, answer content,
+  // reasoning, tool messages or turn histories; this does not relax any gate.
+  const legacyUsers = document.querySelectorAll('[data-message-author-role="user"]');
+  const legacyAssistants = document.querySelectorAll('[data-message-author-role="assistant"]');
+  const modern = [...document.querySelectorAll('[data-chatgpt-search-unit-key]')];
+  const users = modern.filter(row => row.getAttribute('data-chatgpt-search-unit-key')?.endsWith(':user'));
+  const assistants = modern.filter(row => row.getAttribute('data-chatgpt-search-unit-key')?.endsWith(':assistant'));
+  const result = { legacyUserRows: Math.min(10000, legacyUsers.length),
+    legacyAssistantRows: Math.min(10000, legacyAssistants.length),
+    modernUserRows: Math.min(10000, users.length), modernAssistantRows: Math.min(10000, assistants.length),
+    userSource: 'absent', assistantSource: 'absent', sourceExact: null, userIdentityExact: null,
+    sameTurnObject: null, sameUnitTurn: null, assistantCompleted: null, assistantFinalPhase: null,
+    latestIdentityExact: null, sourceIdentityExact: null, turnCompleted: null, workCompleted: null,
+    turnIdentityListValid: null, turnBoundUserPresent: null, turnBoundUserFirst: null, turnAssistantLast: null,
+    turnInitialPrefixExact: null, requestRecordPresent: false, requestDocumentExact: null,
+    requestRootExact: null, requestArmed: null, requestBound: null, requestInvalid: null,
+    requestUserIdentityExact: null, requestSourceExact: null, conversationIdentityUuid: null,
+    conversationIdentityBounded: null, conversationIdentityExact: null,
+    requestTemporaryDocument: null, conversationIdentityEmpty: null,
+    pendingAssistantIdentityAvailable:null,pendingAssistantConversationExact:null,pendingAssistantTurnIdentityExact:null };
+  if (legacyUsers.length || legacyAssistants.length) {
+    try {
+      const binding = publicUserBindingShape(prompt, true, true);
+      result.userSource = binding === null ? 'absent' : 'available';
+      result.userIdentityExact = binding === null ? null : binding === expectedUserId;
+    } catch { result.userSource = 'unavailable'; }
+    return result;
+  }
+  let user = null, assistant = null;
+  try { user = modernPublicItem('user', true); result.userSource = user ? 'available' : 'absent'; }
+  catch { result.userSource = 'unavailable'; }
+  try { assistant = modernPublicItem('assistant', true); result.assistantSource = assistant ? 'available' : 'absent'; }
+  catch { result.assistantSource = 'unavailable'; }
+  let pending=null;
+  if(!assistant && assistants.length===1) {
+    try {pending=modernPublicItem('assistant',true,true);} catch {}
+    result.pendingAssistantIdentityAvailable=!!pending;
+    if(pending) {
+      const ids=pending.turn?.messageIds;
+      const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+      result.pendingAssistantTurnIdentityExact=Array.isArray(ids) && ids.length>=1 && ids.length<=128
+        && Array.from(ids).every(id=>typeof id==='string' && uuid.test(id))
+        && new Set(ids).size===ids.length && ids.includes(pending.id);
+    }
+  }
+  const ownValue=(object,key)=>object && typeof object==='object'
+    ? Object.getOwnPropertyDescriptor(object,key)?.value:undefined;
+  const owned=Object.getOwnPropertyDescriptor(globalThis,Symbol.for('codex.operator.public-request-document.v1'))?.value;
+  if (ownValue(owned,'kind')==='modern_fresh_document_v1') {
+    result.requestRecordPresent=true;
+    result.requestDocumentExact=ownValue(owned,'document')===document;
+    result.requestRootExact=ownValue(owned,'root')===document.documentElement;
+    result.requestArmed=ownValue(owned,'phase')==='armed';
+    result.requestBound=ownValue(owned,'phase')==='bound';
+    result.requestInvalid=ownValue(owned,'invalid')===true;
+    result.requestTemporaryDocument=ownValue(owned,'temporaryDocument')===true;
+    if(result.requestBound) {
+      result.requestUserIdentityExact=ownValue(owned,'userId')===expectedUserId;
+      result.requestSourceExact=ownValue(owned,'prompt')===prompt;
+    }
+  }
+  const conversationId=ownValue((user||assistant||pending)?.entry,'conversationId');
+  if(typeof conversationId==='string') {
+    result.conversationIdentityUuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(conversationId);
+    result.conversationIdentityBounded=conversationId.length<=128 && !/[\u0000-\u001f\u007f]/.test(conversationId);
+    result.conversationIdentityEmpty=conversationId==='';
+    if(result.requestBound) result.conversationIdentityExact=conversationId===ownValue(owned,'conversationId');
+    if(pending && result.requestBound) result.pendingAssistantConversationExact=result.conversationIdentityExact;
+  }
+  if (user) {
+    result.sourceExact = typeof user.item.message === 'string' ? user.item.message === prompt : null;
+    result.userIdentityExact = user.id === expectedUserId;
+  }
+  if (users.length === 1 && assistants.length === 1)
+    result.sameUnitTurn = users[0].getAttribute('data-chatgpt-search-unit-key').split(':')[0]
+      === assistants[0].getAttribute('data-chatgpt-search-unit-key').split(':')[0];
+  if (user && assistant) result.sameTurnObject = user.turn === assistant.turn;
+  if (assistant) {
+    const item = assistant.item, turn = assistant.turn;
+    result.assistantCompleted = item.completed === true;
+    result.assistantFinalPhase = item.phase === 'final_answer';
+    result.latestIdentityExact = item.latestMessageId === assistant.id;
+    result.sourceIdentityExact = Array.isArray(item.sourceMessageIds) && item.sourceMessageIds.length === 1
+      && item.sourceMessageIds[0] === assistant.id;
+    result.turnCompleted = turn.status === 'complete';
+    result.workCompleted = Number.isFinite(turn.workCompletedAtMs) && turn.workCompletedAtMs > 0;
+    if (requestBinding !== null) {
+      try {
+        const ids = turn.messageIds;
+        const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+        result.turnIdentityListValid = Array.isArray(ids) && ids.length >= 1 && ids.length <= 128
+          && Array.from(ids).every(id => typeof id === 'string' && uuid.test(id))
+          && new Set(ids).size === ids.length;
+        if (result.turnIdentityListValid) {
+          result.turnBoundUserPresent = ids.includes(expectedUserId);
+          result.turnBoundUserFirst = ids[0] === expectedUserId;
+          result.turnAssistantLast = ids[ids.length - 1] === assistant.id;
+          result.turnInitialPrefixExact = Array.isArray(requestBinding.initialIds)
+            && requestBinding.initialIds.length > 0 && requestBinding.initialIds.length <= ids.length
+            && requestBinding.initialIds.every((id, index) => ids[index] === id);
+        }
+      } catch { /* Unknown identity is diagnostic uncertainty, never acceptance. */ }
+    }
+  }
+  return result;
+}
+
 function publicGenerationState(committedView = false) {
   // Counts and fixed flags only. Observe the current public rows; never read
   // source message text, reasoning contents, account stores or arbitrary errors.
@@ -1221,7 +1667,7 @@ function publicGenerationState(committedView = false) {
       }
     }
   }
-  const stop = document.querySelector('[data-testid="stop-button"]');
+  const stop = document.querySelector(stopControlSelector());
   const alerts = [...document.querySelectorAll('[role="alert"]')].filter(visible).slice(0, 16);
   const renderedTextLength = Math.min(1024 * 1024, rows.slice(0, 8).reduce((total, row) => total
     + [...row.querySelectorAll('.markdown')].slice(0, 8).filter(visible)
@@ -1301,6 +1747,6 @@ function publicCitationShape(committedView = false) {
   return { observations };
 }
 
-module.exports = { uniqueComposer, eligibleModelButtons, eligibleEffortContainer, controls, startupControlStructure, freshChatControls, freshChatControlStructure, pluginMaintenanceReady, startFreshChat, enableTemporaryChat, currentPublicFiber, publicGenerationState, publicInterruptionState, inspectionSnapshot, focusModelMenu, clickModelChooser, chooseModel, effortState, effortRangeShape,
+module.exports = { uniqueComposer, eligibleModelButtons, eligibleEffortContainer, controls, startupControlStructure, freshChatControls, freshChatControlStructure, pluginMaintenanceReady, startFreshChat, enableTemporaryChat, currentPublicFiber, publicTurnState, publicGenerationState, publicInterruptionState, inspectionSnapshot, focusModelMenu, clickModelChooser, chooseModel, effortState, effortRangeShape,
   backgroundModelInput, backgroundMenuKey, composerFocused, emptyFreshChat,
-  focusEffort, connectorAccessState, connectorMenuChoice, connectorPillState, selectedConnector, composerPrefix, focusComposer, composerMatches, promptMismatchShape, sendOnce, cancelGeneration, modernPublicItem, modernIdentityShape, projectPublicReferences, modernPublicFinal, publicFinal, publicMessageShape, publicUserBindingShape, publicCitationShape };
+  focusEffort, connectorAccessState, connectorMenuChoice, connectorPillState, selectedConnector, composerPrefix, focusComposer, composerMatches, promptMismatchShape, sendOnce, stopControlSelector, cancelGeneration, modernPublicItem, modernIdentityShape, publicIdentityStructure, armPublicFreshRequest, capturePublicRequestBinding, capturePublicDispatchBinding, modernBoundTurnMatches, publicBoundUserIdentity, projectPublicReferences, modernPublicFinal, publicFinal, publicMessageShape, publicUserBindingShape, publicCitationShape };

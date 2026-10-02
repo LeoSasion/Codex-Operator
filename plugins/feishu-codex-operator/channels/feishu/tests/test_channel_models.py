@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 import os
+import re
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
@@ -77,6 +78,28 @@ class ChannelModelTests(unittest.TestCase):
         self.assertEqual({m for m, _ in self.reads}, {"config/read", "thread/read", "model/list"})
         self.assertTrue(all(p == {"threadId": RESPONDER_ID, "includeTurns": False} for m, p in self.reads if m == "thread/read"))
         self.assertNotIn("PRIVATE", json.dumps(self.sessions.get("p2p:test")))
+
+    def test_list_example_uses_exact_current_model_when_generations_share_alias(self):
+        self.page = {"data": [dict(ROW, model="gpt-6-luna"), ROW], "nextCursor": None}
+        before = self.sessions.path.read_bytes()
+        self.assertIn("唯一", self.command("luna low"))
+        answer = self.command("list")
+        self.assertEqual(before, self.sessions.path.read_bytes())
+        examples = re.findall(r"/model (gpt-[a-z0-9.-]+) ([a-z]+)", answer)
+        self.assertEqual(len(examples), 1, "the advertised example must identify one actual catalog model")
+        model, effort = examples[0]
+        self.assertIn(model, {row["model"] for row in self.page["data"]})
+        self.assertIn("已保存", self.command(f"{model} {effort}"))
+        self.assertEqual(pending_arguments(self.sessions.get("p2p:test")),
+                         {"model": model, "thinking": effort})
+
+    def test_empty_selectable_catalog_does_not_offer_unavailable_example(self):
+        self.page = {"data": [dict(ROW, hidden=True)], "nextCursor": None}
+        before = self.sessions.path.read_bytes()
+        answer = self.command("list")
+        self.assertIn("没有可选", answer)
+        self.assertNotIn("/model ", answer)
+        self.assertEqual(before, self.sessions.path.read_bytes())
 
     def test_pending_is_durable_once_and_no_longer_overrides_desktop(self):
         self.assertIn("下一条新消息", self.command("luna low"))

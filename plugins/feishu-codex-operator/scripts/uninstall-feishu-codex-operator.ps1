@@ -5,6 +5,18 @@ param([Parameter(Mandatory=$true)][string]$ProjectRoot, [switch]$Apply,
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'operator_installation.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'operator_python.psm1') -Force
+function Assert-OperatorUninstallHelperResult([object]$Output, [int]$ExitCode, [string]$Failure) {
+    if ($ExitCode -eq 0) { return }
+    $result = $null
+    try { $result = ($Output | ConvertFrom-Json -ErrorAction Stop) } catch { }
+    if ($result -and $result.reason -ceq 'unified_candidate_requires_review_before_uninstall') {
+        throw 'Unified candidate configuration or transaction requires reviewed recovery before uninstall; nothing was restored.'
+    }
+    if ($result -and $result.reason -ceq 'unified_activation_requires_review_before_uninstall') {
+        throw 'A retained unified activation plan or attempt requires reviewed retirement before uninstall; nothing was restored.'
+    }
+    throw $Failure
+}
 $project = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $ProjectRoot).Path).TrimEnd('\')
 $entryMutex = $null
 $ownsEntryMutex = $false
@@ -25,6 +37,12 @@ Assert-OperatorPlainPath $runtime
 Assert-OperatorPlainPath $bundle
 $links = @(Get-OperatorDesktopPaths -IncludeLegacy)
 $restore = Get-OperatorRestorePlan $project $links
+Import-Module (Join-Path $PSScriptRoot 'operator_desktop_pair.psm1') -Force -DisableNameChecking
+$pairRestore = Get-OperatorDesktopPairRestorePlan -ProjectRoot $project
+if ($pairRestore.status -eq 'ready' -and
+    [IO.Path]::GetFullPath($CodexConfig) -ine (Join-Path $pairRestore.record.home 'config.toml')) {
+    throw 'The desktop pair belongs to another native home; nothing was restored.'
+}
 $processes = @(Get-CimInstance Win32_Process)
 $operatorPath = Join-Path $runtime 'operator_main.py'
 $running = @($processes | Where-Object { $_.Name -match '^python' -and $_.CommandLine -and
@@ -32,7 +50,7 @@ $running = @($processes | Where-Object { $_.Name -match '^python' -and $_.Comman
 $python = Get-OperatorPython -Required
 $helper = Join-Path $PSScriptRoot 'operator_uninstall.py'
 $observed = & $python.Source @($python.Prefix) -B $helper inspect --project-root $project --codex-config $CodexConfig --port $RouterPort
-if ($LASTEXITCODE -ne 0) { throw 'Uninstall routing preflight failed; nothing was restored.' }
+Assert-OperatorUninstallHelperResult $observed $LASTEXITCODE 'Uninstall routing preflight failed; nothing was restored.'
 $routing = $observed | ConvertFrom-Json
 $blocks = @()
 if ($restore.conflicts) { $blocks += 'managed_files_or_backups_changed' }
@@ -76,11 +94,12 @@ if (Test-Path -LiteralPath $runtime) {
     }
 }
 $preview = [ordered]@{mode='preview'; ready=($blocks.Count -eq 0); blockers=$blocks; files=$restore.items;
-    routing=$routing; data_retained=$true; taskbar_native_launcher_retained=$true; desktop_plugin_removal='separate_user_action'}
+    desktop_pair=$pairRestore.status; routing=$routing; data_retained=$true; taskbar_native_launcher_retained=$true; desktop_plugin_removal='separate_user_action'}
 if (-not $Apply) { $preview | ConvertTo-Json -Depth 10; exit 0 }
 if ($blocks.Count) { $preview | ConvertTo-Json -Depth 10; throw 'Uninstall stopped at preflight; no restore was attempted.' }
-$null = & $python.Source @($python.Prefix) -B $helper detach --project-root $project --codex-config $CodexConfig --port $RouterPort
-if ($LASTEXITCODE -ne 0) { throw 'Routing detachment stopped; no files were restored or requests replayed.' }
+$detached = & $python.Source @($python.Prefix) -B $helper detach --project-root $project --codex-config $CodexConfig --port $RouterPort
+Assert-OperatorUninstallHelperResult $detached $LASTEXITCODE 'Routing detachment stopped; no files were restored or requests replayed.'
+Restore-OperatorDesktopPair -ProjectRoot $project | Out-Null
 if ($launchers.Count -eq 1) {
     Write-OperatorAtomicBytes (Join-Path $bundle 'native-only') ([Text.Encoding]::ASCII.GetBytes('native-only'))
 }

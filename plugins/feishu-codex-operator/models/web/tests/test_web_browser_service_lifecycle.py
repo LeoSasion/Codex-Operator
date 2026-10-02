@@ -11,12 +11,15 @@ from run_tests import prepare_test_imports as _prepare_test_imports
 _prepare_test_imports(_OPERATOR_PLUGIN_ROOT)
 
 import asyncio
+from copy import deepcopy
 from contextlib import redirect_stderr, redirect_stdout
 import errno
 import io
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -79,7 +82,7 @@ if VARIANT=='exit':raise SystemExit(1)
 if c.get('startupPrepare') is True:
  if VARIANT in ('prepare_gate_failed','prepare_gate_extra','prepare_structure_extra','prepare_structure_duplicate'):
   fields=dict(stage='startup_prepare',sent=False,route='temporary',pageKind='chatgpt',
-   composer='yes',modelControl='zero',loginVisible='no',userRows='zero',assistantRows='zero')
+   composer='yes',modelControl='zero',loginVisible='no',userRows='zero',assistantRows='zero',modernRows='zero')
   if VARIANT=='prepare_gate_extra':fields['rawUrl']='PRIVATE URL'
   emit('startup_prepare_state',**fields)
   structure=dict(stage='startup_prepare',sent=False,readyState='complete',
@@ -118,7 +121,7 @@ while not (root/'shutdown.json').exists():
   if VARIANT in ('assistance_close_diagnostic','assistance_close_extra'):
    fields=dict(assistanceId=ident,stage='worker_assistance',sent=False,
     phase='before',route='temporary',pageKind='chatgpt',composer='yes',
-    modelControl='zero',loginVisible='no',userRows='zero',assistantRows='zero',
+    modelControl='zero',loginVisible='no',userRows='zero',assistantRows='zero',modernRows='zero',
     composerEmpty='unchecked')
    if VARIANT=='assistance_close_extra':fields['rawUrl']='PRIVATE URL'
    emit('assistance_close_state',**fields)
@@ -179,12 +182,170 @@ while not (root/'shutdown.json').exists():
         self.addAsyncCleanup(bridge.stop)
         return driver, bridge
 
+    def host_control_records(self):
+        """Execute the actual host's pure emitters, without Electron or a page."""
+        node = shutil.which('node')
+        self.assertIsNotNone(node, 'Node.js is required for the host/Python contract test')
+        script = r'''
+const assert = require('node:assert/strict'), fs = require('node:fs');
+const path = require('node:path'), vm = require('node:vm');
+const host = process.argv[2], source = fs.readFileSync(host, 'utf8');
+const surface = require(path.join(path.dirname(host), 'web_browser_surface.cjs'));
+function between(startText, endText) {
+  const start = source.indexOf(startText), end = source.indexOf(endText, start + startText.length);
+  assert.ok(start >= 0 && end > start, 'host fixture source boundary changed');
+  return source.slice(start, end);
+}
+const startup = source.match(/record\("startup_prepare_state", \{[\s\S]*?\}\);/g);
+const closing = source.match(/record\("assistance_close_state", \{ assistanceId,[\s\S]*?\}\);/g);
+assert.equal(startup?.length, 1); assert.equal(closing?.length, 2);
+const records = [], context = { ...surface, sent: false, workerRequestId: null,
+  assistanceId: 'a'.repeat(32), surface: {webContents: {getURL: () => 'https://chatgpt.com/?temporary-chat=true'}},
+  process: {stdout: {write: line => records.push(JSON.parse(line))}} };
+vm.createContext(context);
+vm.runInContext(between('function record(', 'function exitBrowser(')
+  + between('function boundedControlState(', '\ntry {'), context);
+for (const modernRowCount of [0, 2, undefined]) {
+  const state = {pageKind:'chatgpt', composer:true, modelButtonCount:1, loginVisible:false,
+    userCount:0, assistantCount:0, modernRowCount, privateText:'PRIVATE PAGE TEXT'};
+  Object.assign(context, {controls:state, state, finalState:state,
+    destination:'https://chatgpt.com/?temporary-chat=true',
+    finalDestination:'https://chatgpt.com/?temporary-chat=true',
+    composerEmpty:true, finalComposerEmpty:true, stage:'startup_prepare'});
+  vm.runInContext(startup[0], context);
+  context.stage = 'worker_assistance';
+  for (const emission of closing) vm.runInContext(emission, context);
+}
+process.stdout.write(JSON.stringify(records));
+'''
+        result = subprocess.run([node, '-', str(_OPERATOR_PLUGIN_ROOT / 'scripts/web_browser_host.cjs')],
+            input=script, text=True, encoding='utf-8', capture_output=True, check=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        self.assertNotIn('PRIVATE PAGE TEXT', result.stdout)
+        records = json.loads(result.stdout)
+        self.assertEqual(len(records), 9)
+        return records
+
+    def diagnostic_session(self, suffix, *, startup):
+        driver, _ = self.session(suffix, startup_prepare=startup)
+        if startup:
+            driver.ready = asyncio.get_running_loop().create_future()
+            driver.ready.set_result(True)
+            driver.prepared = asyncio.get_running_loop().create_future()
+        else:
+            driver.assistance_state = 'awaiting_user'
+            driver.assistance = {'id': 'a' * 32, 'inspect_completed': False, 'close_checks': 0,
+                'future': asyncio.get_running_loop().create_future()}
+        return driver
+
+    async def test_actual_host_control_records_match_python_contract(self):
+        records = self.host_control_records()
+        for index, expected in enumerate(('zero', 'nonzero', 'unknown')):
+            startup, before, after = records[index * 3:index * 3 + 3]
+            driver = self.diagnostic_session('host-startup-' + expected, startup=True)
+            driver.startup_prepare_state_event(startup)
+            self.assertEqual(driver.status()['events'][0]['modernRows'], expected)
+            driver.prepared.set_result(False)
+            self.assertEqual((driver.launches, driver.base.attempts, driver.base.dispatches), (0, 0, 0))
+            driver = self.diagnostic_session('host-assistance-' + expected, startup=False)
+            driver.assistance_close_event(before)
+            driver.assistance_close_event(after)
+            self.assertEqual(driver.assistance['close_checks'], 2)
+            self.assertEqual([row['modernRows'] for row in driver.status()['events']], [expected, expected])
+            self.assertEqual([row['phase'] for row in driver.status()['events']], ['before', 'after_restore'])
+            self.assertEqual(driver.assistance_state, 'awaiting_user')
+            self.assertFalse(driver.assistance['future'].done())
+            self.assertEqual((driver.launches, driver.base.attempts, driver.base.dispatches), (0, 0, 0))
+            driver.assistance['future'].set_result(False)
+
+    async def test_actual_host_diagnostics_keep_strict_shape_identity_and_order(self):
+        records = self.host_control_records()
+        for startup, original in ((True, records[0]), (False, records[1])):
+            prefix = 'web_startup_prepare_diagnostic_' if startup else 'web_assistance_diagnostic_'
+            changes = [
+                ('missing-modern', {}, ('modernRows',), 'invalid'),
+                ('bad-modern', {'modernRows': 'one'}, (), 'invalid'),
+                ('null-modern', {'modernRows': None}, (), 'invalid'),
+                ('numeric-modern', {'modernRows': 0}, (), 'invalid'),
+                ('extra-field', {'rawUrl': 'PRIVATE URL'}, (), 'invalid'),
+                ('wrong-stage', {'stage': 'other'}, (), 'unbound'),
+                ('sent', {'sent': True}, (), 'unbound'),
+            ]
+            if not startup:
+                changes += [('wrong-identity', {'assistanceId': 'b' * 32}, (), 'unbound'),
+                    ('wrong-order', {'phase': 'after_restore'}, (), 'sequence_invalid')]
+            for label, updates, removed, error in changes:
+                with self.subTest(startup=startup, variant=label):
+                    driver = self.diagnostic_session(str(startup) + '-' + label, startup=startup)
+                    changed = {key: value for key, value in original.items() if key not in removed}
+                    changed.update(updates)
+                    receiver = driver.startup_prepare_state_event if startup else driver.assistance_close_event
+                    with self.assertRaisesRegex(ValueError, '^' + prefix + error + '$'):
+                        receiver(changed)
+                    self.assertEqual(driver.status()['events'], [])
+                    self.assertEqual((driver.launches, driver.base.attempts, driver.base.dispatches), (0, 0, 0))
+                    if startup:
+                        driver.prepared.set_result(False)
+                    else:
+                        self.assertEqual(driver.assistance['close_checks'], 0)
+                        driver.assistance['future'].set_result(False)
+
     def test_lifecycle_defaults_hidden_but_preserves_explicit_diagnostics(self):
         self.assertEqual(service.selected_lifecycle({}), 'session_v1')
         self.assertEqual(service.selected_lifecycle({'window_mode': 'visible'}), 'per_turn')
         self.assertEqual(service.selected_lifecycle({'browser_lifecycle': 'per_turn'}), 'per_turn')
         with self.assertRaisesRegex(ValueError, 'web_browser_lifecycle_invalid'):
             service.selected_lifecycle({'browser_lifecycle': 'retry'})
+
+    def test_native_cancellation_is_explicit_and_requires_a_shared_mcp_worker(self):
+        self.assertEqual(service.selected_native_cancellation({}), 'none')
+        setting = {'transport': 'mcp_v1', 'native_cancellation_mode': 'app_server_metadata_v1'}
+        self.assertEqual(service.selected_native_cancellation(setting), 'app_server_metadata_v1')
+        for change in ({'transport': 'text_only'}, {'browser_lifecycle': 'per_turn'},
+                {'native_cancellation_mode': True}, {'native_cancellation_mode': 'guess'}):
+            with self.assertRaisesRegex(ValueError, 'web_native_cancellation_mode_invalid'):
+                service.selected_native_cancellation({**setting, **change})
+
+    def test_native_cancellation_home_is_explicit_and_never_inferred_from_environment(self):
+        setting = {'transport': 'mcp_v1', 'native_cancellation_mode': 'app_server_metadata_v1'}
+        default = self.root / '.codex'; default.mkdir()
+        custom = self.root / 'native-custom'; custom.mkdir()
+        with patch.object(service.Path, 'home', return_value=self.root), \
+                patch.dict(service.os.environ, {'CODEX_HOME': str(custom)}):
+            self.assertEqual(service.selected_native_cancellation_home(setting), default.resolve())
+            self.assertEqual(service.selected_native_cancellation_home(
+                {**setting, 'native_cancellation_home': str(custom)}), custom.resolve())
+        self.assertIsNone(service.selected_native_cancellation_home({}))
+        for change in ({'native_cancellation_home': 'relative'},
+                {'native_cancellation_home': str(self.root / 'missing')},
+                {'native_cancellation_home': None},
+                {'native_cancellation_mode': 'none', 'native_cancellation_home': str(custom)}):
+            with self.assertRaisesRegex(ValueError, 'web_native_cancellation_home_invalid'):
+                service.selected_native_cancellation_home({**setting, **change})
+
+    async def test_service_binds_native_home_without_passing_it_to_browser(self):
+        from unittest.mock import Mock
+        native_home = self.root / 'native-home'; native_home.mkdir()
+        settings = self.root / 'native-settings.json'
+        settings.write_text(json.dumps({**self.settings, 'transport': 'mcp_v1',
+            'mcp': {'mode': 'openai_tunnel_v1'}, 'native_cancellation_mode': 'app_server_metadata_v1',
+            'native_cancellation_home': str(native_home)}), encoding='utf8')
+        received = {}
+        def browser(config, *args, **kwargs):
+            received['browser'] = config
+            return Mock(config={'timeoutMs': 1000})
+        def bridge(*args, **kwargs):
+            received['observer'] = kwargs['native_interruption_observer']
+            raise RuntimeError('fixture_before_service_start')
+        with patch('operator_core.web_openai_tunnel.WebOpenAITunnel'), \
+                patch.object(service, 'WebMcpBrowserDriver', side_effect=browser), \
+                patch.object(service, 'WebBrowserSession', side_effect=lambda driver, **kwargs: driver), \
+                patch.object(service, 'WebResponsesBridge', side_effect=bridge):
+            with self.assertRaisesRegex(RuntimeError, 'fixture_before_service_start'):
+                await service.serve(settings, self.root / 'native-service')
+        self.assertEqual(received['observer'].keywords, {'codex_home': native_home.resolve()})
+        self.assertNotIn('native_cancellation_home', received['browser'])
+        self.assertNotIn('native_cancellation_mode', received['browser'])
 
     async def test_service_progress_reports_transport_without_claiming_task_success(self):
         driver, bridge = self.session('transport-progress')
@@ -247,6 +408,30 @@ while not (root/'shutdown.json').exists():
                         await driver.assist('b' * 32)
                     self.assertEqual(len(launches), 1)
 
+    async def test_changed_bound_source_reports_fixed_private_code_before_dispatch(self):
+        driver, bridge = self.session('changed-source', startup_prepare=True)
+        launches = []
+        catalog = next(path for path in driver.base.bound if path.name == 'web_model_catalog.json')
+        original_read = Path.read_bytes
+
+        def changed_catalog(path):
+            raw = original_read(path)
+            return raw + b' ' if path == catalog else raw
+
+        with self.spawn_fixture('normal', launches):
+            await driver.prepare_hidden()
+            self.assertEqual(driver.status()['readiness'], 'ready')
+            with patch.object(Path, 'read_bytes', changed_catalog):
+                with self.assertRaisesRegex(ValueError, '^web_browser_driver_failed_no_retry$'):
+                    await bridge.exchange(self.payload('changed-source'))
+            status = driver.status()
+            self.assertEqual((status['attempts'], status['dispatches'], status['failed']), (1, 0, 1))
+            self.assertEqual(status['events'][-1], {'attempt': 1, 'kind': 'driver_failed',
+                'code': 'web_browser_source_changed'})
+            self.assertTrue(status['session_closed'])
+            self.assertFalse(status['process_running'])
+            self.assertEqual(len(launches), 1)
+
     async def test_explicit_assistance_starts_hidden_and_rejects_unbound_or_visible_completion(self):
         for variant in ('normal', 'wrong_assistance', 'unhidden'):
             with self.subTest(variant=variant):
@@ -286,6 +471,7 @@ while not (root/'shutdown.json').exists():
                         self.assertEqual(len(checks), 1)
                         self.assertEqual(checks[0]['modelControl'], 'zero')
                         self.assertEqual(checks[0]['composerEmpty'], 'unchecked')
+                        self.assertEqual(checks[0]['modernRows'], 'zero')
                         failures = [row for row in events if row['kind'] == 'assistance_failed']
                         self.assertEqual(failures[-1]['code'], 'web_assistance_closed_before_ready')
                     else:
@@ -326,6 +512,52 @@ while not (root/'shutdown.json').exists():
         self.assertEqual(driver.base.dispatches, 0)
         self.assertEqual(list(driver.base.work.iterdir()), [])
 
+    async def test_hidden_prepare_preflight_failure_closes_without_launch_or_request(self):
+        for variant, expected in (
+                ('locked', 'web_desktop_locked_before_dispatch'),
+                ('disconnected', 'web_desktop_unavailable_before_dispatch'),
+                ('changed-source', 'web_browser_source_changed'),
+                ('unreadable-source', 'web_session_worker_failed_no_retry')):
+            with self.subTest(variant=variant):
+                driver, _ = self.session(variant, startup_prepare=True)
+                launches = []
+                catalog = next(path for path in driver.base.bound if path.name == 'web_model_catalog.json')
+                original_read = Path.read_bytes
+
+                def preflight_read(path):
+                    if path == catalog and variant == 'unreadable-source':
+                        raise OSError('PRIVATE source path')
+                    raw = original_read(path)
+                    return raw + b' ' if path == catalog and variant == 'changed-source' else raw
+
+                desktop = variant if variant in ('locked', 'disconnected') else 'unlocked'
+                with self.spawn_fixture('normal', launches), \
+                        patch('operator_core.web_browser_session.desktop_session_state', return_value=desktop), \
+                        patch.object(Path, 'read_bytes', preflight_read):
+                    with self.assertRaisesRegex(OSError if variant == 'unreadable-source' else ValueError,
+                            'PRIVATE source path' if variant == 'unreadable-source' else '^' + expected + '$'):
+                        await driver.prepare_hidden()
+                status = driver.status()
+                self.assertEqual(status['events'], [{'kind': 'startup_failed',
+                    'stage': 'preflight', 'code': expected}])
+                self.assertEqual(status['readiness'], 'unavailable')
+                self.assertTrue(status['session_closed'])
+                self.assertFalse(status['needs_assistance'])
+                self.assertFalse(status['process_running'])
+                self.assertEqual(tuple(status[key] for key in
+                    ('process_launches', 'attempts', 'dispatches', 'completed', 'failed')), (0, 0, 0, 0, 0))
+                self.assertEqual(launches, [])
+                self.assertIsNone(driver.child)
+                self.assertIsNone(driver.ready)
+                self.assertIsNone(driver.prepared)
+                self.assertEqual(list(driver.base.work.iterdir()), [])
+                # Unlocking or restoring the source cannot restart this terminal session.
+                with self.spawn_fixture('normal', launches):
+                    with self.assertRaisesRegex(ValueError, '^web_session_closed_new_service_required$'):
+                        await driver.prepare_hidden()
+                self.assertEqual(driver.status(), status)
+                self.assertEqual(launches, [])
+
     async def test_hidden_prepare_gate_diagnostic_rejects_extra_page_data(self):
         for variant in ('prepare_gate_failed', 'prepare_gate_extra',
                 'prepare_structure_extra', 'prepare_structure_duplicate'):
@@ -341,7 +573,7 @@ while not (root/'shutdown.json').exists():
                         self.assertEqual(gates, [{'kind': 'startup_prepare_state',
                             'route': 'temporary', 'pageKind': 'chatgpt', 'composer': 'yes',
                             'modelControl': 'zero', 'loginVisible': 'no',
-                            'userRows': 'zero', 'assistantRows': 'zero'}])
+                            'userRows': 'zero', 'assistantRows': 'zero', 'modernRows': 'zero'}])
                         failures = [row for row in events if row['kind'] == 'startup_failed']
                         self.assertEqual(failures[-1]['code'], 'web_startup_prepare_unavailable')
                     elif variant == 'prepare_gate_extra':
@@ -578,6 +810,113 @@ while not (root/'shutdown.json').exists():
         snapshots.flush()
         self.assertEqual(service.read_json(path), {'new': True})
 
+    @staticmethod
+    def legacy_large_status():
+        value = {'instance': 'a' * 32, 'state': 'ready', 'needs_assistance': False,
+            'browser': {'active': False, 'events': [
+                {'kind': 'public_turn_state', 'counts': [0] * 150} for _ in range(64)]},
+            'unknown_complete_field': {'null': None, 'parts': ['中文😀\r\n', False, 0]},
+            'padding': ''}
+        remaining = service.STATUS_SNAPSHOT_BYTES - len(json.dumps(value, ensure_ascii=False,
+            separators=(',', ':')).encode('utf-8'))
+        value['padding'] = '中' * (remaining // 3) + 'x' * (remaining % 3)
+        return value
+
+    def test_legacy_status_representation_preserves_every_value_and_original_byte(self):
+        path = self.root / 'status.json'
+        value = self.legacy_large_status()
+        raw = service.json_bytes(value)
+        self.assertGreater(len(raw), service.STATUS_SNAPSHOT_BYTES)
+        self.assertLessEqual(len(raw), service.LEGACY_STATUS_SNAPSHOT_BYTES)
+        self.assertEqual(len(json.dumps(value, ensure_ascii=False,
+            separators=(',', ':')).encode('utf-8')), service.STATUS_SNAPSHOT_BYTES)
+        path.write_bytes(raw)
+        self.assertEqual(service.read_status_bytes(path), raw)
+        self.assertEqual(service.read_status_json(path), value)
+        self.assertEqual(path.read_bytes(), raw)
+        with self.assertRaisesRegex(ValueError, 'file_too_large'):
+            service.read_json(path)
+
+    def test_legacy_status_rejects_other_formatting_or_oversized_complete_content(self):
+        path = self.root / 'status.json'
+        value = self.legacy_large_status()
+        raw = service.json_bytes(value)
+        candidates = [raw + b'\n', b' ' + raw,
+            json.dumps(value, ensure_ascii=False, indent=1).encode('utf-8'),
+            json.dumps(value, ensure_ascii=True).encode('utf-8'),
+            service.json_bytes({**value, 'padding': value['padding'] + 'x'}),
+            service.json_bytes({'padding': 'x' * service.LEGACY_STATUS_SNAPSHOT_BYTES})]
+        for candidate in candidates:
+            with self.subTest(size=len(candidate)):
+                path.write_bytes(candidate)
+                with self.assertRaisesRegex(ValueError, 'file_too_large'):
+                    service.read_status_bytes(path)
+                self.assertEqual(path.read_bytes(), candidate)
+        for prefix, error in ((b'{"state":"other",', 'invalid_protocol_json'),
+                (b'{"not_finite":NaN,', 'invalid_protocol_json')):
+            path.write_bytes(prefix + raw[1:])
+            with self.assertRaisesRegex(ValueError, error):
+                service.read_status_bytes(path)
+
+    def test_all_service_phase_publications_budget_final_utf8_without_mutating_observations(self):
+        snapshots = service.ServiceSnapshots(self.root)
+        for phase in ('ready', 'draining', 'stopped'):
+            value = {'instance': 'b' * 32, 'state': phase, 'readiness': 'unavailable',
+                'needs_assistance': False, 'requests': 42,
+                'browser': {'attempts': 42, 'dispatches': 42, 'completed': 40,
+                    'cancelled': 1, 'failed': 1, 'active': False,
+                    'events': [{'kind': 'public_turn_state', 'sequence': number,
+                        'exact': '中文😀' * 150} for number in range(64)]},
+                'transport': {'active_turn': None, 'last_turn': {'sequence': 42}},
+                'restart': 'explicit_new_session_only'}
+            original = deepcopy(value)
+            snapshots.queue('status.json', value)
+            snapshots.flush()
+            raw = (self.root / 'status.json').read_bytes()
+            observed = service.read_status_json(self.root / 'status.json')
+            self.assertLessEqual(len(raw), service.STATUS_SNAPSHOT_BYTES)
+            self.assertEqual(raw, service.json_bytes(observed))
+            omitted = observed.pop('browser_events_omitted')
+            self.assertGreater(omitted, 0)
+            self.assertEqual(observed['browser']['events'], value['browser']['events'][omitted:])
+            observed['browser']['events'] = value['browser']['events']
+            self.assertEqual(observed, value)
+            self.assertEqual(value, original)
+            self.assertEqual(snapshots.pending, {})
+
+    def test_status_cannot_discard_non_event_content_to_fit(self):
+        snapshots = service.ServiceSnapshots(self.root)
+        original = {'state': 'ready'}
+        service.write_json(self.root / 'status.json', original)
+        value = {'state': 'stopped', 'browser': {'events': [{'kind': 'completed'}]},
+            'other': '中' * service.STATUS_SNAPSHOT_BYTES}
+        before = deepcopy(value)
+        with self.assertRaisesRegex(ValueError, 'file_too_large'):
+            snapshots.queue('status.json', value)
+        self.assertEqual(value, before)
+        self.assertEqual(snapshots.pending, {})
+        self.assertEqual(service.read_json(self.root / 'status.json'), original)
+
+    def test_status_write_rechecks_actual_bytes_and_keeps_pending_on_late_growth(self):
+        path = self.root / 'status.json'
+        original = {'state': 'ready'}
+        service.write_json(path, original)
+        snapshots = service.ServiceSnapshots(self.root)
+        value = {'state': 'stopped', 'browser': {'events': []}, 'extra': {'padding': ''}}
+        snapshots.queue(path.name, value)
+        # An observation referenced by the queued snapshot may be changed before
+        # flush; the actual writer must reject its final UTF-8 representation.
+        value['extra']['padding'] = '中' * (service.STATUS_SNAPSHOT_BYTES // 2)
+        with self.assertRaisesRegex(ValueError, 'file_too_large'):
+            snapshots.flush()
+        self.assertEqual(service.read_json(path), original)
+        self.assertIn(path.name, snapshots.pending)
+        self.assertEqual(list(self.root.glob('*.pending')), [])
+        snapshots.queue(path.name, {'state': 'stopped', 'browser': {'events': []}})
+        snapshots.flush()
+        self.assertEqual(service.read_json(path)['state'], 'stopped')
+        self.assertEqual(snapshots.pending, {})
+
     @unittest.skipUnless(os.name == 'nt', 'Windows reader sharing semantics')
     def test_windows_reader_blocks_only_snapshot_publication_without_poisoning_next_write(self):
         path = self.root / 'snapshot.json'
@@ -678,6 +1017,40 @@ while not (root/'shutdown.json').exists():
             self.assertEqual(service.read_json(state / 'status.json')['browser']['dispatches'], 1)
             await self.finish_service(task, state)
             self.assertEqual(service.read_json(state / 'status.json')['state'], 'stopped')
+
+    async def test_saved_service_preflight_failure_becomes_unavailable_without_retry(self):
+        launches = []
+        with self.spawn_fixture('normal', launches):
+            with patch('operator_core.web_browser_session.desktop_session_state', return_value='disconnected'):
+                task, state, _ = await self.start_service(prepare_hidden=True)
+                await self.until(lambda: service.read_json(state / 'status.json')['state'] == 'unavailable')
+            details = service.read_json(state / 'status.json')
+            self.assertEqual(details['readiness'], 'unavailable')
+            self.assertFalse(details['needs_assistance'])
+            self.assertEqual(details['requests'], 0)
+            self.assertTrue(details['browser']['session_closed'])
+            self.assertEqual(details['browser']['events'], [{'kind': 'startup_failed',
+                'stage': 'preflight', 'code': 'web_desktop_unavailable_before_dispatch'}])
+            self.assertEqual(tuple(details['browser'][key] for key in
+                ('process_launches', 'attempts', 'dispatches')), (0, 0, 0))
+            _, health = await asyncio.to_thread(service.live_status, state)
+            self.assertEqual(health['state'], 'stopped')
+            self.assertFalse(health['accepting_requests'])
+            self.assertTrue(health['ready'])  # The service remains available for explicit stop.
+            self.assertFalse(health['active'])
+            self.assertNotIn('准备中', service.service_guidance(details))
+            # An available desktop on subsequent service ticks does not authorize recovery.
+            await asyncio.sleep(.3)
+            self.assertEqual(service.read_json(state / 'status.json'), details)
+            self.assertFalse(task.done())
+            self.assertFalse(self.trace.exists())
+            self.assertEqual(launches, [])
+            await self.finish_service(task, state)
+            stopped = service.read_json(state / 'status.json')
+            self.assertEqual(stopped['state'], 'stopped')
+            self.assertEqual(stopped['browser']['events'], details['browser']['events'])
+            self.assertEqual(stopped['requests'], 0)
+            self.assertEqual(launches, [])
 
     async def test_opt_in_lifetime_expires_and_rejects_invalid_limits_before_creating_state(self):
         launches = []

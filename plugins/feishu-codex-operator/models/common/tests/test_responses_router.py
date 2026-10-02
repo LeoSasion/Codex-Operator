@@ -634,6 +634,52 @@ class AdaptedRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(forwarded["input"][1]["output"]), parts)
         self.assertEqual(forwarded["input"][1]["call_id"], "history_call")
 
+    async def test_explicit_function_history_keeps_empty_catalog_on_every_transport(self):
+        self.mode = "history_only"
+        history = [{"type": "function_call", "id": "fc_past", "name": "exec_command",
+                    "call_id": "past_call", "arguments": '{ "cmd": "synthetic\\n中文😀" }'},
+                   {"type": "function_call_output", "call_id": "past_call",
+                    "output": [{"type": "input_text", "text": "first", "keep": 1},
+                               {"type": "input_text", "text": "second\r\n😀"}]}]
+        body = {**self.payload, "tools": [], "tool_choice": "none", "input": history}
+        rejected = await self.client.post(self.endpoint, json=body)
+        self.assertEqual(rejected.status, 400)
+        self.assertEqual(self.received, [])
+        route = self.router.registry.routes[ROUTE["slug"]]
+        self.router.registry.routes[ROUTE["slug"]] = replace(route,
+            responses=ResponsesCapabilities.parse({**CAPABILITIES,
+                "history_function_tools": {"exec_command": "json_object_v1"},
+                "text_tool_outputs": "json_string", "upstream_response_mode": "json"}))
+        for transport in ("json", "sse", "ws"):
+            before = len(self.received)
+            if transport == "ws":
+                ws = await self.client.ws_connect(self.endpoint)
+                await ws.send_json({**body, "type": "response.create"})
+                seen = []
+                for _ in range(20):
+                    event = await ws.receive_json(timeout=3)
+                    seen.append(event)
+                    if event.get("type") == "response.completed":
+                        break
+                await ws.close()
+                final = seen[-1]["response"]
+            else:
+                result = await self.client.post(self.endpoint, json={**body, "stream": transport == "sse"})
+                self.assertEqual(result.status, 200)
+                if transport == "json":
+                    final = await result.json()
+                else:
+                    decoder = SSEDecoder()
+                    events = decoder.feed(await result.read())
+                    final = next(event["response"] for event in events
+                                 if isinstance(event, dict) and event.get("type") == "response.completed")
+            self.assertEqual(final["output"][0]["content"][0]["text"], "HISTORY_OK")
+            self.assertEqual(len(self.received), before + 1)
+            forwarded = self.received[-1][0]
+            self.assertEqual((forwarded["tools"], forwarded["tool_choice"]), ([], "none"))
+            self.assertEqual(forwarded["input"][0], history[0])
+            self.assertEqual(json.loads(forwarded["input"][1]["output"]), history[1]["output"])
+
     async def test_http_sse_and_websocket_restore_same_events(self):
         result = await self.client.post(self.endpoint, json={**self.payload, "stream": True})
         self.assertEqual(result.status, 200)

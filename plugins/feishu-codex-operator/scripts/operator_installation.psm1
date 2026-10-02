@@ -83,7 +83,14 @@ function Start-OperatorInstallation {
     try {
         $state = Get-OperatorOwnership $project
         $restored = @($state.entries.Values | Where-Object { $_.status -eq 'restored' }).Count
-        if (-not $restored) {
+        # A desktop-pair-only install has no legacy managed-file entries. Its
+        # completed uninstall still needs a new generation before reactivation.
+        $emptyPairUninstall = $state.entries.Count -eq 0 -and
+            -not ($state.ContainsKey('reactivate_native_launcher') -and $state.reactivate_native_launcher) -and
+            (Test-Path -LiteralPath (Join-Path $project '.codex/operator-desktop-pair/ownership.json')) -and
+            (Test-Path -LiteralPath (Join-Path $project '.codex/operator-desktop-entry/native-only')) -and
+            (Test-Path -LiteralPath (Join-Path $project '.codex/operator-installation/uninstall-receipt.json'))
+        if (-not $restored -and -not $emptyPairUninstall) {
             if (-not (Test-Path -LiteralPath (Join-Path $project '.codex/operator-installation/ownership.json'))) {
                 Save-OperatorOwnership $project $state
             }

@@ -44,6 +44,10 @@ state=Path(a.state);state.mkdir(mode=0o700)
 ident=secrets.token_hex(16);token=secrets.token_urlsafe(32)
 details={'instance':ident,'state':'ready','needs_assistance':False,
  'browser':{'active':False},'transport':{'active_turn':None,'last_turn':None}}
+if variant=='large-status':
+ details['browser']['events']=[{'kind':'public_turn_state','counts':[0]*150} for _ in range(64)]
+ details['padding']=''
+ details['padding']='x'*(65536-len(json.dumps(details,separators=(',',':')).encode())-1024)
 def write(name,value):
  temp=state/(name+'.pending');temp.write_text(json.dumps(value));os.replace(temp,state/name)
 class Handler(BaseHTTPRequestHandler):
@@ -115,6 +119,11 @@ class WebServiceManagerTests(unittest.TestCase):
         self.spawn_patch = patch.object(manager, 'spawn_child', side_effect=spawn)
         self.spawn_mock = self.spawn_patch.start()
         self.addCleanup(self.spawn_patch.stop)
+        # Existing lifecycle fixtures use a stdlib-only fake server. Their
+        # module-import prerequisite is covered separately below.
+        self.dependency_patch = patch.object(manager, 'check_python_dependencies', return_value=None)
+        self.dependency_patch.start()
+        self.addCleanup(self.dependency_patch.stop)
         self.addCleanup(self.finish_children)
 
     def finish_children(self):
@@ -146,7 +155,8 @@ class WebServiceManagerTests(unittest.TestCase):
     def test_configuration_references_existing_settings_without_copying_credentials(self):
         key = self.root / 'runtime-key'; key.write_text('sk-fixture-private-never-copy')
         value = json.loads(self.settings.read_text())
-        value.update(transport='mcp_v1', mcp={'mode':'openai_tunnel_v1',
+        value.update(transport='mcp_v1', native_cancellation_mode='app_server_metadata_v1',
+            native_cancellation_home=str(self.root), mcp={'mode':'openai_tunnel_v1',
             'tunnel_id':'tunnel_'+'a'*32,
             'tunnel_client':str(Path(sys.executable).resolve()),
             'tunnel_client_sha256':manager.file_digest(Path(sys.executable).resolve()),
@@ -185,6 +195,26 @@ class WebServiceManagerTests(unittest.TestCase):
         for result in (first,observed,manager.start(self.profile)):
             self.assertNotIn(token,json.dumps(result))
         self.assertFalse((self.state()/'assist.json').exists())
+
+    def test_legacy_large_status_allows_read_only_observation_and_exact_normal_stop(self):
+        (self.root / 'variant').write_text('large-status')
+        self.configured()
+        self.assertEqual(manager.start(self.profile)['status'], 'ready')
+        path = self.state() / 'status.json'
+        raw = path.read_bytes()
+        self.assertGreater(len(raw), 65536)
+        with self.assertRaisesRegex(ValueError, 'web_manager_file_bound'):
+            manager.read_json(path)
+        before = self.snapshot()
+        self.assertEqual(manager.status(self.profile)['status'], 'ready')
+        self.assertEqual(manager.read_status_bytes(path), raw)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(manager.control(self.profile, 'stop')['status'], 'stop_requested')
+        self.children[0].wait(timeout=5)
+        self.assertEqual(manager.status(self.profile)['status'], 'stopped')
+        self.assertGreater(path.stat().st_size, 65536)
+        self.assertEqual(manager.read_status_json(path)['state'], 'stopped')
+        self.assertEqual(len(self.children), 1)
 
     def test_start_boundary_exists_before_spawn_and_launch_failure_never_retries(self):
         self.configured()
@@ -491,6 +521,30 @@ class WebServiceManagerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'tools_route_required'):
             manager.resolve_route(self.profile,{**preview,'session_sha256':'0'*64})
 
+    def test_persistent_route_requires_owned_live_receipt_before_publication(self):
+        (self.root/'route-enabled').write_text('synthetic tools service')
+        (self.root/'variant').write_text('slow')
+        self.configured()
+        self.assertEqual(manager.start(self.profile, observation_seconds=0)['status'], 'starting')
+        self.wait_for(lambda: (self.state()/'status.json').is_file())
+        preview = manager.route_preview(self.profile)
+        before = self.snapshot()
+        observation = manager.status(self.profile)
+        self.assertEqual(observation['status'], 'ready')
+        self.assertIs(observation['session_bound'], False)
+        self.assertEqual(self.snapshot(), before)
+        with self.assertRaisesRegex(ValueError, 'web_manager_session_binding_required'):
+            manager.resolve_routes(self.profile, preview, require_bound_session=True)
+        self.assertEqual(self.snapshot(), before)
+        # Explicit reuse of the known live child completes its ownership receipt.
+        self.assertTrue(manager.start(self.profile)['reused'])
+        bound = self.snapshot()
+        self.assertIs(manager.status(self.profile)['session_bound'], True)
+        routes = manager.resolve_routes(self.profile, preview, require_bound_session=True)
+        self.assertEqual(routes[0].web_binding.session_sha256, preview['session_sha256'])
+        self.assertEqual(self.snapshot(), bound)
+        self.assertEqual(len(self.children), 1)
+
     def test_route_snapshot_rejects_changed_digest_and_stopped_instance(self):
         self.route_fixture()
         preview = manager.route_preview(self.profile)
@@ -524,6 +578,21 @@ class WebServiceManagerTests(unittest.TestCase):
         (self.profile/'profile.json').write_bytes(raw+b'\n')
         with self.assertRaisesRegex(ValueError,'route_digest_changed'):
             manager.resolve_route(self.profile, preview)
+
+    def test_non_object_status_keeps_fixed_error_without_exposing_unknown_text(self):
+        from operator_core.responses_capabilities import RouterError
+        path = self.root / 'status.json'
+        original = b'[null, "synthetic status fixture"]\r\n'
+        path.write_bytes(original)
+        with self.assertRaisesRegex(RouterError, '^web_service_status_invalid$') as rejected:
+            manager.read_status_json(path)
+        result = manager.error_result(rejected.exception)
+        self.assertEqual(result['code'], 'web_service_status_invalid')
+        self.assertEqual(path.read_bytes(), original)
+        unknown = manager.error_result(RouterError('private status fixture must not escape'))
+        self.assertEqual(unknown['code'], 'web_manager_unavailable_no_retry')
+        self.assertNotIn('private status fixture', json.dumps(unknown))
+        self.assertEqual(path.read_bytes(), original)
 
     def test_cli_error_is_sanitized_and_status_has_no_writes(self):
         self.configured()
@@ -691,6 +760,27 @@ class WebServiceRecoveryTests(unittest.TestCase):
         self.assertFalse(receipt['replayed']);self.assertFalse(receipt['launched'])
         self.assertNotIn(b'private-key-never-read',b''.join(p.read_bytes() for p in (self.profile/'history').rglob('*') if p.is_file()))
 
+    def test_recovery_preserves_exact_legacy_large_status_bytes_and_digest(self):
+        details = manager.read_status_json(self.state / 'status.json')
+        details['browser'] = {'events': [
+            {'kind': 'public_turn_state', 'counts': [0] * 150} for _ in range(64)]}
+        details['padding'] = ''
+        details['padding'] = 'x' * (65536 - len(json.dumps(details,
+            separators=(',', ':')).encode('utf-8')) - 100)
+        manager.service.write_json(self.state / 'status.json', details)
+        original = (self.state / 'status.json').read_bytes()
+        self.assertGreater(len(original), 65536)
+        before = self.snapshot()
+        preview = manager.recover(self.profile)
+        self.assertEqual(self.snapshot(), before)
+        manager.recover(self.profile, expected_preview=preview['preview_sha256'])
+        receipt_path = next((self.profile / 'history').glob('recovery-*/receipt.json'))
+        receipt = manager.read_json(receipt_path)
+        self.assertEqual(receipt['files'][str(self.state / 'status.json')], manager.digest(original))
+        self.assertEqual((receipt_path.parent / '4.original').read_bytes(), original)
+        self.assertEqual((self.state / 'status.json').read_bytes(), original)
+        self.assertFalse(receipt['launched']); self.assertFalse(receipt['replayed'])
+
     def test_changed_preview_live_reused_or_unknown_process_rejects_without_mutation(self):
         preview=manager.recover(self.profile);before=self.snapshot()
         with self.assertRaisesRegex(ValueError,'recovery_changed'):
@@ -768,6 +858,54 @@ class WebServiceRecoveryTests(unittest.TestCase):
             with self.assertRaises(ValueError): manager.recover(self.profile)
         self.marker.write_bytes(b'{}')
         with self.assertRaisesRegex(ValueError, 'marker_invalid'): manager.recover(self.profile)
+
+
+class WebDependencyPreflightTests(unittest.TestCase):
+    """Exercise the saved interpreter in a disposable import tree only."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='operator-web-dependency-preflight-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.sources = self.root / 'sources'; self.sources.mkdir()
+        (self.sources / 'operator_core').mkdir()
+        (self.sources / 'operator_core/__init__.py').write_bytes(b'')
+        (self.sources / 'operator_web_model.py').write_bytes(b'')
+        (self.sources / 'operator_core/web_openai_tunnel.py').write_bytes(b'')
+        (self.sources / 'operator_core/web_responses_provider.py').write_bytes(b'')
+        self.profile = self.root / 'profile'; self.profile.mkdir()
+        self.runtime = {'python': str(Path(sys.executable).resolve()),
+            'python_sha256': manager.file_digest(Path(sys.executable).resolve()),
+            'source_root': str(self.sources)}
+
+    def test_missing_import_fails_with_fixed_code_before_launch_record(self):
+        (self.sources / 'aiohttp.py').write_text('raise ModuleNotFoundError("aiohttp missing")\n')
+        browser = self.root / 'browser'; browser.mkdir()
+        settings = self.root / 'settings.json'
+        settings.write_text(json.dumps({'electron': str(Path(sys.executable).resolve()),
+            'profile_directory': str(browser), 'session_partition': 'persist:fixture'}))
+        saved = self.root / 'saved-profile'
+        original_runtime = manager.runtime_identity
+        with patch.object(manager, 'runtime_identity', side_effect=lambda: {
+                **original_runtime(), 'source_root': str(self.sources)}):
+            manager.configure(saved, settings)
+            before = {str(path.relative_to(saved)): path.read_bytes()
+                for path in saved.rglob('*') if path.is_file()}
+            with patch.object(manager, 'spawn_child') as spawn:
+                with self.assertRaisesRegex(ValueError, '^web_manager_python_dependencies_unavailable$'):
+                    manager.start(saved)
+                spawn.assert_not_called()
+            self.assertIsNone(manager.current_record(saved))
+            self.assertFalse((saved / 'current.json').exists())
+            self.assertFalse(list((saved / 'instances').iterdir()))
+            self.assertEqual(before, {str(path.relative_to(saved)): path.read_bytes()
+                for path in saved.rglob('*') if path.is_file()})
+
+    def test_complete_import_tree_passes_without_launch_or_profile_write(self):
+        (self.sources / 'aiohttp.py').write_bytes(b'')
+        before = list(self.profile.iterdir())
+        manager.check_python_dependencies(self.runtime, self.profile)
+        self.assertEqual(list(self.profile.iterdir()), before)
 
 
 class WebReadOnlyUninstallDependencyTests(unittest.TestCase):
