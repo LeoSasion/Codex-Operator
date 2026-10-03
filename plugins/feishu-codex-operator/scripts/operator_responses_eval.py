@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timezone
 import hashlib
@@ -10,6 +11,8 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -22,7 +25,7 @@ from operator_core.responses_profiles import FINAL_TEXT_POLICIES, valid_cli_vers
 from operator_core.responses_tool_adapter import dumps
 from operator_responses_probe import reserve_receipt
 from operator_terminal_fixture import (TERMINAL_CASES, TerminalFixture, executable_digest,
-                                       terminal_sandbox_settings, terminal_workspace)
+                                       terminal_sandbox_settings)
 
 STOP_CASES = frozenset({"cli_error_stop", "cli_exit_stop"})
 CASES = ("cli_nested", "cli_multiround", "cli_tool_error", "cli_error_stop", "cli_exit_stop",
@@ -236,17 +239,100 @@ def isolated_environment(home, *, terminal_shell=None):
     return environment
 
 
+CLI_CLEANUP_TIMEOUT_SECONDS = 5
+
+
+def _cleanup_remaining(cleanup):
+    if cleanup["deadline"] is None:
+        cleanup["deadline"] = time.monotonic() + CLI_CLEANUP_TIMEOUT_SECONDS
+    return max(0, cleanup["deadline"] - time.monotonic())
+
+
+def _consume_cleanup_task(task):
+    if not task.cancelled():
+        task.exception()
+
+
+async def _cancel_cleanup_tasks(tasks, cleanup):
+    pending = [task for task in tasks if not task.done()]
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.wait(pending, timeout=_cleanup_remaining(cleanup))
+    for task in tasks:
+        if task.done():
+            _consume_cleanup_task(task)
+        else:
+            task.add_done_callback(_consume_cleanup_task)
+    return sum(not task.done() for task in tasks)
+
+
+async def _bounded_cleanup_task(task, cleanup):
+    done, _ = await asyncio.wait((task,), timeout=_cleanup_remaining(cleanup))
+    if not done:
+        task.cancel()
+        task.add_done_callback(_consume_cleanup_task)
+        return False
+    return True
+
+
+async def _cleanup_cli_child(child, cleanup):
+    result = {"kill_requested": False, "kill_result": "not_needed",
+              "wait_result": "not_needed", "failed": False}
+    if child is None or child.returncode is not None:
+        return result
+    result["kill_requested"] = True
+    try:
+        child.kill()
+        result["kill_result"] = "requested"
+    except ProcessLookupError:
+        result.update(kill_result="process_lookup_error", failed=True)
+    except OSError:
+        result.update(kill_result="os_error", failed=True)
+    except Exception:
+        result.update(kill_result="unexpected_error", failed=True)
+    task = asyncio.create_task(child.wait())
+    try:
+        if not await _bounded_cleanup_task(task, cleanup):
+            result.update(wait_result="timeout", failed=True)
+        elif task.cancelled():
+            result.update(wait_result="cancelled", failed=True)
+        else:
+            task.result()
+            result["wait_result"] = "exit_observed" if child.returncode is not None else "exit_unobserved"
+            result["failed"] = result["failed"] or child.returncode is None
+    except ProcessLookupError:
+        result.update(wait_result="process_lookup_error", failed=True)
+    except OSError:
+        result.update(wait_result="os_error", failed=True)
+    except Exception:
+        result.update(wait_result="unexpected_error", failed=True)
+    return result
+
+
+def _remove_fixture_directory(path, parent):
+    info = path.lstat()
+    if (not path.is_absolute() or not parent.is_absolute() or path.parent != parent
+            or path.is_symlink() or path.resolve() != path
+            or not stat.S_ISDIR(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400):
+        raise RouterError("evaluation_fixture_cleanup_path_changed")
+    shutil.rmtree(path)
+
+
 def child_output_observation():
     """Bounded consumed prefixes only; EOF is independent of process exit."""
     return {"scope": "bounded_observed_stream_prefix_not_complete_output",
+            "cleanup": {"pending_tasks": None, "observation_complete": False, "timed_out": None},
+            "collection_error": None,
             **{name: {"observed_bytes": 0,
                       "observed_prefix_sha256": hashlib.sha256(b"").hexdigest(),
                       "complete": False, "output_limit_exceeded": False}
                for name in ("stdout", "stderr")}}
 
 
-async def collect_child(child, *, observation=None):
+async def collect_child(child, *, observation=None, cleanup=None):
     observation = child_output_observation() if observation is None else observation
+    cleanup = {"deadline": None} if cleanup is None else cleanup
     async def bounded(stream, name):
         data = bytearray()
         summary, hasher = observation[name], hashlib.sha256()
@@ -266,12 +352,22 @@ async def collect_child(child, *, observation=None):
              asyncio.create_task(bounded(child.stderr, "stderr")),
              asyncio.create_task(child.wait())]
     try:
-        stdout, stderr, _ = await asyncio.gather(*tasks)
+        pending = set(tasks)
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in tasks:
+                if task in done:
+                    if task.cancelled():
+                        observation["collection_error"] = "evaluation_cli_output_task_cancelled"
+                        raise RouterError("evaluation_cli_output_task_cancelled")
+                    error = task.exception()
+                    if error is not None:
+                        raise error
+        stdout, stderr, _ = (task.result() for task in tasks)
         return stdout, stderr
     finally:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        pending = await _cancel_cleanup_tasks(tasks, cleanup)
+        observation["cleanup"].update(pending_tasks=pending, observation_complete=True, timed_out=bool(pending))
 
 
 def json_output_summary(value):
@@ -310,7 +406,7 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
     if final_text_policy not in FINAL_TEXT_POLICIES:
         raise RouterError("invalid_final_text_policy")
     from aiohttp import TraceConfig, web
-    from contextlib import ExitStack, aclosing
+    from contextlib import aclosing
     from operator_core.model_router import ModelRouter
     preflight(row)
     if case in TERMINAL_CASES:
@@ -383,15 +479,19 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
     tool_mode = router.registry.routes[row["slug"]].responses.codex_tool_mode
     admitted = asyncio.Event()
     request_times = []
+    cleanup_started, cleanup_rejected = False, 0
     requests, active, limit = 0, 0, {"cli_nested": 2, "cli_multiround": 3,
                                     "cli_tool_error": 3, "cli_error_stop": 2, "cli_exit_stop": 2,
                                     "cli_workspace": 4, "cli_patchplan": 4, "cli_cancel": 1,
                                     **dict.fromkeys(TERMINAL_CASES, 2)}[case]
     @web.middleware
     async def bound(request, handler):
-        nonlocal requests, active
+        nonlocal requests, active, cleanup_rejected
         if not request.path.endswith("/responses"):
             return web.json_response({"error": "fixture_endpoint_refused"}, status=404)
+        if cleanup_started:
+            cleanup_rejected += 1
+            return web.json_response({"error": "cleanup_started_no_retry"}, status=400)
         requests += 1
         if requests > limit:
             return web.json_response({"error": "fixture_request_budget_exhausted_no_retry"}, status=409)
@@ -409,7 +509,9 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
     runner = web.AppRunner(app, access_log=None, shutdown_timeout=2)
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", 0).start()
-    child, temporary, communication, begin = None, None, None, time.perf_counter()
+    child, communication, begin = None, None, time.perf_counter()
+    root = root_parent = work = work_parent = None
+    cleanup = {"deadline": None}
     child_output, child_kill_requested = child_output_observation(), False
     report = {"case": case, "status": "failed", "synthetic_only": True, "cli_version": version,
               "final_text_policy": final_text_policy, "codex_tool_mode": tool_mode,
@@ -418,13 +520,15 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
               "evaluator_sha256": evaluator_digest(),
               "request_limit": limit, "configured_retry_count": 0}
     try:
-        temporary = ExitStack()
-        directory = temporary.enter_context(tempfile.TemporaryDirectory(prefix="operator-responses-eval-"))
-        root = Path(directory)
+        root = Path(tempfile.mkdtemp(prefix="operator-responses-eval-")).resolve()
+        root_parent = root.parent
         home = root / "home"
         home.mkdir()
         if case in TERMINAL_CASES:
-            work = temporary.enter_context(terminal_workspace())
+            work_parent = Path(tempfile.gettempdir()).resolve()
+            new_work = work_parent / ("operator-terminal-work-" + secrets.token_hex(12))
+            new_work.mkdir(mode=0o755)
+            work = new_work
         else:
             work = root / "work"
             work.mkdir()
@@ -477,7 +581,7 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
             env=isolated_environment(home, terminal_shell=terminal_shell),
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             creationflags=0x08000000 if os.name == "nt" else 0)
-        communication = asyncio.create_task(collect_child(child, observation=child_output))
+        communication = asyncio.create_task(collect_child(child, observation=child_output, cleanup=cleanup))
         if case == "cli_cancel":
             await asyncio.wait_for(admitted.wait(), timeout=min(timeout, 30))
             # A buffered JSON endpoint may deliver headers only after generation.
@@ -536,30 +640,65 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
     except Exception as exc:
         report["error_category"] = "timeout" if isinstance(exc, asyncio.TimeoutError) else "harness_error"
     finally:
-        if child is not None and child.returncode is None:
-            child_kill_requested = True
-            child.kill()
-            await child.wait()
-        if communication is not None:
+        cleanup_started = True
+        # One shared monotonic budget: child exit, collector cancellation and runner.
+        # Never wait for cancellation after the deadline or invent an exit from kill().
+        if communication is not None and not communication.done():
             communication.cancel()
-            await asyncio.gather(communication, return_exceptions=True)
+        child_cleanup = await _cleanup_cli_child(child, cleanup)
+        output_pending = (await _cancel_cleanup_tasks((communication,), cleanup)
+                          if communication is not None else 0)
+        child_kill_requested = child_cleanup["kill_requested"]
+        reader_pending = child_output["cleanup"]["pending_tasks"]
+        async_cleanup = {"timeout_seconds": CLI_CLEANUP_TIMEOUT_SECONDS,
+                         **child_cleanup, "output_pending_tasks": output_pending,
+                         "reader_pending_tasks": reader_pending, "runner_result": "not_started"}
+        try:
+            runner_task = asyncio.create_task(runner.cleanup())
+            if await _bounded_cleanup_task(runner_task, cleanup):
+                if runner_task.cancelled():
+                    async_cleanup.update(runner_result="cancelled", failed=True)
+                else:
+                    runner_task.result()
+                    async_cleanup["runner_result"] = "completed"
+            else:
+                async_cleanup.update(runner_result="timeout", failed=True)
+        except Exception:
+            async_cleanup.update(runner_result="error", failed=True)
+        async_cleanup["failed"] = (async_cleanup["failed"] or bool(output_pending or reader_pending)
+            or (communication is not None and not child_output["cleanup"]["observation_complete"]))
         if child is not None:
             report["exit_code"] = child.returncode
-        report.update(cli_output=child_output, cli_process={"started": child is not None,
-            "kill_requested_by_harness": child_kill_requested,
-            "exit_observed": child is not None and child.returncode is not None})
-        await runner.cleanup()
+        report.update(cli_output=child_output, cli_cleanup=async_cleanup,
+            cli_process={"started": child is not None,
+                "kill_requested_by_harness": child_kill_requested,
+                "exit_observed": child is not None and child.returncode is not None})
+        if async_cleanup["failed"]:
+            report.update(status="failed", cleanup_failed=True)
         if terminal is not None:
-            report.update(terminal.report())
-        if temporary is not None:
-            # Preserve failure diagnostics even when a stopped child briefly
-            # retains a Windows handle. Never turn cleanup trouble into a pass.
             try:
-                temporary.close()
-            except (OSError, RouterError):
-                report.update(status="failed", cleanup_failed=True)
+                report.update(terminal.report())
+            except Exception:
+                report.update(status="failed", cleanup_failed=True, terminal_report_error=True)
+        # Explicit allocations have no TemporaryDirectory or generator finalizers.
+        # Keep both private home and normally inherited work for an unobserved exit
+        # or incomplete async cleanup; the fixed report never contains exception text.
+        retain = (child is not None and child.returncode is None) or async_cleanup["failed"]
+        if root is not None and not retain:
+            try:
+                if case in TERMINAL_CASES and work is not None:
+                    _remove_fixture_directory(work, work_parent)
+                _remove_fixture_directory(root, root_parent)
+            except Exception:
+                retain = True
+                report.update(status="failed", cleanup_failed=True, fixture_cleanup_error=True)
+        if retain and root is not None:
+            report.update(fixture_retained=True, retained_fixture_paths={
+                "root": str(root), "home": str(root / "home"),
+                "work": str(work) if work is not None else None})
         report.update(requests=requests, request_budget_exceeded=requests > limit,
-                      client_requests=requests, admitted_client_requests=len(request_times),
+                      client_requests=requests + cleanup_rejected, admitted_client_requests=len(request_times),
+                      cleanup_rejected_client_requests=cleanup_rejected,
                       budget_rejected_client_requests=max(0, requests - limit),
                       upstream_dispatch_attempts=len(dispatches), upstream_dispatches=dispatches,
                       upstream_header_responses=router.metrics.stages.get("upstream_headers", {}).get("count", 0),
@@ -571,7 +710,7 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
                 for a, b in zip(request_times, request_times[1:]) if "completed_ms" in a]
             if "completed_ms" in request_times[-1]:
                 report["client_and_harness_shutdown_ms"] = round(report["elapsed_ms"] - request_times[-1]["completed_ms"], 3)
-    return report
+    return deepcopy(report)
 
 
 def main():

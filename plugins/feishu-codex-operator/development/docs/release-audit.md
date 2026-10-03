@@ -7,6 +7,29 @@ counts refer to their individual runs; the current source must be checked with
 the [test instructions](testing.md). A later source-only pass never changes an
 earlier live-task result or proves that installed services were updated.
 
+2026-10-04 bounded evaluator-cleanup delta:
+
+- The second frozen regression completed 1,766 Python tests without assertion failures,
+  test errors or reader-thread errors, with six conditional skips; all 157 Node tests
+  passed. Its original protection gate remains failed: the native root reasoning-effort
+  value changed during that run, while all other native bytes stayed identical. The
+  actor and cause remain unknown; the current setting is preserved. One ancillary
+  Proactor callback exception is retained separately, with no inferred failure cause.
+- Evaluator cleanup now shares a five-second asynchronous budget across process exit,
+  stream collectors and the local runner. Kill/wait errors and child-task cancellation
+  retain a failed report with the actual observed exit or an explicit unknown value.
+  Caller cancellation still propagates. Cleanup closes fixture admission before late
+  requests can reach its handler, and returned diagnostics are independent snapshots.
+  Unknown exit or incomplete cleanup retains the private home and any separately owned
+  work directory. A failed directory creation never grants ownership of an existing path.
+  Seventeen new in-memory regressions cover these boundaries. They do not attest to
+  complete asyncio shutdown, filesystem timing, real Windows worker cleanup or native
+  freeform-patch execution, and do not change requests, token limits or retry settings.
+- The separately reviewed source-test gate allowed seven exact stopped-runtime code
+  updates. Web startup then stopped at a read-only process-identity preflight; no start
+  intent or service launch was created. Entry refresh and current-window acceptance
+  remain pending. Prior failed model, approval and legacy-ownership gates remain visible.
+
 2026-10-04 follow-up candidate:
 
 - The first hidden frozen regression ran 1759 Python tests with no assertion failures,
