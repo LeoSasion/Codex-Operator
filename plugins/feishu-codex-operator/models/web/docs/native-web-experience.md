@@ -6,7 +6,7 @@ Current guidance as of 2026-10-03. Codex-Operator has two areas: Channels and Mo
 
 2026-10-03 second official-update review: Desktop product 26.930.31730 / Windows package
 26.930.3930.0 uses CLI 0.160.0. Native configuration remains on the official direct route;
-the isolated entry still bound 26.930.2377.0 and needs explicit package maintenance.
+before the maintenance recorded below, the isolated entry still bound 26.930.2377.0.
 Thirteen new local CLI compatibility cases passed without business requests. The owner
 subsequently requested repair of all known issues. The vanished old isolated router was
 reviewed separately and the idle saved Web service normally stopped, retaining login and
@@ -41,8 +41,40 @@ The new Web startup sent no model requests and launched no browser: its prefligh
 `web_desktop_locked_before_dispatch`. Current Windows flags also reported locked, with a black
 window and disabled accessibility controls; the cause is unconfirmed. The exact request-free
 service was normally stopped. Package-entry update, restored-window acceptance and the prepared
-different Local/Web cases remain pending a visible unlocked desktop; do not bypass the lock gate,
+different Local/Web cases were pending at that locked-desktop observation; do not bypass the lock gate,
 infer a login challenge, restart the native Desktop or replay an old request.
+
+Unlocked-window follow-up on 2026-10-03: the current-package extension reopened the same isolated
+home, chats and user-data, retaining the running native Desktop and exact native config bytes.
+The exact saved Web page was signed in; no verification or model probe was required to inspect it.
+A different ordinary Local case completed its precise read-only task after natural same-turn
+compaction. Its independent review preserves the complete native body's final LF and terminal-event
+boundary; the original stricter observer failure remains unchanged. A different new Web case timed
+out with no context read, locally delivered call or public final. Its cause is unknown and it remains
+failed. One explicit empty-browser replacement retained the service binding and consumed ledger;
+the empty page initially stayed white, then displayed the signed-in temporary chat. Do not infer a
+verification requirement or rendering cause from that interval. A separately prepared different
+ordinary Web case then completed two actual commands, the precise one-file repair and all three
+tests with native exit zero, unchanged tests and no cache files. Its early saved selection evidence
+checks generation 5.6 and Medium separately from native model metadata. The correct final was
+visible after bringing the same window forward; accessibility lag and concurrent capture interference
+remain observed limitations. No failed turn was replayed, native restart performed or native config
+changed. See the dated release audit for this historical v4 implementation scope and remaining gates.
+
+The final installed-status comparison found an absent legacy facade filename. The product helper
+now maps only its three existing read-only operations through the installed public facade and its
+saved canonical path/digest guard. Do not install an old alias or broaden controller authority.
+The complete affected modules passed 157 checks without skips; this status-only implementation
+patch and its regression are separate from the full v4 receipt. A new reviewed stopped transaction
+updated one runtime file and manifest with originals intact. Explicit late-ready service reuse may
+save the exact observed ownership binding without launching a new process or replaying a turn;
+read-only status alone must never save that binding. The first unbound pair preflight and private
+entry-open JSON decoding failure stay retained. A separate pair transaction and current visible restored window
+were checked, and installed/canonical reports agree with the ready idle Web binding. Native direct
+configuration and the running native Desktop remain unchanged; historical ownership is unresolved.
+The later isolated-home config fingerprint differs from its prepared baseline without retained
+baseline bytes for exact comparison. Preserve the observed change, check route invariants separately,
+and do not infer a cause, restore it or claim the entire home stayed byte-identical.
 
 2026-10-03 integrity follow-up: status publication must fit the actual 64 KiB serialized-file
 bound, including terminal fields. Only the oldest whole diagnostic browser events may be omitted

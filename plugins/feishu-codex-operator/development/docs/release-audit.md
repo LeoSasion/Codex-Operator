@@ -11,7 +11,8 @@ earlier live-task result or proves that installed services were updated.
 
 - Current Desktop product 26.930.31730 / Windows package 26.930.3930.0 uses CLI 0.160.0.
   Thirteen new local compatibility cases passed; no business turn was sent. The native
-  route remains official direct. The saved isolated entry still bound package 26.930.2377.0.
+  route remains official direct. Before the maintenance below, the saved isolated entry
+  still bound package 26.930.2377.0.
 - The owner requested all known issues repaired. The exact vanished isolated router gained
   a separate absence review retaining its original running record; no stopped record or
   request-free server claim was created. The idle saved Web service was then normally stopped,
@@ -72,10 +73,90 @@ earlier live-task result or proves that installed services were updated.
   requests and zero browser launches. Current Windows flags independently reported locked;
   the exact native window showed a black capture and disabled accessibility controls. The cause
   remains unconfirmed. The exact idle service was normally stopped with saved login intact.
-  The current-package paired entry update, restored side window and two prepared different new
-  execution cases remain pending a visible unlocked desktop. No challenge requirement is inferred,
+  At that locked-desktop observation, the current-package paired entry update, restored side window
+  and two prepared different new execution cases remained pending. No challenge requirement is inferred,
   and no native restart, lock bypass or old-request replay occurred. The v4 frozen source artifact
   and receipts remain intact; this later documentation records deployment and the remaining gate.
+
+2026-10-03 unlocked-window follow-up:
+
+- Explicit package-pair maintenance refreshed the isolated entry to official Windows package
+  26.930.3930.0, preserving its exact existing home, user-data and legacy originals. A new extension
+  process opened with the existing chats; the running native Desktop was retained and native config
+  stayed byte-identical. The saved Web page was already signed in; no verification or model probe
+  was needed to check that page.
+- One different ordinary Local input, RL0310, completed in 53.582 seconds with same-turn natural
+  native compaction, one exact CSV read, exit zero, all three data rows, unchanged fixture bytes
+  and final `398 RL0310`. The original observer remains failed: its planned-body comparison
+  rejects the actual complete request plus one final LF, and its final filter requires a phase field
+  absent from this native message. A separate read-only review preserves the complete actual bytes
+  and binds the same-turn completed AgentMessage and task_complete. No trim, replay or original
+  result reclassification occurred.
+- A different new Web input, RW0310, failed after 598.807 seconds with
+  `web_browser_final_timeout_no_retry`. Its request stayed consumed. Local transport recorded zero
+  context-page reads, calls and results; both fixtures stayed unchanged. The exact cause remains
+  unknown; neither zero calls nor an earlier ready state establishes a cloud or login failure.
+- One explicit closed-browser replacement retained the same service, endpoint, connection and
+  consumed-request ledger. Its empty auxiliary page initially stayed white, then displayed the
+  signed-in temporary chat. No reload, GPU change or security bypass occurred; observation timing
+  does not establish the cause of that painting delay. The checked empty page was hidden normally.
+- A separately prepared, different ordinary Web input, RW0416, completed in 84.787 seconds with
+  two paired native commands. They read both new fixtures, changed only the faulty arithmetic
+  expression, and ran the specified Python with `-B`. Both native executions exited zero; all three
+  tests passed, test bytes stayed unchanged and no cache file appeared. The exact final was
+  `34 RW0416`. Early saved browser evidence separately verified GPT-5.6 Sol, generation 5.6 and
+  Medium before dispatch. Complete context reads and HTTP 200 are not substituted for these
+  actual command/result/file checks. The earlier timeout remains failed, with no retry.
+- The final was visibly present after bringing the same extension window forward, without chat
+  re-selection or reload. A concurrent computer-use capture showed another task's surface, and
+  the accessibility tree still lagged the actual final; those observations do not establish general
+  UI stability or exact paint timing. The final saved service state was ready and idle, with current
+  source/session binding and the native configuration unchanged.
+- These live records do not change the frozen v4 artifact, its six conditional skips or any tested
+  implementation bytes. Real approval/denial, native freeform patch, custom exec fidelity, other
+  untested models and legacy first-install ownership remain separate gates.
+
+2026-10-03 installed public-status follow-up after the unlocked-window cases:
+
+- A final real comparison found canonical status checked the current bound Web service, while
+  the byte-identical installed product helper returned partial with `check_result_invalid`.
+  Its inspection invoked the old management filename, which is absent from the runtime inventory.
+  The repair keeps the same three internal read-only operations and maps them through the existing
+  public `codex-operator.ps1` facade. The installed facade still checks its saved canonical path,
+  digest and unlinked parent chain. No legacy alias, control action, fallback or retry was added.
+- Three new regressions first reproduced four deterministic failures against the old helper;
+  those original logs remain unchanged. The fixed new cases passed, then the complete affected
+  product, legacy runtime maintenance and Python runtime modules passed 157 tests with no skips,
+  failures or errors in 388.354 seconds. Independent review matched every ordered test identity
+  (65 + 80 + 12), the exact 285-file source, saved Python, CLI 0.160.0 and native configuration.
+  This later one-file implementation patch and its test change are separate from the full v4 run.
+- The extension was normally quit through its own File menu. Closing its window alone had left
+  the exact process alive; the guard rejected service stop before any stop action. The original
+  process was reopened normally and then quit, without killing or restarting the native Desktop.
+  The router confirmed request-free normal stop; a subsequent manager observation confirmed the
+  saved Web service stopped. The reviewed schema-v1 maintenance updated only the product helper
+  and its manifest, retaining all 2,604 original runtime files and protected integrations. All 63
+  installed files match manifest and canonical source; legacy first-install ownership stays unresolved.
+- Explicit Web startup returned starting before its ownership binding was saved. A read-only ready
+  observation remained unbound, and the first pair preparation rejected that state before creating
+  a stage. After checking the same live process, worker and session, explicit start reuse saved only
+  their exact binding, with no additional service/browser launch or model request. The original
+  rejection remains retained. A new same-package pair transaction then bound this ready service,
+  preserving the native config, existing isolated home, chats, registry rows and catalog selections.
+- The private entry-open observer failed to decode the launcher's empty output as JSON and stays
+  uncertain; it was not repeated. Separate
+  retained launch/process records and the current visible window confirmed the extension opened
+  on the current official package. Opening its saved chat displayed the earlier `34 RW0416` final;
+  no new business turn was sent. Canonical and installed status then both returned checked with
+  identical complete reports, current ready/idle Web binding and unchanged native config. The
+  later isolated home/config fingerprint changed from its prepared baseline; original baseline
+  bytes are unavailable for exact comparison, so the change remains observed and unattributed.
+  Route/provider invariants were checked separately; no rollback or CUA-only claim is made.
+- The final source package binds the full v4 receipt plus this separate affected-suite receipt.
+  Only the product helper and corresponding test differ in implementation/verification from v4;
+  later reviewed documentation is recorded separately. Historical packages, failures and login
+  remain intact. Approval/denial, native freeform patch, custom exec fidelity, untested models,
+  unknown painting/timeout causes and unresolved legacy ownership retain their distinct limits.
 
 2026-10-03 status and public-page integrity follow-up:
 

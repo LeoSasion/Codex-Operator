@@ -813,6 +813,112 @@ print(json.dumps(result))
                 self.assertNotIn('PRIVATE', json.dumps(value))
                 self.assertEqual(run.call_count, 1)
 
+    def test_inspection_uses_only_fixed_public_read_only_operations(self):
+        output = subprocess.CompletedProcess([], 0, b'{"status":"checked"}', b'')
+        for scope, action, public in [('operator', 'readiness', ['channels', 'readiness']),
+                ('web', 'status', ['models', 'web', 'status']),
+                ('web', 'desktop-status', ['models', 'web', 'desktop-status'])]:
+            with self.subTest(scope=scope, action=action), \
+                    patch.object(product.shutil, 'which', return_value='pwsh'), \
+                    patch.object(product.subprocess, 'run', return_value=output) as child:
+                self.assertEqual(product.inspect_entry(self.root, scope, action), {'status': 'checked'})
+                self.assertEqual(child.call_count, 1)
+                self.assertEqual(child.call_args.args[0], ['pwsh', '-NoLogo', '-NoProfile',
+                    '-NonInteractive', '-File', str(ROOT / 'scripts/codex-operator.ps1'),
+                    *public, '-ProjectRoot', str(self.root), '-Json'])
+                self.assertEqual(child.call_args.kwargs['timeout'], 25)
+                self.assertTrue(child.call_args.kwargs['capture_output'])
+        with patch.object(product.subprocess, 'run', side_effect=AssertionError('No control action')) as child:
+            for scope, action in [('operator', 'start'), ('operator', 'stop'),
+                    ('web', 'assist'), ('web', 'inspect'), ('web', 'recover'), ('web', 'configure')]:
+                with self.subTest(scope=scope, action=action), \
+                        self.assertRaisesRegex(ValueError, 'read_only_operation_required'):
+                    product.inspect_entry(self.root, scope, action)
+            child.assert_not_called()
+
+    def installed_inspection_fixture(self):
+        source = self.root / 'plugin 中文/scripts'
+        source.mkdir(parents=True)
+        entry = source / 'codex-operator.ps1'
+        shutil.copyfile(ROOT / 'scripts/codex-operator.ps1', entry)
+        # Only the real public facade is exercised; the terminal fixture admits
+        # exactly the existing read-only operations and never touches a service.
+        (source / 'feishu-codex-operator.ps1').write_text("""
+param([string]$Scope,[string]$Action,[string]$ProjectRoot,[switch]$Json)
+$ErrorActionPreference='Stop'
+if (-not $Json.IsPresent) { throw 'Fixture requires JSON.' }
+if ($Scope -eq 'operator' -and $Action -eq 'readiness') {
+    $gates=@{runtime_running=$false;runtime_manifest=$false;health_current=$false;
+        feishu_consumer=$false;access_configured=$false;minimal_beeper_relay=$false;
+        init_catalog=$false;final_callback=$false}
+    @{status='not_ready';ready=$false;gates=$gates}|ConvertTo-Json -Compress -Depth 3
+    exit 2
+}
+if ($Scope -eq 'web' -and $Action -eq 'status') {
+    @{status='ready';active=$false;configuration_current=$true;session_bound=$true}|ConvertTo-Json -Compress
+    exit 0
+}
+if ($Scope -eq 'web' -and $Action -eq 'desktop-status') {
+    @{status='connected'}|ConvertTo-Json -Compress
+    exit 0
+}
+throw 'No service or model action admitted by this fixture.'
+""", encoding='utf8')
+        runtime = self.root / '.codex/feishu-codex-operator-runtime'
+        runtime.mkdir(parents=True)
+        shutil.copyfile(entry, runtime / entry.name)
+        installed = runtime / 'operator_product.py'
+        shutil.copyfile(ROOT / 'scripts/operator_product.py', installed)
+        (runtime / 'runtime-manifest.json').write_text(json.dumps({'schema_version': 1,
+            'public_entry': {'path': str(entry), 'sha256': hashlib.sha256(entry.read_bytes()).hexdigest()}}),
+            encoding='utf8')
+        profile = self.root / '.codex/operator-web-service/profile.json'
+        profile.parent.mkdir()
+        profile.write_text('{}', encoding='utf8')
+        (self.home / 'config.toml').write_bytes(b'# Preserve this private native fixture.\r\n')
+        self.assertFalse((runtime / 'feishu-codex-operator.ps1').exists())
+        spec = importlib.util.spec_from_file_location('installed_inspection_fixture', installed)
+        copy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(copy)
+        return source, entry, installed, copy
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows entry')
+    def test_installed_product_full_status_uses_saved_public_facade_without_legacy_neighbor(self):
+        source, entry, installed, copy = self.installed_inspection_fixture()
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        with patch.object(product, 'SCRIPTS', source):
+            expected = product.project_overview(self.root, self.home)
+        self.assertEqual(expected['status'], 'checked')
+        self.assertEqual(expected['components']['channels']['state'], 'needs_review')
+        self.assertEqual(expected['components']['models']['providers']['web']['state'], 'ready')
+        child = subprocess.run([sys.executable, '-X', 'utf8', '-E', '-s', '-B', str(installed),
+            '--project-root', str(self.root), '--json'], capture_output=True, timeout=40,
+            env={**os.environ, 'CODEX_HOME': str(self.home)},
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        self.assertEqual(child.returncode, 0, child.stderr.decode('utf8', errors='replace'))
+        self.assertEqual(json.loads(child.stdout), expected)
+        self.assertTrue(expected['read_only'])
+        self.assertEqual(expected['model_requests'], 0)
+        self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows entry')
+    def test_installed_inspection_rejects_changed_or_missing_saved_public_facade_without_fallback(self):
+        source, entry, installed, copy = self.installed_inspection_fixture()
+        original = entry.read_bytes()
+        for state in ('changed', 'missing'):
+            with self.subTest(state=state):
+                if state == 'changed':
+                    entry.write_bytes(original + b'\n# changed saved facade\n')
+                else:
+                    entry.unlink()
+                before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+                with patch.object(copy.subprocess, 'run', wraps=subprocess.run) as child:
+                    self.assertEqual(copy.inspect_entry(self.root, 'web', 'status'),
+                        copy.check_failure('check_result_invalid'))
+                    self.assertEqual(child.call_count, 1)
+                self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+                self.assertFalse((installed.parent / 'feishu-codex-operator.ps1').exists())
+
     def test_binding_check_failure_keeps_ready_backend_and_exact_next_step(self):
         self.configured()
         calls = []

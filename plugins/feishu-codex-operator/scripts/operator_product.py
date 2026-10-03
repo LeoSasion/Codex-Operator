@@ -103,14 +103,18 @@ def read_object(path):
 
 def inspect_entry(project, scope, action):
     """Only these three existing read-only operations are admitted."""
-    if (scope, action) not in {('operator', 'readiness'), ('web', 'status'), ('web', 'desktop-status')}:
+    operations = {('operator', 'readiness'): ('channels', 'readiness'),
+        ('web', 'status'): ('models', 'web', 'status'),
+        ('web', 'desktop-status'): ('models', 'web', 'desktop-status')}
+    public = operations.get((scope, action))
+    if public is None:
         raise ValueError('read_only_operation_required')
     shell = shutil.which('pwsh')
     if not shell:
         return check_failure('check_launcher_unavailable')
     try:
         child = subprocess.run([shell, '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
-            str(SCRIPTS / 'feishu-codex-operator.ps1'), scope, action,
+            str(SCRIPTS / 'codex-operator.ps1'), *public,
             '-ProjectRoot', str(project), '-Json'], capture_output=True, timeout=25,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         if len(child.stdout) > 65536:
