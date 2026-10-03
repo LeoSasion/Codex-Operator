@@ -78,6 +78,41 @@ class UninstallRoutingTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(),before)
         self.assertEqual(self.stops,0)
 
+    def test_missing_legacy_entry_journal_inside_retained_directory_blocks_teardown(self):
+        migration=self.project/'.codex/operator-entry-migration'
+        migration.mkdir()
+        retained=migration/'original-shortcut.bin'
+        retained.write_bytes(b'original legacy entry bytes')
+        before=self.config.read_bytes()
+        with self.assertRaisesRegex(ValueError,'restore_separate_desktop_entry_migration'):
+            uninstall.detach(self.project,self.config,self.port)
+        self.assertEqual(retained.read_bytes(),b'original legacy entry bytes')
+        self.assertEqual(self.config.read_bytes(),before)
+        self.assertEqual(self.paths,[])
+        self.assertEqual(self.stops,0)
+
+    def test_linked_legacy_entry_directory_blocks_before_router_contact(self):
+        migration=self.project/'.codex/operator-entry-migration'
+        foreign=self.project/'foreign-entry'
+        foreign.mkdir()
+        journal=foreign/'journal.json'
+        original=json.dumps({'scope':'desktop_entry_only','project':str(self.project),'phase':'restored'}).encode()
+        journal.write_bytes(original)
+        try:
+            migration.symlink_to(foreign,target_is_directory=True)
+        except OSError:
+            if os.name!='nt': raise
+            result=subprocess.run(['cmd','/c','mklink','/J',str(migration),str(foreign)],capture_output=True)
+            self.assertEqual(result.returncode,0)
+            self.addCleanup(lambda: os.rmdir(migration))
+        before=self.config.read_bytes()
+        with self.assertRaisesRegex(ValueError,'linked_path'):
+            uninstall.detach(self.project,self.config,self.port)
+        self.assertEqual(journal.read_bytes(),original)
+        self.assertEqual(self.config.read_bytes(),before)
+        self.assertEqual(self.paths,[])
+        self.assertEqual(self.stops,0)
+
     def test_entry_preflight_keeps_lifecycle_checks_without_runtime_ownership(self):
         journal=self.project/'.codex/operator-entry-migration/journal.json'
         journal.parent.mkdir()

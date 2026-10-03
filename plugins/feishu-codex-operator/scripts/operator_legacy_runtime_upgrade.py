@@ -3,7 +3,7 @@
 This intentionally does not establish first-install ownership of Hooks, rules,
 shortcuts, configuration, or business data. A failed transaction is never
 resumed automatically; its exact original bytes remain in a private backup.
-Schema v2 may add the two reviewed model dependencies and update only the
+Schema v2 may add exact reviewed model/search dependencies and update only the
 startup Hook's literal inventory; this is maintenance, not first-install ownership.
 """
 
@@ -40,6 +40,9 @@ QUOTED_FILE_RE = re.compile(r"'([^'\r\n]+)'\s*,?\s*", re.S)
 EXPECTED_FILES_BYTES_RE = re.compile(rb"\$expectedFiles\s*=\s*@\((.*?)\)", re.S)
 REVIEWED_ADDITIONS = frozenset({"operator_core/web_native_interruption.py",
                               "operator_native_models.py"})
+REVIEWED_SEARCH_ADDITIONS = frozenset({"operator_core/native_search.py"})
+REVIEWED_ADDITION_SETS = (REVIEWED_ADDITIONS, REVIEWED_SEARCH_ADDITIONS,
+                         REVIEWED_ADDITIONS | REVIEWED_SEARCH_ADDITIONS)
 START_HOOK = ".codex/hooks/start-feishu-codex-operator.ps1"
 ABSENT = {"sha256": "absent", "size": 0}
 WEB_RECOVERY_ERRORS = frozenset({
@@ -657,7 +660,7 @@ def preview(project: Path, plugin: Path, *,
             "cutover_runtime_inventory_mismatch")
     additions = source_names - installed_names
     require(not installed_names - source_names
-            and additions in (set(), REVIEWED_ADDITIONS),
+            and (not additions or frozenset(additions) in REVIEWED_ADDITION_SETS),
             "cutover_runtime_inventory_mismatch")
     hook_update = None
     if additions:
@@ -933,7 +936,7 @@ def restore(project: Path, plugin: Path, preview_digest: str, *,
     if plan["schema_version"] == 2:
         require(not intent.get("restore_attempted"), "cutover_restore_terminal_no_retry")
         added = {name for name, row in plan["code"].items() if row["before"] == ABSENT}
-        require(added == REVIEWED_ADDITIONS
+        require(frozenset(added) in REVIEWED_ADDITION_SETS
                 and plan["startup_hook"]["before"] == plan["protected"][START_HOOK]
                 and plan["startup_hook"]["after"]["sha256"] == plan["new_manifest"]["start_hook_sha256"],
                 "cutover_restore_identity_invalid")

@@ -4,6 +4,93 @@ Current guidance as of 2026-10-03. Codex-Operator has two areas: Channels and Mo
 
 ## Read first
 
+2026-10-03 remaining-work follow-up: old isolated acceptance chats may be archived
+through their exact native home/task identities, preserving complete history and key
+cases. Never interpret a cached visible list as failed archive or repeat the action.
+The extension can exit normally while the original native Desktop keeps running.
+Explicit Web start owns one locked launch/reuse plus bounded observations of that
+same record; late-ready binding never requires a second launch. Recheck all source,
+settings/profile/current-record snapshots and fixed connection after dependency I/O,
+before the first launch journal. Read-only status still cannot persist a binding.
+Hidden direct PowerShell entry must decode its pinned UTF-8 helper output explicitly;
+a helper exit zero or a saved profile does not make corrupted JSON a valid result.
+GUI entry-open has no JSON stdout contract. Separate its shell result from exact
+process-birth, launch-journal and current-window evidence. Preserve the old observer
+failures and unattributed configuration drift. Candidate source, installed bytes and
+new live acceptance remain distinct; see the current conversation plan.
+
+2026-10-03 second official-update review: Desktop product 26.930.31730 / Windows package
+26.930.3930.0 uses CLI 0.160.0. Native configuration remains on the official direct route;
+before the maintenance recorded below, the isolated entry still bound 26.930.2377.0.
+Thirteen new local CLI compatibility cases passed without business requests. The owner
+subsequently requested repair of all known issues. The vanished old isolated router was
+reviewed separately and the idle saved Web service normally stopped, retaining login and
+the native configuration. Neither action establishes a clean stop for the vanished router.
+Current status must inspect the current isolated entry after its Web manager observation,
+use its checked saved interpreter, and never substitute a retained legacy provider.
+An installed status helper delegates only to byte-identical canonical code through its
+fixed read-only action; it does not install canonical mode maintenance modules into runtime.
+Canonical controller dependencies must be checked before import; missing or linked files must
+not execute a same-named fallback module. Keep the superseded incomplete regression separate.
+The runtime inventory must include the native search dependency required by router startup.
+Source repairs, reviewed runtime/package deployment and fresh Desktop acceptance remain
+separate gates. Historical installation ownership is still unresolved; do not manufacture it.
+The completed second-update v3 regression failed 12 CLI cases among 1,709 Python tests
+(six conditional skips); all 157 Node tests passed. Keep this result and the earlier incomplete
+runs separate. Fresh parsed-request observations passed adaptation unchanged and showed no
+AdditionalTools envelope; do not change codecs based on the rejected initial hypothesis.
+The isolated evaluator must accept and forward the base router's `web_binding` keyword.
+Its stale override blocked dispatch before upstream/tool execution. Repair that interface
+without changing endpoint capabilities, permissions, budgets, retries or acceptance assertions.
+The complete affected module passed 12 tests without skips using actual CLI 0.160 and all
+original acceptance/rejection assertions. The subsequent frozen v4 run passed 1,709 Python
+tests with six conditional skips and all 157 Node tests, preserving source, CLI and native
+configuration. Reviewed same-version runtime maintenance then updated 16 code files, retaining
+the exact original/absent states; all 63 installed files match both manifest and canonical source.
+It does not resolve legacy first-install ownership. Local service startup was confirmed once.
+The model loaded with the saved complete configuration, but the original restoration assertion
+failed because the SDK adds an own `gpu.mainGpu=undefined` property absent from retained JSON.
+A separate read-only review confirmed identical complete JSON values, stable model identity,
+32768 context, parallel capacity four and unchanged defaults. Preserve the original failed receipt.
+The new Web startup sent no model requests and launched no browser: its preflight recorded
+`web_desktop_locked_before_dispatch`. Current Windows flags also reported locked, with a black
+window and disabled accessibility controls; the cause is unconfirmed. The exact request-free
+service was normally stopped. Package-entry update, restored-window acceptance and the prepared
+different Local/Web cases were pending at that locked-desktop observation; do not bypass the lock gate,
+infer a login challenge, restart the native Desktop or replay an old request.
+
+Unlocked-window follow-up on 2026-10-03: the current-package extension reopened the same isolated
+home, chats and user-data, retaining the running native Desktop and exact native config bytes.
+The exact saved Web page was signed in; no verification or model probe was required to inspect it.
+A different ordinary Local case completed its precise read-only task after natural same-turn
+compaction. Its independent review preserves the complete native body's final LF and terminal-event
+boundary; the original stricter observer failure remains unchanged. A different new Web case timed
+out with no context read, locally delivered call or public final. Its cause is unknown and it remains
+failed. One explicit empty-browser replacement retained the service binding and consumed ledger;
+the empty page initially stayed white, then displayed the signed-in temporary chat. Do not infer a
+verification requirement or rendering cause from that interval. A separately prepared different
+ordinary Web case then completed two actual commands, the precise one-file repair and all three
+tests with native exit zero, unchanged tests and no cache files. Its early saved selection evidence
+checks generation 5.6 and Medium separately from native model metadata. The correct final was
+visible after bringing the same window forward; accessibility lag and concurrent capture interference
+remain observed limitations. No failed turn was replayed, native restart performed or native config
+changed. See the dated release audit for this historical v4 implementation scope and remaining gates.
+
+The final installed-status comparison found an absent legacy facade filename. The product helper
+now maps only its three existing read-only operations through the installed public facade and its
+saved canonical path/digest guard. Do not install an old alias or broaden controller authority.
+The complete affected modules passed 157 checks without skips; this status-only implementation
+patch and its regression are separate from the full v4 receipt. A new reviewed stopped transaction
+updated one runtime file and manifest with originals intact. Explicit late-ready service reuse may
+save the exact observed ownership binding without launching a new process or replaying a turn;
+read-only status alone must never save that binding. The first unbound pair preflight and private
+entry-open JSON decoding failure stay retained. A separate pair transaction and current visible restored window
+were checked, and installed/canonical reports agree with the ready idle Web binding. Native direct
+configuration and the running native Desktop remain unchanged; historical ownership is unresolved.
+The later isolated-home config fingerprint differs from its prepared baseline without retained
+baseline bytes for exact comparison. Preserve the observed change, check route invariants separately,
+and do not infer a cause, restore it or claim the entire home stayed byte-identical.
+
 2026-10-03 integrity follow-up: status publication must fit the actual 64 KiB serialized-file
 bound, including terminal fields. Only the oldest whole diagnostic browser events may be omitted
 with a count; business histories, counters and capacity stay intact. Dedicated compatibility reads

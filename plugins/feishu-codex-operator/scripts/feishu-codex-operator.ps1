@@ -885,6 +885,10 @@ function Get-OperatorParity {
             (Join-Path $skillRoot 'scripts\operator_core\model_router.py'),
             (Join-Path (Get-OperatorPaths).Runtime 'operator_core\model_router.py')
         )
+        'operator_core\native_search.py' = @(
+            (Join-Path $skillRoot 'scripts\operator_core\native_search.py'),
+            (Join-Path (Get-OperatorPaths).Runtime 'operator_core\native_search.py')
+        )
         'operator_core\web_model_catalog.py' = @(
             (Join-Path $skillRoot 'scripts\operator_core\web_model_catalog.py'),
             (Join-Path (Get-OperatorPaths).Runtime 'operator_core\web_model_catalog.py')
@@ -1040,6 +1044,7 @@ function Get-InstalledOperatorManifestIssues {
         'operator_core/responses_verification.py',
         'operator_core/responses_labels.py',
         'operator_core/model_router.py',
+        'operator_core/native_search.py',
         'operator_core/model_router_config.py',
         'operator_core/lmstudio_discovery.py',
         'operator_model_router.py',

@@ -2,6 +2,33 @@
 
 Cross-model guidance and the current native/router comparison are maintained in the independent `codex-model-adaptation` skill. This file retains dated acceptance evidence and Operator-specific verification contracts.
 
+## Native approval evidence, 2026-10-03
+
+CLI 0.160.0 uses the current granular approval policy and native ThreadItem union.
+The private read-only verifier accepts an explicitly captured
+`native_approval_pairs_v1` envelope only with one original request/response RPC pair,
+matching RPC, thread, turn and item identities and an actual native terminal item.
+Single-action allow requires `accept` and successful native execution; denial requires
+`decline` or `cancel`, the declined action without execution and no later tool bypass.
+A non-null command `approvalId` describes a separate subcommand/callback, while a
+non-null file-change `grantRoot` requests a session-root grant; neither proves the
+single parent action used by these cases. Preserve absent/null protocol snapshots,
+compare supplied command/cwd verbatim, and never reconstruct missing historical RPC
+evidence from an assistant claim or a reviewer assertion. The verifier sends no
+decision, changes no permissions and does not establish actual live Desktop approval.
+
+## Explicit native patch grammar, 2026-10-03
+
+The observed Windows CLI 0.160.0 standalone `apply_patch` declaration has a complete
+lark grammar, including its CRLF bytes and final newline. The dated
+`codex_apply_patch_0160_v1` representation recognizes only that exact grammar on an
+explicitly registered bare custom tool. It preserves complete input, paired result
+objects and text-part boundaries; nonempty input retains the existing 2 MiB bound.
+Unknown grammar, another tool name or namespace is rejected. No historical no-tools
+codec or standard-mode default registration is added. This is protocol mapping, with
+native parsing, file execution and approval unchanged. Its 51-test source pass does
+not attest to model source fidelity, real file-write approval or live Desktop execution.
+
 ## Native CLI command display, 2026-09-28
 
 CLI `0.158.0-alpha.2.1` projects command argv through POSIX `shlex_join` even

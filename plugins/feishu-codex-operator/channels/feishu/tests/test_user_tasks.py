@@ -84,6 +84,14 @@ class UserTaskTests(unittest.TestCase):
         self.assertFalse((self.project / RECEIPT_DIR).exists())
         self.assertEqual(calls, [])
 
+    def test_oversized_grant_is_rejected_before_creating_registration_state(self):
+        self.grant['grant_source_thread_id'] = 'x' * 16_384
+        with self.assertRaisesRegex(UserTaskError, 'user_task_record_too_large'):
+            self.enable()
+        self.assertFalse((self.runtime / PROFILE_NAME).exists())
+        self.assertFalse((self.runtime / DATABASE_NAME).exists())
+        self.assertFalse((self.project / RECEIPT_DIR).exists())
+
     def test_stopped_configuration_and_unknown_existing_grant_are_preserved(self):
         (self.runtime / 'operator.pid').write_text('123')
         with self.assertRaises(UserTaskError):
@@ -167,6 +175,67 @@ class UserTaskTests(unittest.TestCase):
         with self.assertRaises(UserTaskError):
             configure(self.runtime, self.grant, executable=Path('unused'))
 
+    def test_exact_capacity_configured_grant_revokes_to_readable_idempotent_state(self):
+        self.enable()
+        small = (self.runtime / PROFILE_NAME).read_bytes()
+        self.grant['grant_source_thread_id'] += 'x' * (16_384 - len(small))
+        runtime = self.root / 'exact-capacity-runtime'
+        runtime.mkdir()
+        self.assertEqual(configure(runtime, self.grant, executable=Path('unused')),
+            {'enabled': True, 'reused': False})
+        path = runtime / PROFILE_NAME
+        original = path.read_bytes()
+        self.assertEqual(len(original), 16_384)
+        self.assertIsNotNone(read_profile(runtime))
+        self.assertEqual(revoke(runtime), {'enabled': False, 'state': 'revoked'})
+        self.assertEqual(len(path.read_bytes()), 16_384)
+        self.assertIsNone(read_profile(runtime))
+        backups = list(runtime.glob(PROFILE_NAME + '.before-revocation-*'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), original)
+        expected = json.loads(original)
+        expected['status'] = 'revoked'
+        self.assertEqual(json.loads(path.read_bytes()), expected)
+        before = {entry.name: entry.read_bytes() for entry in runtime.iterdir() if entry.is_file()}
+        self.assertEqual(revoke(runtime), {'enabled': False, 'state': 'revoked'})
+        self.assertEqual(before, {entry.name: entry.read_bytes() for entry in runtime.iterdir() if entry.is_file()})
+
+    def test_revocation_encoding_over_capacity_rejects_before_backup_or_write(self):
+        profile, _ = self.enable()
+        profile['grant_source_thread_id'] = '中' * 3_000
+        original = json.dumps(profile, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        self.assertLessEqual(len(original), 16_384)
+        path = self.runtime / PROFILE_NAME
+        path.write_bytes(original)
+        self.assertIsNotNone(read_profile(self.runtime))
+        before = {entry.name: entry.read_bytes() for entry in self.runtime.iterdir() if entry.is_file()}
+        with self.assertRaisesRegex(UserTaskError, 'user_task_record_too_large'):
+            revoke(self.runtime)
+        self.assertEqual(before, {entry.name: entry.read_bytes() for entry in self.runtime.iterdir() if entry.is_file()})
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(list(self.runtime.glob(PROFILE_NAME + '.before-revocation-*')), [])
+        self.assertEqual(list(self.runtime.glob(PROFILE_NAME + '.revoke-*')), [])
+
+    def test_revocation_preserves_later_edit_and_original_backup(self):
+        self.enable()
+        path = self.runtime / PROFILE_NAME
+        original = path.read_bytes()
+        edited = original + b' '
+        fsync = os.fsync
+        def edit_during_write(descriptor):
+            fsync(descriptor)
+            path.write_bytes(edited)
+        with patch('operator_core.user_tasks.os.fsync', side_effect=edit_during_write), \
+                patch('operator_core.user_tasks.os.replace') as replace:
+            with self.assertRaisesRegex(UserTaskError, 'user_task_grant_changed'):
+                revoke(self.runtime)
+            replace.assert_not_called()
+        self.assertEqual(path.read_bytes(), edited)
+        backups = list(self.runtime.glob(PROFILE_NAME + '.before-revocation-*'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), original)
+        self.assertEqual(list(self.runtime.glob(PROFILE_NAME + '.revoke-*')), [])
+
     def test_group_and_explicit_binding_never_create_and_wrong_bot_rejected(self):
         self.enable()
         manager = self.manager(lambda _: self.fail('must not queue'))
@@ -211,6 +280,49 @@ class UserTaskTests(unittest.TestCase):
         release.set()
         self.assertEqual(first.result(5)['thread_id'], MANUAL)
         self.assertEqual(len(queues), 1)
+
+    def test_changed_sender_cannot_return_a_concurrent_manual_binding(self):
+        self.enable()
+        queues = []
+        def queue(request):
+            queues.append(request)
+            self.receipt(request)
+            self.sessions.update('p2p:one', {'user_open_id': 'ou_other'})
+            self.sessions.bind_thread('p2p:one', MANUAL)
+        manager = self.manager(queue)
+        with self.assertRaisesRegex(UserTaskError, 'user_task_session_identity_changed'):
+            manager.begin('p2p:one', self.session(), 'ou_bot').result(5)
+        self.assertEqual(self.sessions.get('p2p:one')['thread_id'], MANUAL)
+        self.assertEqual(self.sessions.get('p2p:one')['user_open_id'], 'ou_other')
+        with self.assertRaises(UserTaskError):
+            manager.begin('p2p:one', dict(chat_type='p2p', user_open_id='ou_one'), 'ou_bot').result(5)
+        self.assertEqual(len(queues), 1)
+
+    def test_sender_change_between_read_and_binding_is_rejected_atomically(self):
+        self.enable()
+        manager = self.manager(self.receipt)
+        bind = self.sessions.bind_thread_if_current
+        def changed(*args, **kwargs):
+            self.sessions.update('p2p:one', {'user_open_id': 'ou_other'})
+            return bind(*args, **kwargs)
+        with patch.object(self.sessions, 'bind_thread_if_current', side_effect=changed):
+            with self.assertRaisesRegex(UserTaskError, 'user_task_session_identity_changed'):
+                manager.begin('p2p:one', self.session(), 'ou_bot').result(5)
+        self.assertFalse(self.sessions.get('p2p:one').get('thread_id'))
+        self.assertEqual(self.sessions.get('p2p:one')['user_open_id'], 'ou_other')
+
+    def test_sender_change_in_binding_conflict_does_not_return_other_task(self):
+        self.enable()
+        manager = self.manager(self.receipt)
+        def changed(*args, **kwargs):
+            self.sessions.update('p2p:one', {'chat_type': 'group'})
+            self.sessions.bind_thread('p2p:one', MANUAL)
+            raise ValueError('concurrent binding')
+        with patch.object(self.sessions, 'bind_thread_if_current', side_effect=changed):
+            with self.assertRaisesRegex(UserTaskError, 'user_task_session_identity_changed'):
+                manager.begin('p2p:one', self.session(), 'ou_bot').result(5)
+        self.assertEqual(self.sessions.get('p2p:one')['thread_id'], MANUAL)
+        self.assertEqual(self.sessions.get('p2p:one')['chat_type'], 'group')
 
     def test_unknown_queue_and_later_messages_do_not_retry_creation(self):
         self.enable()

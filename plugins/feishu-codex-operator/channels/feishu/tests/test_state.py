@@ -923,6 +923,36 @@ class AccessAndSessionTests(unittest.TestCase):
             self.assertEqual("old-host", current["host_id"])
             self.assertNotIn("binding_operation_receipt", current)
 
+    def test_registration_binding_checks_sender_including_repeated_receipt(self) -> None:
+        for changed in ({"user_open_id": "ou_other"}, {"chat_type": "group"}):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
+                path = Path(temporary) / "sessions.json"
+                store = SessionStore(path)
+                store.update("scope", {"user_open_id": "ou_original", "chat_type": "p2p"})
+                arguments = dict(expected_thread_id="", host_id="local", project_id="opaque-project",
+                    operation_receipt="e" * 32, expected_user_open_id="ou_original", expected_chat_type="p2p")
+                bound = store.bind_thread_if_current("scope", "thread-new", **arguments)
+                self.assertEqual(bound["user_open_id"], "ou_original")
+                self.assertEqual(bound["thread_id"], "thread-new")
+                current = store.update("scope", changed)
+                before = path.read_bytes()
+                with self.assertRaisesRegex(ValueError, "session identity changed"):
+                    store.bind_thread_if_current("scope", "thread-new", **arguments)
+                self.assertEqual(store.get("scope"), current)
+                self.assertEqual(path.read_bytes(), before)
+
+    def test_registration_binding_rejects_incomplete_sender_condition_before_writes(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
+            path = Path(temporary) / "sessions.json"
+            store = SessionStore(path)
+            store.update("scope", {"user_open_id": "ou_original", "chat_type": "p2p"})
+            before = path.read_bytes()
+            with self.assertRaisesRegex(ValueError, "binding session identity must be complete"):
+                store.bind_thread_if_current("scope", "thread-new", expected_thread_id="", host_id="local",
+                    project_id="opaque-project", operation_receipt="f" * 32, expected_user_open_id="ou_original")
+            self.assertEqual(path.read_bytes(), before)
+            self.assertFalse(store.get("scope").get("thread_id"))
+
     def test_same_display_name_in_distinct_chats_keeps_distinct_bindings(self) -> None:
         with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
             store = SessionStore(Path(temporary) / "sessions.json")

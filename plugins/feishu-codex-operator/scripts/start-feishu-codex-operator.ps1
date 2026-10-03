@@ -210,6 +210,7 @@ function Assert-OperatorRuntimeManifest {
         'operator_core/responses_verification.py',
         'operator_core/responses_labels.py',
         'operator_core/model_router.py',
+        'operator_core/native_search.py',
         'operator_core/model_router_config.py',
         'operator_core/lmstudio_discovery.py',
         'operator_model_router.py',

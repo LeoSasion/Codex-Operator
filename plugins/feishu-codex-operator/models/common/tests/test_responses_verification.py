@@ -50,6 +50,8 @@ class VerificationTests(unittest.TestCase):
                     for i in range(2)]
         if case in ('desktop_exit_stop', 'desktop_tool_error_stop'):
             commands[-1].update(status='failed', exitCode=7)
+        if case == 'desktop_approval_deny':
+            commands[-1].update(status='declined', exitCode=None)
         artifact.write_text(json.dumps(dict(id=turn,
             status='interrupted' if case == 'desktop_cancel' else 'completed', items=commands)), encoding='utf-8')
         record = dict(case=case, status='passed', checked_at=self.stamp(), run_id=f'case-{n}',
@@ -59,8 +61,26 @@ class VerificationTests(unittest.TestCase):
                       artifact=artifact.name, artifact_sha256=hashlib.sha256(artifact.read_bytes()).hexdigest(),
                       assertions=dict.fromkeys(REQUIRED[case], True))
         record.update(overrides)
+        if case in ('desktop_approval_allow', 'desktop_approval_deny'):
+            value = json.loads(artifact.read_text(encoding='utf-8'))
+            value['operator_approval_evidence'] = {
+                'format': 'native_approval_pairs_v1', 'pairs': [{
+                    'request': {'id': f'approval-{n}', 'method': 'item/commandExecution/requestApproval',
+                                'params': {'threadId': record['thread_id'], 'turnId': turn,
+                                           'itemId': commands[-1]['id'], 'startedAtMs': 1}},
+                    'response': {'id': f'approval-{n}', 'result': {
+                        'decision': 'decline' if case == 'desktop_approval_deny' else 'accept'}}}]}
+            artifact.write_text(json.dumps(value), encoding='utf-8')
+            record['artifact_sha256'] = hashlib.sha256(artifact.read_bytes()).hexdigest()
         self.ledger['records'].append(record)
         return record
+
+    def update_artifact(self, record, update):
+        path = self.root / record['artifact']
+        value = json.loads(path.read_text(encoding='utf-8'))
+        update(value)
+        path.write_text(json.dumps(value), encoding='utf-8')
+        record['artifact_sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
 
     def inspect(self, **kwargs):
         self.path.write_text(json.dumps(self.ledger), encoding='utf-8')
@@ -166,6 +186,152 @@ class VerificationTests(unittest.TestCase):
             path.write_text(json.dumps(obj), encoding='utf-8')
             r['artifact_sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
             self.assertFalse(self.inspect()['gates']['desktop_exit_stop']['passed'])
+
+    def test_approval_assertions_without_a_native_pair_never_pass(self):
+        for case in ('desktop_approval_allow', 'desktop_approval_deny'):
+            r = self.record(case)
+            self.update_artifact(r, lambda obj: obj.pop('operator_approval_evidence'))
+            result = self.inspect()['gates'][case]
+            self.assertFalse(result['passed'])
+            self.assertIn('native_approval_pair_required', result['reasons'])
+
+    def test_approval_request_response_and_native_item_must_have_exact_identity(self):
+        r = self.record('desktop_approval_allow')
+        path = self.root / r['artifact']
+        original = json.loads(path.read_text(encoding='utf-8'))
+        for field, changed in (('threadId', 'other-thread'), ('turnId', 'other-turn'),
+                               ('itemId', 'other-item')):
+            obj = deepcopy(original)
+            obj['operator_approval_evidence']['pairs'][0]['request']['params'][field] = changed
+            self.update_artifact(r, lambda target: (target.clear(), target.update(obj)))
+            self.assertFalse(self.inspect()['gates']['desktop_approval_allow']['passed'], field)
+        for request_id, response_id in ((1, '1'), (True, 1), ('a', 'b')):
+            obj = deepcopy(original)
+            pair = obj['operator_approval_evidence']['pairs'][0]
+            pair['request']['id'], pair['response']['id'] = request_id, response_id
+            self.update_artifact(r, lambda target: (target.clear(), target.update(obj)))
+            with self.assertRaisesRegex(RouterError, 'invalid_verification_approval_evidence'):
+                self.inspect()
+
+    def test_approved_command_must_match_the_prompt_and_complete_successfully(self):
+        r = self.record('desktop_approval_allow')
+        def command_snapshots(obj):
+            obj['items'][-1].update(command='exact synthetic write', cwd='synthetic-work')
+            params = obj['operator_approval_evidence']['pairs'][0]['request']['params']
+            params.update(command='exact synthetic write', cwd='synthetic-work', kind='command')
+        self.update_artifact(r, command_snapshots)
+        self.assertTrue(self.inspect()['gates']['desktop_approval_allow']['passed'])
+        self.update_artifact(r, lambda obj: obj['items'][-1].update(command='different write'))
+        self.assertIn('native_approval_command_mismatch',
+                      self.inspect()['gates']['desktop_approval_allow']['reasons'])
+        self.update_artifact(r, lambda obj: obj['items'][-1].update(command='exact synthetic write', exitCode=9))
+        self.assertIn('approved_action_completion_required',
+                      self.inspect()['gates']['desktop_approval_allow']['reasons'])
+
+    def test_session_or_stdin_decisions_do_not_supply_single_action_acceptance(self):
+        r = self.record('desktop_approval_allow')
+        self.update_artifact(r, lambda obj: obj['operator_approval_evidence']['pairs'][0]['response'][
+            'result'].update(decision='acceptForSession'))
+        self.assertIn('single_action_accept_required',
+                      self.inspect()['gates']['desktop_approval_allow']['reasons'])
+        self.update_artifact(r, lambda obj: obj['operator_approval_evidence']['pairs'][0]['request'][
+            'params'].update(kind='writeStdin'))
+        self.assertIn('single_command_approval_required',
+                      self.inspect()['gates']['desktop_approval_allow']['reasons'])
+
+    def test_subcommand_callback_ids_cannot_approve_or_deny_the_parent_command(self):
+        for case in ('desktop_approval_allow', 'desktop_approval_deny'):
+            r = self.record(case)
+            for callback in (None, 'opaque-subcommand-callback', False, 1):
+                self.update_artifact(r, lambda obj: obj['operator_approval_evidence']['pairs'][0][
+                    'request']['params'].update(approvalId=callback))
+                gate = self.inspect()['gates'][case]
+                self.assertEqual(gate['passed'], callback is None)
+                if callback is not None:
+                    self.assertIn('single_command_approval_required', gate['reasons'])
+
+    def test_denial_requires_native_declined_status_without_process_or_exit(self):
+        r = self.record('desktop_approval_deny')
+        original = json.loads((self.root / r['artifact']).read_text(encoding='utf-8'))
+        for changed in ({'status': 'completed', 'exitCode': 0}, {'exitCode': 0}, {'processId': 'ran'}):
+            obj = deepcopy(original)
+            obj['items'][-1].update(changed)
+            self.update_artifact(r, lambda target: (target.clear(), target.update(obj)))
+            self.assertIn('declined_action_without_execution_required',
+                          self.inspect()['gates']['desktop_approval_deny']['reasons'])
+
+    def test_denial_rejects_later_dynamic_search_or_other_native_tool_activity(self):
+        r = self.record('desktop_approval_deny')
+        original = json.loads((self.root / r['artifact']).read_text(encoding='utf-8'))
+        for kind in ('commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall',
+                     'collabAgentToolCall', 'subAgentActivity', 'webSearch', 'imageView',
+                     'imageGeneration', 'sleep', 'enteredReviewMode', 'exitedReviewMode'):
+            obj = deepcopy(original)
+            obj['items'].append(dict(type=kind, id='later', status='completed'))
+            self.update_artifact(r, lambda target: (target.clear(), target.update(obj)))
+            self.assertIn('denied_action_must_be_last_tool',
+                          self.inspect()['gates']['desktop_approval_deny']['reasons'], kind)
+
+    def test_cancel_denial_requires_the_matching_interrupted_turn(self):
+        r = self.record('desktop_approval_deny')
+        self.update_artifact(r, lambda obj: obj['operator_approval_evidence']['pairs'][0]['response'][
+            'result'].update(decision='cancel'))
+        self.assertFalse(self.inspect()['gates']['desktop_approval_deny']['passed'])
+        self.update_artifact(r, lambda obj: obj.update(status='interrupted'))
+        self.assertTrue(self.inspect()['gates']['desktop_approval_deny']['passed'])
+
+    def test_native_file_change_approval_pairs_are_checked_separately(self):
+        for case in ('desktop_approval_allow', 'desktop_approval_deny'):
+            r = self.record(case)
+            def change(obj):
+                obj['items'][-1] = dict(type='fileChange', id=obj['items'][-1]['id'],
+                    status='declined' if case.endswith('deny') else 'completed',
+                    changes=[{'path': 'synthetic-file', 'kind': 'update', 'diff': 'synthetic diff'}])
+                obj['operator_approval_evidence']['pairs'][0]['request']['method'] = 'item/fileChange/requestApproval'
+            self.update_artifact(r, change)
+            self.assertTrue(self.inspect()['gates'][case]['passed'])
+
+    def test_file_session_root_grants_do_not_count_as_single_file_action_approval(self):
+        for case in ('desktop_approval_allow', 'desktop_approval_deny'):
+            r = self.record(case)
+            def change(obj):
+                obj['items'][-1] = dict(type='fileChange', id=obj['items'][-1]['id'],
+                    status='declined' if case.endswith('deny') else 'completed',
+                    changes=[{'path': 'synthetic-file', 'kind': 'update', 'diff': 'synthetic diff'}])
+                obj['operator_approval_evidence']['pairs'][0]['request']['method'] = 'item/fileChange/requestApproval'
+            self.update_artifact(r, change)
+            for root in (None, 'synthetic-session-root', '', False):
+                self.update_artifact(r, lambda obj: obj['operator_approval_evidence']['pairs'][0][
+                    'request']['params'].update(grantRoot=root))
+                gate = self.inspect()['gates'][case]
+                self.assertEqual(gate['passed'], root is None)
+                if root is not None:
+                    self.assertIn('single_file_action_approval_required', gate['reasons'])
+
+    def test_current_granular_policy_keeps_exact_boolean_fields_and_prompt_gates(self):
+        policy = {'granular': {'rules': True, 'sandbox_approval': True, 'mcp_elicitations': True,
+                              'request_permissions': False, 'skill_approval': False}}
+        r = self.record('desktop_approval_allow', approval_policy=policy)
+        self.assertTrue(self.inspect()['gates']['desktop_approval_allow']['passed'])
+        r['approval_policy']['granular']['sandbox_approval'] = False
+        self.assertIn('permission_or_retry_contract_not_met',
+                      self.inspect()['gates']['desktop_approval_allow']['reasons'])
+        for malformed in ({'granular': {'rules': True}},
+                          {'granular': {**policy['granular'], 'extra': True}},
+                          {'granular': {**policy['granular'], 'rules': 1}}):
+            r['approval_policy'] = malformed
+            with self.assertRaisesRegex(RouterError, 'invalid_desktop_verification_record'):
+                self.inspect()
+
+    def test_new_native_tool_kinds_cannot_hide_after_a_failed_command(self):
+        for case in ('desktop_exit_stop', 'desktop_tool_error_stop'):
+            r = self.record(case)
+            self.update_artifact(r, lambda obj: obj['items'].append(
+                dict(type='dynamicToolCall', id='later', status='completed')))
+            self.assertFalse(self.inspect()['gates'][case]['passed'])
+        self.update_artifact(r, lambda obj: obj['items'].append(dict(type='unreviewedFutureTool', id='unknown')))
+        with self.assertRaisesRegex(RouterError, 'invalid_verification_turn_items'):
+            self.inspect()
 
     def test_new_failure_blocks_old_pass_and_failed_history_is_retained(self):
         self.fill()

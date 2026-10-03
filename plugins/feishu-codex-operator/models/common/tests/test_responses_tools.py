@@ -21,7 +21,8 @@ sys.path.insert(0, str(_OPERATOR_PLUGIN_ROOT / "scripts"))
 from operator_core.model_registry import ModelRegistry
 from operator_core.responses_capabilities import ResponsesCapabilities, RouterError, UpstreamProtocolError
 from operator_core.responses_tool_adapter import (
-    EXEC_GRAMMAR, NAMED_OUTPUT_PREFIX, dumps, prepare_request, restore_response,
+    APPLY_PATCH_GRAMMAR_0160, EXEC_GRAMMAR, MAX_ARGUMENT_BYTES,
+    NAMED_OUTPUT_PREFIX, dumps, prepare_request, restore_response,
 )
 
 CAPABILITIES = {
@@ -34,6 +35,11 @@ CAPABILITIES = {
 }
 EXEC = {"type": "custom", "name": "exec", "description": "Run JavaScript using tools.",
         "format": {"type": "grammar", "syntax": "lark", "definition": EXEC_GRAMMAR}}
+PATCH = {"type": "custom", "name": "apply_patch", "description": "Native freeform patch.",
+         "format": {"type": "grammar", "syntax": "lark", "definition": APPLY_PATCH_GRAMMAR_0160}}
+PATCH_SOURCE = ('*** Begin Patch\r\n*** Update File: synthetic-中文😀.py\r\n@@\r\n'
+                '-    return "C:\\new\\file\\n"  \r\n+    return "C:\\new\\file\\n改"  \r\n'
+                '*** End Patch\r\n')
 FUNCTION = {"type": "function", "name": "add", "description": "Add numbers.",
             "parameters": {"type": "object", "properties": {"a": {"type": "number"}}}}
 CODE = '// @exec: {"max_output_tokens": 23}\r\ntext("中文😀\\n\\"");\ntext("\\\\");\u2028\u2029'
@@ -147,7 +153,8 @@ class CapabilitiesTests(unittest.TestCase):
         for mode, custom, expected_patch in (
                 ("code_mode_only", {"exec": "wrap"}, "freeform"),
                 ("standard", {}, None), ("standard", {"exec": "wrap"}, None),
-                ("standard", {"apply_patch": "native"}, "freeform")):
+                ("standard", {"apply_patch": "native"}, "freeform"),
+                ("standard", {"apply_patch": "wrap"}, "freeform")):
             row = deepcopy(ROUTE)
             row["responses"].update(codex_tool_mode=mode, custom_tools=custom)
             selected = ModelRegistry({"version": 2, "models": [row]}, BEEPER).merge(native)
@@ -158,6 +165,121 @@ class CapabilitiesTests(unittest.TestCase):
 
 
 class ToolAdapterTests(unittest.TestCase):
+    def test_exact_current_patch_declaration_requires_explicit_registration(self):
+        with self.assertRaisesRegex(RouterError, '^custom_tool_not_registered$'):
+            prepare({'tools': [PATCH]})
+        for mode in ('wrap', 'native'):
+            payload = {'tools': [PATCH], 'input': 'Synthetic no-execution patch declaration.'}
+            before = deepcopy(payload)
+            wire, context = prepare(payload, codex_tool_mode='standard',
+                                    custom_tools={'apply_patch': mode})
+            spec = context.specs[('custom', None, 'apply_patch')]
+            self.assertEqual(spec.format, 'codex_apply_patch_0160_v1')
+            self.assertEqual(spec.original, PATCH)
+            self.assertEqual(spec.original['format']['definition'], APPLY_PATCH_GRAMMAR_0160)
+            self.assertTrue(APPLY_PATCH_GRAMMAR_0160.endswith('%import common.LF\r\n'))
+            if mode == 'native':
+                self.assertEqual(wire['tools'], [PATCH])
+            else:
+                self.assertEqual(wire['tools'][0]['type'], 'function')
+                self.assertIn(dumps(PATCH['format']), wire['tools'][0]['description'])
+            self.assertEqual(payload, before)
+
+    def test_patch_source_and_complete_paired_results_roundtrip_without_normalization(self):
+        parts = [{'type': 'input_text', 'text': '  第一段😀\r\n', 'source_metadata': [None, False]},
+                 {'type': 'input_text', 'text': 'second\\part\n  ', 'keep': {'exact': 1}}]
+        for mode in ('wrap', 'native'):
+            caps = {'codex_tool_mode': 'standard', 'custom_tools': {'apply_patch': mode},
+                    'text_tool_outputs': 'json_string'}
+            _, context = prepare({'tools': [PATCH]}, **caps)
+            upstream = call(context, PATCH_SOURCE, name='apply_patch')
+            upstream['source_metadata'] = {'retain': [None, 2, False]}
+            if mode == 'native':
+                upstream.pop('arguments')
+                upstream.update(type='custom_tool_call', input=PATCH_SOURCE)
+            restored = restore_response(response(upstream), context)['output'][0]
+            self.assertEqual(restored['input'].encode('utf-8'), PATCH_SOURCE.encode('utf-8'))
+            self.assertEqual(restored['source_metadata'], upstream['source_metadata'])
+            history = [restored, {'type': 'custom_tool_call_output', 'call_id': restored['call_id'],
+                                 'name': 'apply_patch', 'output': deepcopy(parts)}]
+            payload = {'tools': [PATCH], 'input': history}
+            before = deepcopy(payload)
+            wire, _ = prepare(payload, **caps)
+            self.assertEqual(wire['input'][0], upstream)
+            self.assertEqual(json.loads(wire['input'][1]['output']), parts)
+            self.assertEqual(wire['input'][1]['call_id'], restored['call_id'])
+            self.assertEqual(payload, before)
+
+    def test_changed_or_inexact_patch_grammar_is_not_repaired_or_treated_as_exec(self):
+        changed = [APPLY_PATCH_GRAMMAR_0160.replace('hunk+', 'hunk*'),
+                   APPLY_PATCH_GRAMMAR_0160.replace('\r\n', '\n'),
+                   '\r\n' + APPLY_PATCH_GRAMMAR_0160, APPLY_PATCH_GRAMMAR_0160 + '\r\n',
+                   APPLY_PATCH_GRAMMAR_0160.rstrip('\r\n'), EXEC_GRAMMAR, 'start: PATCH']
+        for definition in changed:
+            tool = {**PATCH, 'format': {**PATCH['format'], 'definition': definition}}
+            before = deepcopy(tool)
+            with self.subTest(definition=definition[:30]), self.assertRaisesRegex(
+                    RouterError, '^unsupported_custom_tool_format$'):
+                prepare({'tools': [tool]}, custom_tools={'exec': 'wrap', 'apply_patch': 'wrap'})
+            self.assertEqual(tool, before)
+        for update in ({'syntax': 'regex'}, {'type': 'text'}, {'extra': True}, {'definition': None}):
+            tool = {**PATCH, 'format': {**PATCH['format'], **update}}
+            with self.assertRaisesRegex(RouterError, '^unsupported_custom_tool_format$'):
+                prepare({'tools': [tool]}, custom_tools={'exec': 'wrap', 'apply_patch': 'wrap'})
+
+    def test_patch_grammar_cannot_bind_another_name_or_namespace(self):
+        for name in ('exec', 'patch_candidate'):
+            tool = {**PATCH, 'name': name}
+            with self.assertRaisesRegex(RouterError, '^unsupported_custom_tool_format$'):
+                prepare({'tools': [tool]}, custom_tools={'exec': 'wrap', name: 'wrap'})
+        with self.assertRaisesRegex(RouterError, '^unsupported_custom_tool_format$'):
+            prepare({'tools': [{'type': 'namespace', 'name': 'functions', 'tools': [PATCH]}]},
+                    custom_tools={'exec': 'wrap', 'functions.apply_patch': 'wrap'})
+        # Exec retains its independently recognized registered grammar.
+        _, context = prepare({'tools': [EXEC, PATCH]},
+                             custom_tools={'exec': 'wrap', 'apply_patch': 'wrap'})
+        self.assertEqual(context.specs[('custom', None, 'exec')].format, 'codex_exec_v1')
+        self.assertEqual(context.specs[('custom', None, 'apply_patch')].format, 'codex_apply_patch_0160_v1')
+
+    def test_patch_input_remains_nonempty_and_bounded_at_two_mebibytes(self):
+        for mode in ('wrap', 'native'):
+            _, context = prepare({'tools': [PATCH]}, codex_tool_mode='standard',
+                                 custom_tools={'apply_patch': mode})
+            spec = context.specs[('custom', None, 'apply_patch')]
+            self.assertEqual(spec.check_input('x' * MAX_ARGUMENT_BYTES), 'x' * MAX_ARGUMENT_BYTES)
+            for source in ('', None, 7, '\ud800', 'x' * (MAX_ARGUMENT_BYTES + 1),
+                           '😀' * (MAX_ARGUMENT_BYTES // 4 + 1)):
+                with self.subTest(mode=mode, size=len(source) if isinstance(source, str) else None), \
+                     self.assertRaises(RouterError):
+                    spec.check_input(source)
+            # Function-wrapper JSON retains its existing independent byte bound.
+            if mode == 'wrap':
+                upstream = call(context, '\\' * (MAX_ARGUMENT_BYTES // 2), name='apply_patch')
+                with self.assertRaises(UpstreamProtocolError):
+                    restore_response(response(upstream), context)
+
+    def test_patch_without_current_tools_keeps_history_rejection_and_never_enables_a_call(self):
+        caps = {'codex_tool_mode': 'standard', 'custom_tools': {'apply_patch': 'wrap'}}
+        _, context = prepare({'tools': [PATCH]}, **caps)
+        historical = restore_response(response(call(context, PATCH_SOURCE, name='apply_patch')), context)['output'][0]
+        payload = {'tools': [], 'input': [historical,
+                   {'type': 'custom_tool_call_output', 'call_id': historical['call_id'], 'output': 'preserved'}]}
+        before = deepcopy(payload)
+        with self.assertRaisesRegex(RouterError, '^undeclared_tool_call$'):
+            prepare(payload, **caps)
+        self.assertEqual(payload, before)
+        with self.assertRaisesRegex(RouterError, '^invalid_history_custom_tool_capabilities$'):
+            prepare(payload, **caps, history_custom_tools={'apply_patch': 'codex_apply_patch_0160_v1'})
+
+    def test_deferred_patch_requires_loaded_identity_and_respects_tool_choice(self):
+        caps = {'codex_tool_mode': 'standard', 'custom_tools': {'apply_patch': 'wrap'}}
+        _, deferred = prepare({'tools': [{**PATCH, 'defer_loading': True}]}, **caps)
+        with self.assertRaises(UpstreamProtocolError):
+            restore_response(response(call(deferred, PATCH_SOURCE, name='apply_patch')), deferred)
+        _, none = prepare({'tools': [PATCH], 'tool_choice': 'none'}, **caps)
+        with self.assertRaises(UpstreamProtocolError):
+            restore_response(response(call(none, PATCH_SOURCE, name='apply_patch')), none)
+
     def test_history_argument_limit_applies_after_json_encoding(self):
         maximum = 2 * 1024 * 1024
         # Each literal backslash becomes two bytes on the function wire.

@@ -54,9 +54,10 @@ class LegacyRuntimeUpgradeTests(unittest.TestCase):
         self.plugin.mkdir()
         self.names = sorted(cutover.startup_inventory(
             PLUGIN / "scripts/start-feishu-codex-operator.ps1"))
-        self.assertEqual(len(self.names), 62)
+        self.assertEqual(len(self.names), 63)
         self.assertIn("operator_core/web_native_interruption.py", self.names)
         self.assertIn("operator_native_models.py", self.names)
+        self.assertIn("operator_core/native_search.py", self.names)
         inventory = b"$expectedFiles = @(\n" + b"\n".join(
             ("    '" + name + "',").encode() for name in self.names) + b"\n)\n"
         write(self.plugin / "scripts/start-feishu-codex-operator.ps1", inventory)
@@ -718,15 +719,16 @@ class LegacyInventoryAdditionTests(unittest.TestCase):
     def test_partial_added_write_restores_absence_without_retrying_apply(self):
         before, hook_before = cutover.runtime_snapshot(self.runtime), self.start_hook.read_bytes()
         plan = self.preview()
-        first, second = sorted(self.ADDITIONS)
+        first = sorted(self.ADDITIONS)[0]
         def interrupted(path, raw):
-            if path == self.runtime / second:
-                raise OSError("fixture interrupted new file")
             cutover.atomic_bytes(path, raw)
+            if path == self.runtime / first:
+                raise OSError("fixture interrupted new file")
         with self.assertRaisesRegex(OSError, "fixture interrupted"):
             self.apply(plan["preview_sha256"], writer=interrupted)
         self.assertTrue((self.runtime / first).exists())
-        self.assertFalse((self.runtime / second).exists())
+        for remaining in self.ADDITIONS - {first}:
+            self.assertFalse((self.runtime / remaining).exists())
         with self.assertRaisesRegex(cutover.CutoverError, "cutover_transaction_exists_no_retry"):
             self.apply(plan["preview_sha256"])
         self.restore(plan["preview_sha256"])
@@ -903,6 +905,14 @@ class LegacyInventoryAdditionTests(unittest.TestCase):
         self.assertEqual(intent["state"], "failed")
         self.assertTrue(intent["restore_attempted"])
         self.assertEqual(cutover.runtime_snapshot(transaction / "originals"), plan["runtime_snapshot"])
+
+
+class LegacyNativeSearchAdditionTests(LegacyInventoryAdditionTests):
+    ADDITIONS = {"operator_core/native_search.py"}
+
+
+class LegacyCombinedDependencyAdditionTests(LegacyInventoryAdditionTests):
+    ADDITIONS = LegacyInventoryAdditionTests.ADDITIONS | LegacyNativeSearchAdditionTests.ADDITIONS
 
 
 class ReleaseInclusionTests(unittest.TestCase):

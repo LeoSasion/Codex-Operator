@@ -30,6 +30,7 @@ LOCK_BYTES = b'operator-web-service-lock-v1\n'
 ID = re.compile(r'[a-f0-9]{32}')
 DIGEST = re.compile(r'[a-f0-9]{64}')
 START_OBSERVATION_SECONDS = 5
+START_READY_OBSERVATION_SECONDS = 20
 DEPENDENCY_CHECK_TIMEOUT_SECONDS = 10
 DEPENDENCY_IMPORT_PROBE = (
     "import importlib,sys;sys.path.insert(0,sys.argv[1]);"
@@ -59,7 +60,8 @@ ERROR_CODES |= frozenset('''web_manager_detached_launch_failed web_manager_detac
 web_manager_recovery_not_dead web_manager_recovery_dependencies_live web_manager_recovery_changed
 web_manager_recovery_marker_invalid web_manager_recovery_required web_manager_recovery_unsupported
 web_manager_preinit_recovery_pending'''.split())
-ERROR_CODES |= frozenset({'web_manager_python_dependencies_unavailable', 'web_service_status_invalid'})
+ERROR_CODES |= frozenset({'web_manager_python_dependencies_unavailable', 'web_service_status_invalid',
+    'web_manager_start_identity_changed', 'web_manager_start_observation_invalid'})
 
 
 def checked_path(value, *, exists=True, directory=False):
@@ -938,53 +940,103 @@ def start(profile, *, observation_seconds=START_OBSERVATION_SECONDS):
     profile, _ = load_profile(profile, validate_current=False)
     with operation_lock(profile):
         profile, config = load_profile(profile)
-        require_complete_preinit_recoveries(profile)
-        record = current_record(profile)
-        if record is not None:
-            result, live = observe(profile, config, record)
-            if live is not None:
-                bind_session(profile, record, live)
-                return {**result, 'reused': True}
-            if result['status'] != 'stopped':
-                return {**result, 'reused': True}
-        # All validation is complete before publishing the conservative boundary.
-        require(load_profile(profile)[1] == config, 'web_manager_settings_changed')
-        require(fixed_connection_available(config), 'web_manager_fixed_connection_in_use')
-        check_python_dependencies(config['runtime'], profile)
-        record = {'version': 1, 'attempt': secrets.token_hex(16), 'phase': 'may_have_started',
-            'runtime': config['runtime']}
+        return _start_locked(profile, config, observation_seconds)[0]
+
+
+def _start_locked(profile, config, observation_seconds):
+    """One explicit launch/reuse, retaining its exact private record for its caller."""
+    require_complete_preinit_recoveries(profile)
+    record = current_record(profile)
+    if record is not None:
+        result, live = observe(profile, config, record)
+        if live is not None:
+            require(load_profile(profile)[1] == config and current_record(profile) == record,
+                'web_manager_start_identity_changed')
+            record = bind_session(profile, record, live)
+            return {**result, 'reused': True}, record
+        if result['status'] != 'stopped':
+            return {**result, 'reused': True}, record
+    # All validation is complete before publishing the conservative boundary.
+    require(load_profile(profile)[1] == config, 'web_manager_settings_changed')
+    require(fixed_connection_available(config), 'web_manager_fixed_connection_in_use')
+    check_python_dependencies(config['runtime'], profile)
+    # Dependency probing may take ten seconds. Its earlier snapshots cannot
+    # authorize a launch after a source/settings/ownership or tunnel change.
+    require(load_profile(profile)[1] == config and current_record(profile) == record,
+        'web_manager_start_identity_changed')
+    require(fixed_connection_available(config), 'web_manager_fixed_connection_in_use')
+    require(load_profile(profile)[1] == config and current_record(profile) == record,
+        'web_manager_start_identity_changed')
+    record = {'version': 1, 'attempt': secrets.token_hex(16), 'phase': 'may_have_started',
+        'runtime': config['runtime']}
+    save_record(profile, record)
+    service.write_json(profile / 'current.json', {'version': 1, 'attempt': record['attempt']})
+    state = state_path(profile, record)
+    argv = [config['runtime']['python'], '-E', '-s', '-u', config['runtime']['backend'],
+        'serve', '--settings', config['settings']['path'], '--state', str(state), '--prepare-hidden']
+    try:
+        child = spawn_child(argv, profile)
+        record['pid'] = child.pid
         save_record(profile, record)
-        service.write_json(profile / 'current.json', {'version': 1, 'attempt': record['attempt']})
-        state = state_path(profile, record)
-        argv = [config['runtime']['python'], '-E', '-s', '-u', config['runtime']['backend'],
-            'serve', '--settings', config['settings']['path'], '--state', str(state), '--prepare-hidden']
+        identity = process_identity(child.pid)
+        require(identity is not None and Path(identity['executable']) == Path(config['runtime']['python']),
+            'web_manager_launch_ownership_unknown')
+        record.update(process=identity, phase='starting')
+        save_record(profile, record)
+        deadline = time.monotonic() + observation_seconds
+        while True:
+            if child.poll() is not None:
+                require(False, 'web_manager_child_exited_no_retry')
+            if (state / 'session.json').is_file() and (state / 'status.json').is_file():
+                require(load_profile(profile)[1] == config, 'web_manager_settings_changed')
+                result, live = observe(profile, config, record)
+                require(live is not None, 'web_manager_start_not_live')
+                require(load_profile(profile)[1] == config and current_record(profile) == record,
+                    'web_manager_start_identity_changed')
+                record = bind_session(profile, record, live)
+                return {**result, 'reused': False}, record
+            if time.monotonic() >= deadline:
+                return {'status': 'starting', 'reused': False,
+                    'summary': '后台已启动，现有连接仍在准备；可查看状态，系统不会再次启动或重做请求。'}, record
+            time.sleep(.05)
+    except Exception:
+        # A change observed during health I/O belongs to its later writer.
+        # Retain that record instead of replacing it with our stale snapshot.
         try:
-            child = spawn_child(argv, profile)
-            record['pid'] = child.pid
-            save_record(profile, record)
-            identity = process_identity(child.pid)
-            require(identity is not None and Path(identity['executable']) == Path(config['runtime']['python']),
-                'web_manager_launch_ownership_unknown')
-            record.update(process=identity, phase='starting')
-            save_record(profile, record)
-            deadline = time.monotonic() + observation_seconds
-            while True:
-                if child.poll() is not None:
-                    require(False, 'web_manager_child_exited_no_retry')
-                if (state / 'session.json').is_file() and (state / 'status.json').is_file():
-                    require(load_profile(profile)[1] == config, 'web_manager_settings_changed')
-                    result, live = observe(profile, config, record)
-                    require(live is not None, 'web_manager_start_not_live')
-                    bind_session(profile, record, live)
-                    return {**result, 'reused': False}
-                if time.monotonic() >= deadline:
-                    return {'status': 'starting', 'reused': False,
-                        'summary': '后台已启动，现有连接仍在准备；可查看状态，系统不会再次启动或重做请求。'}
-                time.sleep(.05)
+            unchanged = current_record(profile) == record
         except Exception:
-            record['phase'] = 'uncertain'
-            save_record(profile, record)
-            raise
+            unchanged = False
+        if unchanged:
+            save_record(profile, {**record, 'phase': 'uncertain'})
+        raise
+
+
+def start_ready(profile, *, observation_seconds=START_READY_OBSERVATION_SECONDS):
+    """Finish this explicit start's late-ready binding without a second launch.
+
+    The manager lock and private record span launch and bounded observations.
+    Status remains read-only; this path never adopts a replacement generation.
+    """
+    require(type(observation_seconds) in (int, float)
+        and 0 <= observation_seconds <= START_READY_OBSERVATION_SECONDS,
+        'web_manager_start_observation_invalid')
+    profile, _ = load_profile(profile, validate_current=False)
+    with operation_lock(profile):
+        profile, config = load_profile(profile)
+        result, record = _start_locked(profile, config, START_OBSERVATION_SECONDS)
+        deadline = time.monotonic() + observation_seconds
+        while result['status'] in ('starting', 'preparing') and time.monotonic() < deadline:
+            time.sleep(.1)
+            require(load_profile(profile)[1] == config and current_record(profile) == record,
+                'web_manager_start_identity_changed')
+            observed, live = observe(profile, config, record)
+            require(load_profile(profile)[1] == config and current_record(profile) == record,
+                'web_manager_start_identity_changed')
+            result = {**observed, 'reused': result['reused']}
+            if live is not None and result['status'] == 'ready' and not result.get('active', False):
+                bind_session(profile, record, live)
+                return {**result, 'session_bound': True}
+        return result
 
 
 def status(profile):
@@ -1085,7 +1137,7 @@ def main():
         if args.action == 'configure':
             result = configure(args.profile, args.settings)
         elif args.action == 'start':
-            result = start(args.profile)
+            result = start_ready(args.profile)
         elif args.action == 'status':
             result = status(args.profile)
         elif args.action == 'recover':

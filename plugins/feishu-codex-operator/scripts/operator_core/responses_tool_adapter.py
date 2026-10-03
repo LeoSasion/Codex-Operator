@@ -28,6 +28,31 @@ PRAGMA_LINE: /[ \t]*\/\/ @exec:[^\r\n]*/
 NEWLINE: /\r?\n/
 SOURCE: /[\s\S]+/"""
 
+# Exact declaration observed from the Windows CLI 0.160.0 on 2026-10-03
+# (CLI SHA256 37762753b554982eef1c109303d1be652b6397f1479e844794353a85650199c6).
+# Keep its final CRLF and all grammar bytes. This is independent of exec framing;
+# it neither parses/repairs a patch nor supplies native file-write permission.
+APPLY_PATCH_GRAMMAR_0160 = r'''start: begin_patch hunk+ end_patch
+begin_patch: "*** Begin Patch" LF
+end_patch: "*** End Patch" LF?
+
+hunk: add_hunk | delete_hunk | update_hunk
+add_hunk: "*** Add File: " filename LF add_line+
+delete_hunk: "*** Delete File: " filename LF
+update_hunk: "*** Update File: " filename LF change_move? change?
+
+filename: /(.+)/
+add_line: "+" /(.*)/ LF -> line
+
+change_move: "*** Move to: " filename LF
+change: (change_context | change_line)+ eof_line?
+change_context: ("@@" | "@@ " /(.+)/) LF
+change_line: ("+" | "-" | " ") /(.*)/ LF
+eof_line: "*** End of File" LF
+
+%import common.LF
+'''.replace('\n', '\r\n')
+
 
 def dumps(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
@@ -83,7 +108,7 @@ def tool_name(value):
     return value
 
 
-def input_format(tool):
+def input_format(tool, *, namespace=None):
     value = tool.get("format", {"type": "text"})
     if value == {"type": "text"}:
         return "text"
@@ -92,6 +117,11 @@ def input_format(tool):
             and tool["name"] == "exec" and isinstance(value["definition"], str)
             and value["definition"].replace("\r\n", "\n").strip() == EXEC_GRAMMAR):
         return "codex_exec_v1"
+    if (namespace is None and tool["name"] == "apply_patch"
+            and isinstance(value, dict) and set(value) == {"type", "syntax", "definition"}
+            and value["type"] == "grammar" and value["syntax"] == "lark"
+            and value["definition"] == APPLY_PATCH_GRAMMAR_0160):
+        return "codex_apply_patch_0160_v1"
     raise RouterError("unsupported_custom_tool_format")
 
 
@@ -111,9 +141,10 @@ class ToolSpec:
         return self.kind, self.namespace, self.name
 
     def check_input(self, value):
-        # This approved grammar accepts any nonempty source (optionally a pragma).
-        # It is framing validation, not a JavaScript parser or constrained decoding.
-        return bounded_string(value, nonempty=self.format == "codex_exec_v1", field="custom_tool.input")
+        # Source stays verbatim. Native tools own JavaScript/patch parsing and
+        # execution; recognizing their declaration never authorizes an action.
+        return bounded_string(value, nonempty=self.format in {
+            "codex_exec_v1", "codex_apply_patch_0160_v1"}, field="custom_tool.input")
 
 
 @dataclass(frozen=True)
@@ -262,7 +293,7 @@ def _compile_tools(payload, caps):
                 mode = caps.custom_mode(name, namespace)
                 if mode is None:
                     raise RouterError("custom_tool_not_registered")
-                fmt = input_format(tool)
+                fmt = input_format(tool, namespace=namespace)
             if kind == "function" and not caps.function_tools:
                 raise RouterError("function_tools_not_supported")
             if kind == "tool_search":

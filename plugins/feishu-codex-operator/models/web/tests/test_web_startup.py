@@ -63,7 +63,7 @@ class WebStartupTests(unittest.TestCase):
                         {'runtime':{}}, {'port':True}, {'startup_script':'../bad.ps1'}):
             with self.subTest(changes=changes):
                 self.write(self.path, {**plan, **changes})
-                with patch.object(startup.manager, 'start') as start:
+                with patch.object(startup.manager, 'start_ready') as start:
                     with self.assertRaises((RuntimeError, ValueError)):
                         startup.start(self.path, services_only=True)
                     start.assert_not_called()
@@ -84,7 +84,7 @@ class WebStartupTests(unittest.TestCase):
 
     def test_normal_start_requires_exact_active_entry(self):
         self.prepare()
-        with patch.object(startup.manager, 'start') as start:
+        with patch.object(startup.manager, 'start_ready') as start:
             with self.assertRaisesRegex(ValueError, 'entry_not_active'):
                 startup.start(self.path)
             start.assert_not_called()
@@ -97,7 +97,7 @@ class WebStartupTests(unittest.TestCase):
         target = self.home/'config.toml'
         target.write_bytes(old + b'model="native"\n')
         self.write(state/'codex-entry.json', {'config': str(target.resolve()), 'block': old.decode()})
-        with patch.object(startup.manager, 'start') as start:
+        with patch.object(startup.manager, 'start_ready') as start:
             with self.assertRaisesRegex(startup.config.RouterError, 'legacy_router_voice_route_unprotected'):
                 startup.start(self.path)
             start.assert_not_called()
@@ -105,19 +105,46 @@ class WebStartupTests(unittest.TestCase):
 
     def test_service_start_once_then_observe_and_bind(self):
         self.prepare()
-        with patch.object(startup.manager, 'start', return_value={'status':'starting'}) as start, \
-                patch.object(startup.manager, 'status', return_value={'status':'ready','active':False}) as status, \
+        with patch.object(startup.manager, 'start_ready', return_value={
+                'status':'ready','active':False,'session_bound':True}) as start, \
+                patch.object(startup.manager, 'start') as repeat, \
+                patch.object(startup.manager, 'status') as status, \
                 patch.object(startup, 'start_router') as launch, \
                 patch.object(startup.router, 'bind_web') as bind, patch.object(startup.time, 'sleep'):
             result = startup.start(self.path, services_only=True)
             self.assertFalse(result['entry_active'])
             self.assertEqual(result['model_requests'], 0)
-            start.assert_called_once_with(self.profile); status.assert_called_once_with(self.profile)
+            start.assert_called_once_with(self.profile)
+            repeat.assert_not_called(); status.assert_not_called()
             launch.assert_called_once(); bind.assert_called_once()
+
+    def test_late_readiness_binding_failure_does_not_start_router_or_retry(self):
+        self.prepare()
+        with patch.object(startup.manager, 'start_ready',
+                side_effect=ValueError('web_manager_start_identity_changed')) as start, \
+                patch.object(startup.manager, 'start') as repeat, \
+                patch.object(startup, 'start_router') as launch, \
+                patch.object(startup.router, 'bind_web') as bind:
+            with self.assertRaisesRegex(ValueError, 'start_identity_changed'):
+                startup.start(self.path, services_only=True)
+            start.assert_called_once_with(self.profile)
+            repeat.assert_not_called(); launch.assert_not_called(); bind.assert_not_called()
+
+    def test_pending_readiness_does_not_publish_router_or_activate_entry(self):
+        self.prepare(); self.arm()
+        before = (self.bundle / 'activation.json').read_bytes()
+        with patch.object(startup.manager, 'start_ready', return_value={
+                'status':'starting','reused':False}) as start, \
+                patch.object(startup, 'start_router') as launch, \
+                patch.object(startup.config, 'activate') as activate:
+            with self.assertRaisesRegex(ValueError, 'saved_service_not_ready'):
+                startup.start(self.path, services_only=True)
+            start.assert_called_once(); launch.assert_not_called(); activate.assert_not_called()
+        self.assertEqual((self.bundle / 'activation.json').read_bytes(), before)
 
     def test_unready_web_does_not_start_router_or_retry(self):
         self.prepare()
-        with patch.object(startup.manager, 'start', return_value={'status':'unavailable'}) as start, \
+        with patch.object(startup.manager, 'start_ready', return_value={'status':'unavailable'}) as start, \
                 patch.object(startup, 'start_router') as launch:
             with self.assertRaisesRegex(ValueError, 'saved_service_not_ready'):
                 startup.start(self.path, services_only=True)
@@ -195,21 +222,21 @@ class WebStartupTests(unittest.TestCase):
         self.prepare(); self.arm()
         self.assertEqual((self.bundle/'config-before-activation.toml').read_bytes(), (self.home/'config.toml').read_bytes())
         (self.home/'config.toml').write_bytes(b'model="changed"\n')
-        with patch.object(startup.manager, 'start') as start:
+        with patch.object(startup.manager, 'start_ready') as start:
             with self.assertRaisesRegex(ValueError, 'snapshot_changed'): startup.start(self.path)
             start.assert_not_called()
 
     def test_armed_activation_waits_for_closed_desktop_before_services(self):
         self.prepare(); self.arm()
         with patch.object(startup.manager, 'windows_process_entries', return_value=[{'name':'ChatGPT.exe'}]), \
-                patch.object(startup.manager, 'start') as start:
+                patch.object(startup.manager, 'start_ready') as start:
             with self.assertRaisesRegex(ValueError, 'close_desktop'): startup.start(self.path)
             start.assert_not_called()
 
     def test_failed_activation_cannot_retry_on_next_launch(self):
         self.prepare(); self.arm()
         with patch.object(startup, 'assert_desktop_closed'), \
-                patch.object(startup.manager, 'start', return_value={'status':'ready'}), \
+                patch.object(startup.manager, 'start_ready', return_value={'status':'ready'}), \
                 patch.object(startup, 'start_router'), patch.object(startup.router, 'bind_web'), \
                 patch.object(startup.config, 'activate', side_effect=OSError('fixture failure')) as activate:
             with self.assertRaises(OSError): startup.start(self.path)
@@ -220,7 +247,7 @@ class WebStartupTests(unittest.TestCase):
     def test_cold_activation_after_readiness_is_verified(self):
         self.prepare(); self.arm()
         with patch.object(startup, 'assert_desktop_closed') as closed, \
-                patch.object(startup.manager, 'start', return_value={'status':'ready'}), \
+                patch.object(startup.manager, 'start_ready', return_value={'status':'ready'}), \
                 patch.object(startup, 'start_router'), patch.object(startup.router, 'bind_web'), \
                 patch.object(startup.config, 'activate') as activate, \
                 patch.object(startup, 'entry_active', side_effect=[False,True]):
@@ -236,7 +263,7 @@ class WebStartupTests(unittest.TestCase):
         (self.home/'config.toml').write_bytes(original)
         self.arm()
         with patch.object(startup, 'assert_desktop_closed'), \
-                patch.object(startup.manager, 'start', return_value={'status':'ready'}), \
+                patch.object(startup.manager, 'start_ready', return_value={'status':'ready'}), \
                 patch.object(startup, 'start_router'), patch.object(startup.router, 'bind_web'), \
                 patch.object(startup.config, 'health'):
             result = startup.start(self.path)
@@ -272,13 +299,13 @@ class WebStartupTests(unittest.TestCase):
     def test_disarm_preserves_intent_without_config_or_service_changes(self):
         self.prepare(); self.arm()
         original=(self.bundle/'activation.json').read_bytes()
-        with patch.object(startup.manager, 'start') as start, patch.object(startup.config,'deactivate') as deactivate:
+        with patch.object(startup.manager, 'start_ready') as start, patch.object(startup.config,'deactivate') as deactivate:
             self.assertEqual(startup.disarm_entry(self.path)['status'],'disarmed')
             start.assert_not_called(); deactivate.assert_not_called()
         retained=list(self.bundle.glob('activation-retained-*.json'))
         self.assertEqual(len(retained),1); self.assertEqual(retained[0].read_bytes(),original)
         self.assertEqual(startup.manager.read_json(self.bundle/'activation.json')['phase'],'cancelled')
-        with patch.object(startup.manager,'start') as start:
+        with patch.object(startup.manager,'start_ready') as start:
             with self.assertRaisesRegex(ValueError,'entry_not_active'): startup.start(self.path)
             start.assert_not_called()
 
@@ -289,7 +316,7 @@ class WebStartupTests(unittest.TestCase):
         intent=(self.bundle/'activation.json').read_bytes()
         with patch.object(startup, 'checked_router', side_effect=URLError('absent')), \
                 patch.object(startup.manager, 'status', return_value={'status':'stopped'}), \
-                patch.object(startup.manager, 'start') as start:
+                patch.object(startup.manager, 'start_ready') as start:
             self.assertFalse(startup.status(self.path)['entry_active'])
             self.assertEqual(startup.disarm_entry(self.path)['status'],'disarmed')
             start.assert_not_called()
@@ -308,7 +335,7 @@ class WebStartupTests(unittest.TestCase):
         self.prepare(); self.arm()
         (self.home/'operator-native-route-only').write_bytes(b'fixture recovery lock\n')
         before=(self.bundle/'activation.json').read_bytes()
-        with patch.object(startup.manager, 'start') as start, \
+        with patch.object(startup.manager, 'start_ready') as start, \
                 patch.object(startup.config, 'ensure_recovery_shortcut') as recovery:
             for operation in (startup.arm_entry, startup.start):
                 with self.subTest(operation=operation.__name__), \

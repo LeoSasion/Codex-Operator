@@ -56,17 +56,21 @@ class ProductOverviewTests(unittest.TestCase):
                 '.codex/operator-installation/ownership.json', '.codex/operator-web-service/profile.json']:
             p = self.root / relative; p.parent.mkdir(parents=True, exist_ok=True); p.write_text('{}')
 
-    def test_stopped_legacy_runtime_without_ownership_requires_review(self):
+    def test_nonready_legacy_runtime_without_ownership_requires_review(self):
         self.configured()
         (self.root / '.codex/operator-installation/ownership.json').unlink()
         before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
-        gates = dict.fromkeys(product.READINESS_GATES, False)
-        value = product.project_overview(self.root, self.home,
-            lambda *args: {'status': 'not_ready', 'ready': False, 'gates': gates})
-        channel = value['components']['channels']
-        self.assertEqual(channel['state'], 'needs_review')
-        self.assertIn('旧通道安装缺少归属记录', channel['summary'])
-        self.assertNotIn('install', channel['next_action'])
+        for running in (False, True):
+            with self.subTest(runtime_running=running):
+                gates = {**dict.fromkeys(product.READINESS_GATES, False), 'runtime_running': running}
+                value = product.project_overview(self.root, self.home,
+                    lambda *args: {'status': 'not_ready', 'ready': False, 'gates': gates})
+                channel = value['components']['channels']
+                self.assertEqual(channel['state'], 'needs_review')
+                self.assertIn('通道服务尚未就绪', channel['summary'])
+                self.assertIn('旧通道安装缺少归属记录', channel['summary'])
+                self.assertNotIn('停止', channel['summary'])
+                self.assertNotIn('install', channel['next_action'])
         self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
 
     def test_ready_only_projects_fixed_status_not_private_output(self):
@@ -94,6 +98,530 @@ class ProductOverviewTests(unittest.TestCase):
         web = value['components']['models']['providers']['web']
         self.assertEqual(web['state'], 'needs_review')
         self.assertEqual(web['next_action'], 'models web desktop-rebind')
+
+    def test_isolated_entry_does_not_use_a_retained_legacy_provider(self):
+        self.configured()
+        calls = []
+        def inspect(project, scope, action):
+            calls.append((scope, action))
+            if action == 'desktop-status':
+                self.fail('Legacy provider must not decide the isolated entry status')
+            return {'status': 'ready', 'active': False, 'configuration_current': True,
+                    'session_bound': True}
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        value = product.project_overview(self.root, self.home, inspect,
+            lambda project: {'state': 'needs_review', 'package_current': False, 'web_state': 'bound',
+                'secret': 'PRIVATE'})
+        models = value['components']['models']
+        self.assertEqual(models['providers']['web']['state'], 'ready')
+        self.assertEqual(models['entry']['state'], 'needs_review')
+        self.assertIn('与当前应用不一致', models['entry']['summary'])
+        self.assertIn('更新拓展入口后', models['providers']['web']['next_action'])
+        self.assertNotIn('desktop-rebind', json.dumps(models))
+        self.assertNotIn('PRIVATE', json.dumps(value))
+        self.assertNotIn(('web', 'desktop-status'), calls)
+        self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+
+    def test_unavailable_isolated_entry_does_not_fall_back_or_hide_busy_web(self):
+        self.configured()
+        for active, expected in ((False, 'unavailable'), (True, 'busy')):
+            with self.subTest(active=active):
+                def inspect(project, scope, action):
+                    self.assertNotEqual(action, 'desktop-status')
+                    return {'status': 'ready', 'active': active, 'configuration_current': True,
+                        'session_bound': True}
+                value = product.project_overview(self.root, self.home, inspect,
+                    lambda project: {'state': 'unavailable', 'package_current': None, 'web_state': 'unavailable'})
+                self.assertEqual(value['components']['models']['providers']['web']['state'], expected)
+                self.assertEqual(value['components']['models']['entry']['state'], 'unavailable')
+                self.assertEqual(value['status'], 'partial')
+
+    def test_isolated_unbound_and_changed_web_do_not_request_legacy_connection(self):
+        self.configured()
+        for web_state, expected in (('absent', 'needs_connection'), ('changed', 'needs_review')):
+            value = product.project_overview(self.root, self.home,
+                lambda *args: {'status': 'ready', 'active': False, 'configuration_current': True},
+                lambda project: {'state': 'configured' if web_state == 'absent' else 'needs_review',
+                    'package_current': True, 'web_state': web_state})
+            web = value['components']['models']['providers']['web']
+            self.assertEqual(web['state'], expected)
+            self.assertNotIn('desktop-', web['next_action'])
+            if web_state == 'changed':
+                models = value['components']['models']
+                self.assertEqual(models['entry']['state'], 'needs_review')
+                self.assertIn('需要核对', models['entry']['summary'])
+                self.assertIn('核对', models['next_action'])
+
+    def test_generation_change_during_manager_observation_checks_current_entry(self):
+        self.configured()
+        generation = 'old'
+        calls = []
+        def inspect(project, scope, action):
+            nonlocal generation
+            calls.append((scope, action))
+            if scope == 'operator':
+                return {'status': 'ready', 'ready': True,
+                    'gates': dict.fromkeys(product.READINESS_GATES, True)}
+            self.assertEqual(action, 'status')
+            generation = 'new'
+            return {'status': 'ready', 'active': False, 'configuration_current': True,
+                'session_bound': True}
+        def isolated(project):
+            calls.append(('isolated', generation))
+            return {'state': 'configured' if generation == 'old' else 'needs_review',
+                'package_current': True, 'web_state': 'bound' if generation == 'old' else 'changed'}
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        value = product.project_overview(self.root, self.home, inspect, isolated)
+        self.assertEqual(calls, [('operator', 'readiness'), ('web', 'status'), ('isolated', 'new')])
+        models = value['components']['models']
+        self.assertEqual(models['state'], 'needs_review')
+        self.assertEqual(models['providers']['web']['state'], 'needs_review')
+        self.assertEqual(models['entry']['state'], 'needs_review')
+        self.assertNotIn('desktop-rebind', json.dumps(models))
+        self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+
+    def test_missing_or_unavailable_web_profile_checks_isolated_entry_once(self):
+        self.configured()
+        original_file_state = product.file_state
+        profile = self.root / '.codex/operator-web-service/profile.json'
+        for profile_state, expected in (('absent', 'not_configured'), ('unavailable', 'unavailable')):
+            with self.subTest(profile_state=profile_state):
+                calls = []
+                def inspect(project, scope, action):
+                    calls.append((scope, action))
+                    self.assertEqual(scope, 'operator')
+                    return {'status': 'ready', 'ready': True,
+                        'gates': dict.fromkeys(product.READINESS_GATES, True)}
+                def isolated(project):
+                    calls.append(('isolated', 'check'))
+                    return {'state': 'configured', 'package_current': True, 'web_state': 'absent'}
+                with patch.object(product, 'file_state', side_effect=lambda path:
+                        profile_state if path == profile else original_file_state(path)):
+                    value = product.project_overview(self.root, self.home, inspect, isolated)
+                self.assertEqual(calls, [('operator', 'readiness'), ('isolated', 'check')])
+                self.assertEqual(value['components']['models']['providers']['web']['state'], expected)
+
+    def test_isolated_observation_preserves_busy_assistance_and_malformed_manager_states(self):
+        self.configured()
+        cases = [({'status': 'ready', 'active': True, 'configuration_current': True}, 'busy'),
+            ({'status': 'assistance', 'active': False, 'needs_assistance': False,
+                'configuration_current': True}, 'assistance_open'),
+            ({'status': 'unexpected', 'configuration_current': True}, 'unavailable'),
+            ('PRIVATE', 'unavailable')]
+        for observed, expected in cases:
+            with self.subTest(observed=observed):
+                calls = []
+                def inspect(project, scope, action):
+                    calls.append((scope, action))
+                    if scope == 'operator':
+                        return {'status': 'ready', 'ready': True,
+                            'gates': dict.fromkeys(product.READINESS_GATES, True)}
+                    self.assertEqual(action, 'status')
+                    return observed
+                def isolated(project):
+                    calls.append(('isolated', 'check'))
+                    return {'state': 'configured', 'package_current': True, 'web_state': 'bound'}
+                value = product.project_overview(self.root, self.home, inspect, isolated)
+                self.assertEqual(calls, [('operator', 'readiness'), ('web', 'status'), ('isolated', 'check')])
+                self.assertEqual(value['components']['models']['providers']['web']['state'], expected)
+                self.assertNotIn('PRIVATE', json.dumps(value))
+
+    def isolated_entry_fixture(self):
+        import operator_mode_entry as mode
+        folder = self.root / '.codex/operator-desktop-entry'
+        root = self.root / '.codex/operator-mode-entry' / ('a' * 32)
+        folder.mkdir(parents=True)
+        root.mkdir(parents=True)
+        script = folder / 'operator_desktop_entry.ps1'
+        script.write_bytes(b'# synthetic entry\n')
+        descriptor = root / 'entry.json'
+        descriptor.write_text(json.dumps({'synthetic': True, 'source_bindings': mode.source_bindings()}),
+            encoding='utf8')
+        entry = {'schema_version': 1, 'mode': 'isolated_mode',
+            'startup_bundle': root.relative_to(self.root).as_posix(),
+            'entry_script_sha256': hashlib.sha256(script.read_bytes()).hexdigest(),
+            'mode_entry_sha256': hashlib.sha256(descriptor.read_bytes()).hexdigest()}
+        path = folder / 'desktop-entry.json'
+        path.write_text(json.dumps(entry), encoding='utf8')
+        return root, path, entry, script
+
+    def installed_product_fixture(self):
+        root, entry_path, entry, script = self.isolated_entry_fixture()
+        runtime = self.root / '.codex/feishu-codex-operator-runtime'
+        canonical = self.root / 'plugins/feishu-codex-operator/scripts'
+        runtime.mkdir(parents=True)
+        canonical.mkdir(parents=True)
+        raw = (ROOT / 'scripts/operator_product.py').read_bytes()
+        installed = runtime / 'operator_product.py'
+        helper = canonical / 'operator_product.py'
+        installed.write_bytes(raw)
+        helper.write_bytes(raw)
+        # Copy only into the disposable test project, never the real runtime.
+        bindings = json.loads((root / 'entry.json').read_bytes())['source_bindings']
+        for name in bindings:
+            target = canonical / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((ROOT / 'scripts' / name).read_bytes())
+        spec = importlib.util.spec_from_file_location('installed_product_fixture', installed)
+        copy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(copy)
+        return copy, installed, helper, root, entry_path
+
+    def rebind_fixture_sources(self, root, entry_path, canonical):
+        descriptor = json.loads((root / 'entry.json').read_bytes())
+        descriptor['source_bindings'] = {name: hashlib.sha256((canonical / name).read_bytes()).hexdigest()
+            for name in descriptor['source_bindings']}
+        (root / 'entry.json').write_text(json.dumps(descriptor), encoding='utf8')
+        entry = json.loads(entry_path.read_bytes())
+        entry['mode_entry_sha256'] = hashlib.sha256((root / 'entry.json').read_bytes()).hexdigest()
+        entry_path.write_text(json.dumps(entry), encoding='utf8')
+
+    def test_installed_copy_dispatches_the_exact_canonical_read_only_helper(self):
+        copy, installed, helper, root, entry_path = self.installed_product_fixture()
+        # This fixture verifies installed-to-canonical dispatch. Descriptor
+        # integrity and saved-interpreter validation have separate real guards.
+        (helper.parent / 'operator_mode_entry.py').write_text(
+            'import sys\n'
+            'def load(root):\n'
+            '    return {"package": {"synthetic": True}, "python": sys.executable}\n'
+            'def inspect_package():\n'
+            '    return {"synthetic": True}\n', encoding='utf8')
+        (helper.parent / 'operator_mode_backends.py').write_text(
+            'def checked_web_binding(descriptor):\n'
+            '    raise AssertionError("No Web observation in this fixture")\n', encoding='utf8')
+        self.rebind_fixture_sources(root, entry_path, helper.parent)
+        self.assertFalse((installed.parent / 'operator_mode_entry.py').exists())
+        self.assertFalse((installed.parent / 'operator_mode_backends.py').exists())
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        child = subprocess.run([sys.executable, '-X', 'utf8', '-E', '-s', '-B',
+            str(installed), '--project-root', str(self.root), '--isolated-entry-only'],
+            capture_output=True, timeout=50,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        self.assertEqual(child.returncode, 0, child.stderr.decode('utf8', errors='replace'))
+        self.assertEqual(json.loads(child.stdout), {'scope': 'isolated_mode', 'state': 'configured',
+            'package_current': True, 'web_state': 'absent'})
+        self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+
+    def test_installed_delegate_rejects_missing_changed_oversized_and_unavailable_canonical(self):
+        copy, installed, helper, root, entry_path = self.installed_product_fixture()
+        original = helper.read_bytes()
+        original_file_state = copy.file_state
+        for state in ('missing', 'changed', 'oversized', 'unavailable'):
+            with self.subTest(state=state):
+                helper.write_bytes(original)
+                if state == 'missing':
+                    helper.unlink()
+                elif state == 'changed':
+                    helper.write_bytes(original + b'\n# changed canonical generation\n')
+                elif state == 'oversized':
+                    helper.write_bytes(b'X' * (copy.BOUND + 1))
+                with patch.object(copy, 'file_state', side_effect=lambda target:
+                        'unavailable' if state == 'unavailable' and target == helper
+                        else original_file_state(target)), \
+                        patch.object(copy.subprocess, 'run', side_effect=AssertionError('No unverified helper')) as child:
+                    observed = copy.inspect_isolated_entry(self.root)
+                self.assertEqual(observed['state'], 'unavailable')
+                child.assert_not_called()
+
+    def test_installed_delegate_admits_only_the_exact_runtime_directory(self):
+        import operator_mode_entry as mode
+        copy, installed, helper, root, entry_path = self.installed_product_fixture()
+        with patch.object(copy, 'SCRIPTS', self.root / '.codex/other-runtime'), \
+                patch.object(mode, 'load', side_effect=ValueError('Untrusted controller location')), \
+                patch.object(copy.subprocess, 'run', side_effect=AssertionError('No alternate delegation')) as child:
+            self.assertEqual(copy.inspect_isolated_entry(self.root)['state'], 'unavailable')
+        child.assert_not_called()
+
+    def test_installed_delegate_rejects_failed_and_malformed_children_without_fallback(self):
+        from subprocess import CompletedProcess
+        copy, installed, helper, root, entry_path = self.installed_product_fixture()
+        outputs = [CompletedProcess('fixture', 1, stdout=b'PRIVATE', stderr=b'PRIVATE'),
+            CompletedProcess('fixture', 0, stdout=b'X' * 4097, stderr=b''),
+            CompletedProcess('fixture', 0, stdout=b'{"state":"configured","secret":"PRIVATE"}', stderr=b''),
+            CompletedProcess('fixture', 0, stdout=json.dumps({'scope': 'isolated_mode',
+                'state': 'configured', 'package_current': 1, 'web_state': 'bound'}).encode(), stderr=b'')]
+        for output in outputs:
+            with self.subTest(output=output.returncode), \
+                    patch.object(copy.subprocess, 'run', return_value=output) as child:
+                observed = copy.inspect_isolated_entry(self.root)
+            self.assertEqual(observed['state'], 'unavailable')
+            self.assertNotIn('PRIVATE', json.dumps(observed))
+            child.assert_called_once()
+            self.assertEqual(child.call_args.args[0], [sys.executable, '-X', 'utf8', '-E', '-s', '-B',
+                str(helper), '--project-root', str(self.root), '--isolated-entry-only'])
+            self.assertEqual(child.call_args.kwargs['timeout'], 40)
+
+    def test_installed_delegate_rechecks_helper_caller_and_entry_bytes(self):
+        from subprocess import CompletedProcess
+        copy, installed, helper, root, entry_path = self.installed_product_fixture()
+        expected = {'scope': 'isolated_mode', 'state': 'configured',
+            'package_current': True, 'web_state': 'absent'}
+        for target in (installed, helper, root / 'entry.json', entry_path):
+            with self.subTest(target=target.name):
+                before = target.read_bytes()
+                def changed_child(*args, **kwargs):
+                    target.write_bytes(before + b'\n')
+                    return CompletedProcess('fixture', 0, stdout=json.dumps(expected).encode(), stderr=b'')
+                with patch.object(copy.subprocess, 'run', side_effect=changed_child) as child:
+                    self.assertEqual(copy.inspect_isolated_entry(self.root)['state'], 'unavailable')
+                child.assert_called_once()
+                target.write_bytes(before)
+
+    def controller_guard_case(self, fault):
+        copy, installed, helper, root, entry_path = self.installed_product_fixture()
+        marker = self.root / 'controller-executed.marker'
+        fallback = self.root / 'same-named-fallback'
+        fallback.mkdir()
+        controller = helper.parent / 'operator_mode_entry.py'
+        dangerous = ('from pathlib import Path\n'
+            f'Path({str(marker)!r}).write_text("executed", encoding="utf8")\n'
+            'raise RuntimeError("PRIVATE")\n').encode()
+        (fallback / 'operator_mode_entry.py').write_bytes(dangerous)
+        if fault == 'missing':
+            controller.unlink()
+        elif fault in ('reparse', 'changed'):
+            controller.write_bytes(dangerous)
+            if fault == 'reparse':
+                self.rebind_fixture_sources(root, entry_path, helper.parent)
+        elif fault in ('package', 'package_reparse'):
+            package = helper.parent / 'operator_mode_entry'
+            package.mkdir()
+            (package / '__init__.py').write_bytes(dangerous)
+        launcher = r'''
+import importlib.machinery, importlib.util, json, pathlib, sys, types
+from unittest.mock import patch
+helper, project, fallback, fault = sys.argv[1:]
+sys.path.insert(0, str(pathlib.Path(helper).parent))
+if fault == 'missing':
+    sys.path.insert(0, fallback)
+spec = importlib.util.spec_from_file_location('canonical_status_fixture', helper)
+product = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(product)
+if fault == 'cached':
+    foreign = types.ModuleType('operator_mode_entry')
+    foreign.__file__ = str(pathlib.Path(fallback) / 'operator_mode_entry.py')
+    def load(root):
+        (pathlib.Path(project) / 'controller-executed.marker').write_text('executed', encoding='utf8')
+        raise ValueError('PRIVATE')
+    foreign.load = load
+    sys.modules['operator_mode_entry'] = foreign
+if fault == 'extension':
+    original_spec = importlib.machinery.PathFinder.find_spec
+    class ShadowExtension:
+        def create_module(self, spec):
+            return None
+        def exec_module(self, module):
+            (pathlib.Path(project) / 'controller-executed.marker').write_text('executed', encoding='utf8')
+            raise ValueError('PRIVATE')
+    def extension_spec(name, path=None, target=None):
+        if name == 'operator_mode_entry':
+            return importlib.machinery.ModuleSpec(name, ShadowExtension(),
+                origin=str(pathlib.Path(helper).parent / 'operator_mode_entry.pyd'))
+        return original_spec(name, path, target)
+    with patch.object(importlib.machinery.PathFinder, 'find_spec', extension_spec):
+        result = product.inspect_isolated_entry(pathlib.Path(project))
+elif fault in ('reparse', 'package_reparse'):
+    original = pathlib.Path.lstat
+    controller = pathlib.Path(helper).parent / ('operator_mode_entry'
+        if fault == 'package_reparse' else 'operator_mode_entry.py')
+    def reparse_lstat(path):
+        info = original(path)
+        if path == controller:
+            return types.SimpleNamespace(st_mode=info.st_mode,
+                st_file_attributes=getattr(info, 'st_file_attributes', 0) | 0x400)
+        return info
+    with patch.object(pathlib.Path, 'lstat', reparse_lstat):
+        result = product.inspect_isolated_entry(pathlib.Path(project))
+else:
+    result = product.inspect_isolated_entry(pathlib.Path(project))
+print(json.dumps(result))
+'''
+        child = subprocess.run([sys.executable, '-X', 'utf8', '-E', '-s', '-B', '-c', launcher,
+            str(helper), str(self.root), str(fallback), fault], capture_output=True, timeout=25,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        self.assertEqual(child.returncode, 0, child.stderr.decode('utf8', errors='replace'))
+        self.assertEqual(json.loads(child.stdout)['state'], 'unavailable')
+        self.assertNotIn('PRIVATE', child.stdout.decode('utf8'))
+        self.assertFalse(marker.exists(), 'An unvalidated controller executed before the status rejection')
+
+    def test_missing_controller_cannot_execute_a_same_named_system_fallback(self):
+        self.controller_guard_case('missing')
+
+    def test_reparse_controller_is_rejected_before_module_execution(self):
+        self.controller_guard_case('reparse')
+
+    def test_changed_controller_binding_is_rejected_before_module_execution(self):
+        self.controller_guard_case('changed')
+
+    def test_foreign_cached_controller_cannot_execute_its_load(self):
+        self.controller_guard_case('cached')
+
+    def test_same_named_package_is_rejected_before_module_execution(self):
+        self.controller_guard_case('package')
+
+    def test_same_named_reparse_package_is_rejected_before_module_execution(self):
+        self.controller_guard_case('package_reparse')
+
+    def test_extension_shadow_spec_is_rejected_before_loader_execution(self):
+        self.controller_guard_case('extension')
+
+    def persisted_web_profile_case(self, changed=False, mutate_during_observation=False):
+        copy, installed, helper, root, entry_path = self.installed_product_fixture()
+        profile = self.root / '.codex/operator-web-service/profile.json'
+        profile.parent.mkdir(parents=True)
+        marker = self.root / 'web-helper-executed.marker'
+        web_helper = helper.parent / 'operator_web_model.py'
+        web_helper.write_bytes(b'# retained synthetic Web helper\n')
+        original = json.dumps({'runtime': {'source_root': str(helper.parent), 'sources': {
+            'operator_web_model.py': hashlib.sha256(web_helper.read_bytes()).hexdigest()}}}).encode()
+        profile.write_bytes(original)
+        descriptor = json.loads((root / 'entry.json').read_bytes())
+        descriptor.update({'package': {'synthetic': True}, 'python': sys.executable,
+            'web': {'profile': str(profile.parent), 'profile_sha256': hashlib.sha256(original).hexdigest(),
+                'session_sha256': 'b' * 64, 'models': ['api/chatgpt-web/gpt-5.6-sol']}})
+        (root / 'entry.json').write_text(json.dumps(descriptor), encoding='utf8')
+        package_action = (f'    Path({str(profile)!r}).write_bytes(b"later profile generation")\n'
+            if mutate_during_observation else '')
+        (helper.parent / 'operator_mode_entry.py').write_text(
+            'import json\nfrom pathlib import Path\n'
+            'def load(root):\n    return json.loads((root / "entry.json").read_bytes())\n'
+            'def inspect_package():\n' + package_action + '    return {"synthetic": True}\n', encoding='utf8')
+        (helper.parent / 'operator_mode_backends.py').write_text(
+            'def checked_web_binding(descriptor):\n'
+            '    import operator_web_model\n', encoding='utf8')
+        self.rebind_fixture_sources(root, entry_path, helper.parent)
+        if changed:
+            # The new profile points at changed code. Status must classify the
+            # saved generation change without parsing or importing that code.
+            web_helper.write_text('from pathlib import Path\n'
+                f'Path({str(marker)!r}).write_text("executed", encoding="utf8")\n'
+                'raise RuntimeError("PRIVATE")\n', encoding='utf8')
+            profile.write_text(json.dumps({'runtime': {'source_root': str(helper.parent), 'sources': {
+                'operator_web_model.py': hashlib.sha256(web_helper.read_bytes()).hexdigest()}}}), encoding='utf8')
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        child = subprocess.run([sys.executable, '-X', 'utf8', '-E', '-s', '-B',
+            str(installed), '--project-root', str(self.root), '--isolated-entry-only'],
+            capture_output=True, timeout=50,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        self.assertEqual(child.returncode, 0, child.stderr.decode('utf8', errors='replace'))
+        self.assertNotIn('PRIVATE', child.stdout.decode('utf8'))
+        self.assertFalse(marker.exists(), 'Changed Web helper must never execute during status')
+        if mutate_during_observation:
+            self.assertEqual(json.loads(child.stdout), {'scope': 'isolated_mode', 'state': 'unavailable',
+                'package_current': None, 'web_state': 'unavailable'})
+        else:
+            self.assertEqual(json.loads(child.stdout), {'scope': 'isolated_mode',
+                'state': 'needs_review' if changed else 'configured', 'package_current': True,
+                'web_state': 'changed' if changed else 'bound'})
+            self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+
+    def test_persisted_changed_web_profile_requires_review_without_new_helper_execution(self):
+        self.persisted_web_profile_case(changed=True)
+
+    def test_persisted_unchanged_web_profile_checks_the_bound_helper(self):
+        self.persisted_web_profile_case()
+
+    def test_persisted_changed_web_profile_is_rechecked_after_package_observation(self):
+        self.persisted_web_profile_case(changed=True, mutate_during_observation=True)
+
+    def test_isolated_status_checks_saved_bytes_and_returns_only_fixed_fields(self):
+        import operator_mode_entry as mode
+        import operator_mode_backends as backends
+        root, path, entry, script = self.isolated_entry_fixture()
+        descriptor = {'package': {'synthetic': 'before'}, 'web': {'synthetic': True}, 'python': sys.executable}
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        with patch.object(mode, 'load', return_value=descriptor), \
+                patch.object(mode, 'inspect_package', return_value={'synthetic': 'after'}), \
+                patch.object(backends, 'checked_web_binding', return_value=root), \
+                patch.object(mode, 'launch', side_effect=AssertionError('No launch')), \
+                patch.object(mode, 'start_router', side_effect=AssertionError('No service control')):
+            value = product.inspect_isolated_entry(self.root)
+        self.assertEqual(value, {'scope': 'isolated_mode', 'state': 'needs_review',
+            'package_current': False, 'web_state': 'bound'})
+        self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+
+    def test_untrusted_isolated_paths_and_changed_fingerprints_stop_before_controller(self):
+        import operator_mode_entry as mode
+        root, path, entry, script = self.isolated_entry_fixture()
+        with patch.object(mode, 'load', side_effect=AssertionError('No untrusted controller load')) as controller:
+            for bundle in ('../outside', '.codex/operator-mode-entry/' + 'b' * 32,
+                           '.codex/operator-mode-entry/' + 'a' * 32 + '/extra'):
+                path.write_text(json.dumps({**entry, 'startup_bundle': bundle}), encoding='utf8')
+                self.assertEqual(product.inspect_isolated_entry(self.root)['state'], 'unavailable')
+            path.write_text(json.dumps(entry), encoding='utf8')
+            script.write_bytes(b'# later owner edit\n')
+            self.assertEqual(product.inspect_isolated_entry(self.root)['state'], 'unavailable')
+            controller.assert_not_called()
+
+    def test_isolated_entry_change_during_observation_is_unavailable(self):
+        import operator_mode_entry as mode
+        root, path, entry, script = self.isolated_entry_fixture()
+        def changed_package():
+            path.write_text(json.dumps({**entry, 'mode': 'native'}), encoding='utf8')
+            return {'synthetic': 'before'}
+        with patch.object(mode, 'load', return_value={'package': {'synthetic': 'before'}, 'python': sys.executable}), \
+                patch.object(mode, 'inspect_package', side_effect=changed_package):
+            self.assertEqual(product.inspect_isolated_entry(self.root)['state'], 'unavailable')
+
+    def test_isolated_status_uses_saved_interpreter_for_its_exact_child(self):
+        import operator_mode_entry as mode
+        from subprocess import CompletedProcess
+        root, path, entry, script = self.isolated_entry_fixture()
+        selected = self.root / 'saved-python.exe'
+        selected.write_bytes(b'fixture-not-executed')
+        descriptor = {'package': {'synthetic': 'before'}, 'web': {'synthetic': True}, 'python': str(selected)}
+        expected = {'scope': 'isolated_mode', 'state': 'needs_review',
+                    'package_current': False, 'web_state': 'bound'}
+        with patch.object(mode, 'load', return_value=descriptor), \
+                patch.object(product.subprocess, 'run', return_value=CompletedProcess('fixture', 0,
+                    stdout=json.dumps(expected).encode(), stderr=b'PRIVATE')) as child:
+            self.assertEqual(product.inspect_isolated_entry(self.root), expected)
+        child.assert_called_once()
+        args = child.call_args.args[0]
+        self.assertEqual(args, [str(selected), '-X', 'utf8', '-E', '-s', '-B',
+            str(product.SCRIPTS / 'operator_product.py'), '--project-root', str(self.root), '--isolated-entry-only'])
+        self.assertEqual(child.call_args.kwargs['timeout'], 20)
+
+    def test_isolated_child_unknown_failed_and_oversized_results_are_unavailable(self):
+        import operator_mode_entry as mode
+        from subprocess import CompletedProcess
+        root, path, entry, script = self.isolated_entry_fixture()
+        descriptor = {'package': {}, 'python': str(self.root / 'saved-python.exe')}
+        outputs = [CompletedProcess('fixture', 1, stdout=b'PRIVATE', stderr=b'PRIVATE'),
+            CompletedProcess('fixture', 0, stdout=b'X' * 4097, stderr=b''),
+            CompletedProcess('fixture', 0, stdout=b'{"state":"configured","secret":"PRIVATE"}', stderr=b'')]
+        for output in outputs:
+            with patch.object(mode, 'load', return_value=descriptor), \
+                    patch.object(product.subprocess, 'run', return_value=output) as child:
+                observed = product.inspect_isolated_entry(self.root)
+                self.assertEqual(observed['state'], 'unavailable')
+                self.assertNotIn('PRIVATE', json.dumps(observed))
+                child.assert_called_once()
+
+    def test_isolated_manager_check_failure_is_not_a_stale_binding_claim(self):
+        import operator_mode_entry as mode
+        import operator_mode_backends as backends
+        root, path, entry, script = self.isolated_entry_fixture()
+        descriptor = {'package': {'synthetic': 'before'}, 'web': {'synthetic': True}, 'python': sys.executable}
+        with patch.object(mode, 'load', return_value=descriptor), \
+                patch.object(mode, 'inspect_package', return_value=descriptor['package']), \
+                patch.object(backends, 'checked_web_binding', side_effect=ValueError('web_manager_runtime_changed')):
+            observed = product.inspect_isolated_entry(self.root)
+        self.assertEqual(observed['web_state'], 'unavailable')
+        self.assertNotEqual(observed['web_state'], 'changed')
+
+    def test_isolated_generation_and_catalog_changes_require_current_entry_review(self):
+        import operator_mode_entry as mode
+        import operator_mode_backends as backends
+        root, path, entry, script = self.isolated_entry_fixture()
+        descriptor = {'package': {'synthetic': 'before'}, 'web': {'synthetic': True}, 'python': sys.executable}
+        for reason in ('mode_web_generation_changed_review_required', 'mode_backend_web_catalog_changed'):
+            with self.subTest(reason=reason), patch.object(mode, 'load', return_value=descriptor), \
+                    patch.object(mode, 'inspect_package', return_value=descriptor['package']), \
+                    patch.object(backends, 'checked_web_binding', side_effect=mode.ModeEntryError(reason)):
+                observed = product.inspect_isolated_entry(self.root)
+                self.assertEqual(observed, {'scope': 'isolated_mode', 'state': 'needs_review',
+                    'package_current': True, 'web_state': 'changed'})
 
     def test_ready_web_without_session_receipt_guides_explicit_reuse(self):
         self.configured()
@@ -285,6 +813,112 @@ class ProductOverviewTests(unittest.TestCase):
                 self.assertNotIn('PRIVATE', json.dumps(value))
                 self.assertEqual(run.call_count, 1)
 
+    def test_inspection_uses_only_fixed_public_read_only_operations(self):
+        output = subprocess.CompletedProcess([], 0, b'{"status":"checked"}', b'')
+        for scope, action, public in [('operator', 'readiness', ['channels', 'readiness']),
+                ('web', 'status', ['models', 'web', 'status']),
+                ('web', 'desktop-status', ['models', 'web', 'desktop-status'])]:
+            with self.subTest(scope=scope, action=action), \
+                    patch.object(product.shutil, 'which', return_value='pwsh'), \
+                    patch.object(product.subprocess, 'run', return_value=output) as child:
+                self.assertEqual(product.inspect_entry(self.root, scope, action), {'status': 'checked'})
+                self.assertEqual(child.call_count, 1)
+                self.assertEqual(child.call_args.args[0], ['pwsh', '-NoLogo', '-NoProfile',
+                    '-NonInteractive', '-File', str(ROOT / 'scripts/codex-operator.ps1'),
+                    *public, '-ProjectRoot', str(self.root), '-Json'])
+                self.assertEqual(child.call_args.kwargs['timeout'], 25)
+                self.assertTrue(child.call_args.kwargs['capture_output'])
+        with patch.object(product.subprocess, 'run', side_effect=AssertionError('No control action')) as child:
+            for scope, action in [('operator', 'start'), ('operator', 'stop'),
+                    ('web', 'assist'), ('web', 'inspect'), ('web', 'recover'), ('web', 'configure')]:
+                with self.subTest(scope=scope, action=action), \
+                        self.assertRaisesRegex(ValueError, 'read_only_operation_required'):
+                    product.inspect_entry(self.root, scope, action)
+            child.assert_not_called()
+
+    def installed_inspection_fixture(self):
+        source = self.root / 'plugin 中文/scripts'
+        source.mkdir(parents=True)
+        entry = source / 'codex-operator.ps1'
+        shutil.copyfile(ROOT / 'scripts/codex-operator.ps1', entry)
+        # Only the real public facade is exercised; the terminal fixture admits
+        # exactly the existing read-only operations and never touches a service.
+        (source / 'feishu-codex-operator.ps1').write_text("""
+param([string]$Scope,[string]$Action,[string]$ProjectRoot,[switch]$Json)
+$ErrorActionPreference='Stop'
+if (-not $Json.IsPresent) { throw 'Fixture requires JSON.' }
+if ($Scope -eq 'operator' -and $Action -eq 'readiness') {
+    $gates=@{runtime_running=$false;runtime_manifest=$false;health_current=$false;
+        feishu_consumer=$false;access_configured=$false;minimal_beeper_relay=$false;
+        init_catalog=$false;final_callback=$false}
+    @{status='not_ready';ready=$false;gates=$gates}|ConvertTo-Json -Compress -Depth 3
+    exit 2
+}
+if ($Scope -eq 'web' -and $Action -eq 'status') {
+    @{status='ready';active=$false;configuration_current=$true;session_bound=$true}|ConvertTo-Json -Compress
+    exit 0
+}
+if ($Scope -eq 'web' -and $Action -eq 'desktop-status') {
+    @{status='connected'}|ConvertTo-Json -Compress
+    exit 0
+}
+throw 'No service or model action admitted by this fixture.'
+""", encoding='utf8')
+        runtime = self.root / '.codex/feishu-codex-operator-runtime'
+        runtime.mkdir(parents=True)
+        shutil.copyfile(entry, runtime / entry.name)
+        installed = runtime / 'operator_product.py'
+        shutil.copyfile(ROOT / 'scripts/operator_product.py', installed)
+        (runtime / 'runtime-manifest.json').write_text(json.dumps({'schema_version': 1,
+            'public_entry': {'path': str(entry), 'sha256': hashlib.sha256(entry.read_bytes()).hexdigest()}}),
+            encoding='utf8')
+        profile = self.root / '.codex/operator-web-service/profile.json'
+        profile.parent.mkdir()
+        profile.write_text('{}', encoding='utf8')
+        (self.home / 'config.toml').write_bytes(b'# Preserve this private native fixture.\r\n')
+        self.assertFalse((runtime / 'feishu-codex-operator.ps1').exists())
+        spec = importlib.util.spec_from_file_location('installed_inspection_fixture', installed)
+        copy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(copy)
+        return source, entry, installed, copy
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows entry')
+    def test_installed_product_full_status_uses_saved_public_facade_without_legacy_neighbor(self):
+        source, entry, installed, copy = self.installed_inspection_fixture()
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        with patch.object(product, 'SCRIPTS', source):
+            expected = product.project_overview(self.root, self.home)
+        self.assertEqual(expected['status'], 'checked')
+        self.assertEqual(expected['components']['channels']['state'], 'needs_review')
+        self.assertEqual(expected['components']['models']['providers']['web']['state'], 'ready')
+        child = subprocess.run([sys.executable, '-X', 'utf8', '-E', '-s', '-B', str(installed),
+            '--project-root', str(self.root), '--json'], capture_output=True, timeout=40,
+            env={**os.environ, 'CODEX_HOME': str(self.home)},
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        self.assertEqual(child.returncode, 0, child.stderr.decode('utf8', errors='replace'))
+        self.assertEqual(json.loads(child.stdout), expected)
+        self.assertTrue(expected['read_only'])
+        self.assertEqual(expected['model_requests'], 0)
+        self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows entry')
+    def test_installed_inspection_rejects_changed_or_missing_saved_public_facade_without_fallback(self):
+        source, entry, installed, copy = self.installed_inspection_fixture()
+        original = entry.read_bytes()
+        for state in ('changed', 'missing'):
+            with self.subTest(state=state):
+                if state == 'changed':
+                    entry.write_bytes(original + b'\n# changed saved facade\n')
+                else:
+                    entry.unlink()
+                before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+                with patch.object(copy.subprocess, 'run', wraps=subprocess.run) as child:
+                    self.assertEqual(copy.inspect_entry(self.root, 'web', 'status'),
+                        copy.check_failure('check_result_invalid'))
+                    self.assertEqual(child.call_count, 1)
+                self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+                self.assertFalse((installed.parent / 'feishu-codex-operator.ps1').exists())
+
     def test_binding_check_failure_keeps_ready_backend_and_exact_next_step(self):
         self.configured()
         calls = []
@@ -414,10 +1048,12 @@ param([string]$Action,[string]$ProjectRoot,[string]$CodexHome)
         before = {str(path): path.read_bytes() for path in self.root.rglob('*') if path.is_file()}
         result = subprocess.run([shutil.which('pwsh'), '-NoProfile', '-File', str(ROOT/'scripts/codex-operator.ps1'),
             'channels', 'uninstall', '-ProjectRoot', str(self.root)],
-            capture_output=True, encoding='utf8', timeout=20)
+            capture_output=True, timeout=20)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Uninstall removes the whole product.', result.stderr)
-        self.assertIn('channels stop', result.stderr)
+        # Console path/decoration encoding is separate from the fixed refusal.
+        error = result.stderr.decode('utf8', errors='replace')
+        self.assertIn('Uninstall removes the whole product.', error)
+        self.assertIn('channels stop', error)
         self.assertEqual({str(path): path.read_bytes() for path in self.root.rglob('*') if path.is_file()}, before)
 
     @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows entry')

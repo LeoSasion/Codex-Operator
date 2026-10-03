@@ -206,6 +206,7 @@ class InstallUpgradeTests(unittest.TestCase):
                         'operator_core/web_openai_tunnel.py',
                         'operator_core/web_responses_provider.py',
                         'operator_core/web_native_interruption.py',
+                        'operator_core/native_search.py',
                         'licenses/codex-chatgpt-web-MIT.txt', 'licenses/webcodex-Apache-2.0.txt'):
                     self.assertIn(relative, manifest['code_files'])
                     source = ROOT / 'scripts' / relative
@@ -225,7 +226,16 @@ class InstallUpgradeTests(unittest.TestCase):
                     'import sys; sys.path.insert(0, sys.argv[1]); '
                     'import operator_web_model, operator_web_service; '
                     'from operator_core.web_openai_tunnel import WebOpenAITunnel; '
-                    'from operator_core.web_native_interruption import read_interruption',
+                    'from operator_core.web_native_interruption import read_interruption; '
+                    'from operator_core.model_router import ModelRouter; '
+                    'from operator_core.model_registry import ModelRegistry; '
+                    'import json; from pathlib import Path; '
+                    'registry = ModelRegistry({"version":1,"models":[]}, json.loads('
+                    '(Path(sys.argv[1])/"operator_core/beeper_model_catalog.json").read_text())); '
+                    'router = ModelRouter(registry, "a"*64); '
+                    'assert router.native_search_identity is None; '
+                    'assert router.native_enabled is True; '
+                    'assert ModelRouter(registry, "b"*64, native_enabled=False).native_enabled is False',
                     str(runtime)], cwd=project, capture_output=True, text=True, timeout=20)
                 self.assertEqual(imported.returncode, 0, imported.stdout + imported.stderr)
                 native_help = subprocess.run([sys.executable, '-I', '-B', '-c',

@@ -254,12 +254,9 @@ def start(plan_path, *, services_only=False):
             if not services_only:
                 assert_desktop_closed()
         profile = Path(plan['profile'])
-        outcome = manager.start(profile)
-        # A single start may still be preparing; observe it, never start again.
-        deadline = time.monotonic() + 20
-        while outcome['status'] == 'starting' and time.monotonic() < deadline:
-            time.sleep(.1)
-            outcome = manager.status(profile)
+        # One explicit start owns its late-ready observation and session binding.
+        # A separate read-only status must not fabricate that ownership receipt.
+        outcome = manager.start_ready(profile)
         require(outcome['status'] == 'ready' and not outcome.get('active', False),
             'web_startup_saved_service_not_ready')
         start_router(plan, bundle)

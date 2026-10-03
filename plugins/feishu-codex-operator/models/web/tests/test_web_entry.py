@@ -59,6 +59,30 @@ class WebEntryTests(unittest.TestCase):
         self.assertIn('尚未保存',result.stdout)
         self.assertEqual(sorted(self.root.rglob('*')),before)
 
+    def test_hidden_direct_entry_decodes_helper_json_as_utf8_after_legacy_codepage(self):
+        quote = lambda value: "'" + str(value).replace("'", "''") + "'"
+        wrapper = self.root / 'hidden-direct-entry.ps1'
+        wrapper.write_text('''
+[Console]::OutputEncoding = [Text.Encoding]::GetEncoding(936)
+$OutputEncoding = [Console]::OutputEncoding
+& ENTRY -Action configure -ProjectRoot PROJECT -Settings SETTINGS -PythonExecutable PYTHON -Json
+exit $LASTEXITCODE
+'''.replace('ENTRY', quote(ROOT/'scripts/operator_web_entry.ps1'))
+            .replace('PROJECT', quote(self.root)).replace('SETTINGS', quote(self.settings))
+            .replace('PYTHON', quote(Path(sys.executable).resolve())), encoding='utf-8')
+        original = self.settings.read_bytes()
+        result = subprocess.run([PWSH, '-NoLogo', '-NoProfile', '-File', str(wrapper)],
+            capture_output=True, text=True, encoding='utf-8', timeout=20,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertTrue(result.stdout.isascii())
+        report = json.loads(result.stdout)
+        self.assertEqual(report['status'], 'configured')
+        self.assertEqual(report['summary'], '已保存现有配置引用；以后沿用该入口，无需重复填写固定连接或密钥。')
+        self.assertEqual(self.settings.read_bytes(), original)
+        self.assertFalse((self.profile/'current.json').exists())
+        self.assertEqual(list((self.profile/'instances').iterdir()), [])
+
     def test_facade_saves_once_and_daily_status_needs_no_python_or_settings(self):
         self.assertEqual(self.configure(facade=True)['status'],'configured')
         original=(self.profile/'profile.json').read_bytes()

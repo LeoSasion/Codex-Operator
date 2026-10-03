@@ -41,6 +41,14 @@
   absence, never a clean-stop claim or first-install ownership; do not manufacture
   a stopped record, start services to satisfy maintenance, or replay old requests.
 
+- A reviewed same-version legacy runtime dependency update may add only the
+  exact `operator_core/native_search.py`, alone or with the previously reviewed
+  `operator_core/web_native_interruption.py` / `operator_native_models.py` pair.
+  Retain each absent destination and original startup inventory before writes;
+  check source, whole Hook surroundings, stopped services and empty work again.
+  Historical pair-only receipts keep their original restore scope. No unknown
+  module, first-install ownership, automatic restart or request replay is added.
+
 - An owner-requested saved Web cold-launch plan binds exact source/profile,
   Python, workflow and dedicated empty registry identities. Preparation/status
   never start services or change native settings. Explicit service-start may
