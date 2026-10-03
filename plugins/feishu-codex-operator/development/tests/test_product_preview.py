@@ -95,6 +95,175 @@ class ProductOverviewTests(unittest.TestCase):
         self.assertEqual(web['state'], 'needs_review')
         self.assertEqual(web['next_action'], 'models web desktop-rebind')
 
+    def test_isolated_entry_does_not_use_a_retained_legacy_provider(self):
+        self.configured()
+        calls = []
+        def inspect(project, scope, action):
+            calls.append((scope, action))
+            if action == 'desktop-status':
+                self.fail('Legacy provider must not decide the isolated entry status')
+            return {'status': 'ready', 'active': False, 'configuration_current': True,
+                    'session_bound': True}
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        value = product.project_overview(self.root, self.home, inspect,
+            lambda project: {'state': 'needs_review', 'package_current': False, 'web_state': 'bound',
+                'secret': 'PRIVATE'})
+        models = value['components']['models']
+        self.assertEqual(models['providers']['web']['state'], 'ready')
+        self.assertEqual(models['entry']['state'], 'needs_review')
+        self.assertIn('与当前应用不一致', models['entry']['summary'])
+        self.assertIn('更新拓展入口后', models['providers']['web']['next_action'])
+        self.assertNotIn('desktop-rebind', json.dumps(models))
+        self.assertNotIn('PRIVATE', json.dumps(value))
+        self.assertNotIn(('web', 'desktop-status'), calls)
+        self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+
+    def test_unavailable_isolated_entry_does_not_fall_back_or_hide_busy_web(self):
+        self.configured()
+        for active, expected in ((False, 'unavailable'), (True, 'busy')):
+            with self.subTest(active=active):
+                def inspect(project, scope, action):
+                    self.assertNotEqual(action, 'desktop-status')
+                    return {'status': 'ready', 'active': active, 'configuration_current': True,
+                        'session_bound': True}
+                value = product.project_overview(self.root, self.home, inspect,
+                    lambda project: {'state': 'unavailable', 'package_current': None, 'web_state': 'unavailable'})
+                self.assertEqual(value['components']['models']['providers']['web']['state'], expected)
+                self.assertEqual(value['components']['models']['entry']['state'], 'unavailable')
+                self.assertEqual(value['status'], 'partial')
+
+    def test_isolated_unbound_and_changed_web_do_not_request_legacy_connection(self):
+        self.configured()
+        for web_state, expected in (('absent', 'needs_connection'), ('changed', 'needs_review')):
+            value = product.project_overview(self.root, self.home,
+                lambda *args: {'status': 'ready', 'active': False, 'configuration_current': True},
+                lambda project: {'state': 'configured' if web_state == 'absent' else 'needs_review',
+                    'package_current': True, 'web_state': web_state})
+            web = value['components']['models']['providers']['web']
+            self.assertEqual(web['state'], expected)
+            self.assertNotIn('desktop-', web['next_action'])
+            if web_state == 'changed':
+                models = value['components']['models']
+                self.assertEqual(models['entry']['state'], 'needs_review')
+                self.assertIn('需要核对', models['entry']['summary'])
+                self.assertIn('核对', models['next_action'])
+
+    def isolated_entry_fixture(self):
+        folder = self.root / '.codex/operator-desktop-entry'
+        root = self.root / '.codex/operator-mode-entry' / ('a' * 32)
+        folder.mkdir(parents=True)
+        root.mkdir(parents=True)
+        script = folder / 'operator_desktop_entry.ps1'
+        script.write_bytes(b'# synthetic entry\n')
+        descriptor = root / 'entry.json'
+        descriptor.write_text('{"synthetic":true}', encoding='utf8')
+        entry = {'schema_version': 1, 'mode': 'isolated_mode',
+            'startup_bundle': root.relative_to(self.root).as_posix(),
+            'entry_script_sha256': hashlib.sha256(script.read_bytes()).hexdigest(),
+            'mode_entry_sha256': hashlib.sha256(descriptor.read_bytes()).hexdigest()}
+        path = folder / 'desktop-entry.json'
+        path.write_text(json.dumps(entry), encoding='utf8')
+        return root, path, entry, script
+
+    def test_isolated_status_checks_saved_bytes_and_returns_only_fixed_fields(self):
+        import operator_mode_entry as mode
+        import operator_mode_backends as backends
+        root, path, entry, script = self.isolated_entry_fixture()
+        descriptor = {'package': {'synthetic': 'before'}, 'web': {'synthetic': True}, 'python': sys.executable}
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        with patch.object(mode, 'load', return_value=descriptor), \
+                patch.object(mode, 'inspect_package', return_value={'synthetic': 'after'}), \
+                patch.object(backends, 'checked_web_binding', return_value=root), \
+                patch.object(mode, 'launch', side_effect=AssertionError('No launch')), \
+                patch.object(mode, 'start_router', side_effect=AssertionError('No service control')):
+            value = product.inspect_isolated_entry(self.root)
+        self.assertEqual(value, {'scope': 'isolated_mode', 'state': 'needs_review',
+            'package_current': False, 'web_state': 'bound'})
+        self.assertEqual({str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+
+    def test_untrusted_isolated_paths_and_changed_fingerprints_stop_before_controller(self):
+        import operator_mode_entry as mode
+        root, path, entry, script = self.isolated_entry_fixture()
+        with patch.object(mode, 'load', side_effect=AssertionError('No untrusted controller load')) as controller:
+            for bundle in ('../outside', '.codex/operator-mode-entry/' + 'b' * 32,
+                           '.codex/operator-mode-entry/' + 'a' * 32 + '/extra'):
+                path.write_text(json.dumps({**entry, 'startup_bundle': bundle}), encoding='utf8')
+                self.assertEqual(product.inspect_isolated_entry(self.root)['state'], 'unavailable')
+            path.write_text(json.dumps(entry), encoding='utf8')
+            script.write_bytes(b'# later owner edit\n')
+            self.assertEqual(product.inspect_isolated_entry(self.root)['state'], 'unavailable')
+            controller.assert_not_called()
+
+    def test_isolated_entry_change_during_observation_is_unavailable(self):
+        import operator_mode_entry as mode
+        root, path, entry, script = self.isolated_entry_fixture()
+        def changed_package():
+            path.write_text(json.dumps({**entry, 'mode': 'native'}), encoding='utf8')
+            return {'synthetic': 'before'}
+        with patch.object(mode, 'load', return_value={'package': {'synthetic': 'before'}, 'python': sys.executable}), \
+                patch.object(mode, 'inspect_package', side_effect=changed_package):
+            self.assertEqual(product.inspect_isolated_entry(self.root)['state'], 'unavailable')
+
+    def test_isolated_status_uses_saved_interpreter_for_its_exact_child(self):
+        import operator_mode_entry as mode
+        from subprocess import CompletedProcess
+        root, path, entry, script = self.isolated_entry_fixture()
+        selected = self.root / 'saved-python.exe'
+        selected.write_bytes(b'fixture-not-executed')
+        descriptor = {'package': {'synthetic': 'before'}, 'web': {'synthetic': True}, 'python': str(selected)}
+        expected = {'scope': 'isolated_mode', 'state': 'needs_review',
+                    'package_current': False, 'web_state': 'bound'}
+        with patch.object(mode, 'load', return_value=descriptor), \
+                patch.object(product.subprocess, 'run', return_value=CompletedProcess('fixture', 0,
+                    stdout=json.dumps(expected).encode(), stderr=b'PRIVATE')) as child:
+            self.assertEqual(product.inspect_isolated_entry(self.root), expected)
+        child.assert_called_once()
+        args = child.call_args.args[0]
+        self.assertEqual(args, [str(selected), '-X', 'utf8', '-E', '-s', '-B',
+            str(product.SCRIPTS / 'operator_product.py'), '--project-root', str(self.root), '--isolated-entry-only'])
+        self.assertEqual(child.call_args.kwargs['timeout'], 20)
+
+    def test_isolated_child_unknown_failed_and_oversized_results_are_unavailable(self):
+        import operator_mode_entry as mode
+        from subprocess import CompletedProcess
+        root, path, entry, script = self.isolated_entry_fixture()
+        descriptor = {'package': {}, 'python': str(self.root / 'saved-python.exe')}
+        outputs = [CompletedProcess('fixture', 1, stdout=b'PRIVATE', stderr=b'PRIVATE'),
+            CompletedProcess('fixture', 0, stdout=b'X' * 4097, stderr=b''),
+            CompletedProcess('fixture', 0, stdout=b'{"state":"configured","secret":"PRIVATE"}', stderr=b'')]
+        for output in outputs:
+            with patch.object(mode, 'load', return_value=descriptor), \
+                    patch.object(product.subprocess, 'run', return_value=output) as child:
+                observed = product.inspect_isolated_entry(self.root)
+                self.assertEqual(observed['state'], 'unavailable')
+                self.assertNotIn('PRIVATE', json.dumps(observed))
+                child.assert_called_once()
+
+    def test_isolated_manager_check_failure_is_not_a_stale_binding_claim(self):
+        import operator_mode_entry as mode
+        import operator_mode_backends as backends
+        root, path, entry, script = self.isolated_entry_fixture()
+        descriptor = {'package': {'synthetic': 'before'}, 'web': {'synthetic': True}, 'python': sys.executable}
+        with patch.object(mode, 'load', return_value=descriptor), \
+                patch.object(mode, 'inspect_package', return_value=descriptor['package']), \
+                patch.object(backends, 'checked_web_binding', side_effect=ValueError('web_manager_runtime_changed')):
+            observed = product.inspect_isolated_entry(self.root)
+        self.assertEqual(observed['web_state'], 'unavailable')
+        self.assertNotEqual(observed['web_state'], 'changed')
+
+    def test_isolated_generation_and_catalog_changes_require_current_entry_review(self):
+        import operator_mode_entry as mode
+        import operator_mode_backends as backends
+        root, path, entry, script = self.isolated_entry_fixture()
+        descriptor = {'package': {'synthetic': 'before'}, 'web': {'synthetic': True}, 'python': sys.executable}
+        for reason in ('mode_web_generation_changed_review_required', 'mode_backend_web_catalog_changed'):
+            with self.subTest(reason=reason), patch.object(mode, 'load', return_value=descriptor), \
+                    patch.object(mode, 'inspect_package', return_value=descriptor['package']), \
+                    patch.object(backends, 'checked_web_binding', side_effect=mode.ModeEntryError(reason)):
+                observed = product.inspect_isolated_entry(self.root)
+                self.assertEqual(observed, {'scope': 'isolated_mode', 'state': 'needs_review',
+                    'package_current': True, 'web_state': 'changed'})
+
     def test_ready_web_without_session_receipt_guides_explicit_reuse(self):
         self.configured()
         calls = []

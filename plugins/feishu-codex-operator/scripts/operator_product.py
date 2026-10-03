@@ -1,11 +1,14 @@
 """Read-only product overview. No model request, service control or account probe."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
+import sys
 import tomllib
 
 
@@ -129,7 +132,94 @@ def inspect_entry(project, scope, action):
         return check_failure('check_result_invalid')
 
 
-def project_overview(project, home, inspect=inspect_entry):
+def inspect_isolated_entry(project):
+    """Check the exact saved entry; never substitute a legacy provider or launch."""
+    path = project / '.codex/operator-desktop-entry/desktop-entry.json'
+    state = file_state(path)
+    if state == 'absent':
+        return None
+    unknown = {'scope': 'isolated_mode', 'state': 'unavailable',
+               'package_current': None, 'web_state': 'unavailable'}
+    def bounded_bytes(target):
+        if file_state(target) != 'present':
+            raise ValueError('entry_unavailable')
+        with target.open('rb') as stream:
+            raw = stream.read(BOUND + 1)
+        if len(raw) > BOUND:
+            raise ValueError('entry_size')
+        return raw
+    try:
+        if state != 'present':
+            return unknown
+        before = bounded_bytes(path)
+        entry = read_object(path)
+        if json.loads(before) != entry:
+            return unknown
+        if entry.get('mode') in ('native', 'reviewed_startup', 'direct_profile'):
+            return None
+        if (type(entry.get('schema_version')) is not int or entry['schema_version'] != 1
+                or entry.get('mode') != 'isolated_mode'
+                or not isinstance(entry.get('startup_bundle'), str)
+                or not re.fullmatch(r'\.codex/operator-mode-entry/[a-f0-9]{32}', entry['startup_bundle'])):
+            return unknown
+        root = project / entry['startup_bundle']
+        retained = {}
+        for key, target in (
+                ('entry_script_sha256', path.parent / 'operator_desktop_entry.ps1'),
+                ('mode_entry_sha256', root / 'entry.json')):
+            expected = entry.get(key)
+            raw = bounded_bytes(target)
+            if (not isinstance(expected, str) or not re.fullmatch('[a-f0-9]{64}', expected)
+                    or hashlib.sha256(raw).hexdigest() != expected):
+                return unknown
+            retained[target] = raw
+        import operator_mode_entry as mode
+        from operator_mode_backends import checked_web_binding
+        descriptor = mode.load(root)
+        selected_python = Path(descriptor['python'])
+        if selected_python.resolve() != Path(sys.executable).resolve():
+            # Manager identity includes its saved interpreter. PATH's Python
+            # must not turn an intact service into a runtime-change diagnosis.
+            child = subprocess.run([str(selected_python), '-X', 'utf8', '-E', '-s', '-B',
+                str(SCRIPTS / 'operator_product.py'), '--project-root', str(project),
+                '--isolated-entry-only'], capture_output=True, timeout=20,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            if child.returncode != 0 or len(child.stdout) > 4096:
+                return unknown
+            observed = json.loads(child.stdout.decode('utf-8-sig'))
+            if (not isinstance(observed, dict) or set(observed) != set(unknown)
+                    or observed['scope'] != 'isolated_mode'
+                    or observed['state'] not in ('configured', 'needs_review', 'unavailable')
+                    or observed['web_state'] not in ('absent', 'bound', 'changed', 'unavailable')
+                    or (observed['package_current'] is not None
+                        and type(observed['package_current']) is not bool)
+                    or bounded_bytes(path) != before or mode.load(root) != descriptor
+                    or any(bounded_bytes(target) != raw for target, raw in retained.items())):
+                return unknown
+            return observed
+        current_package = mode.inspect_package() == descriptor['package']
+        web_state = 'absent'
+        if descriptor.get('web') is not None:
+            try:
+                checked_web_binding(descriptor)
+                web_state = 'bound'
+            except ValueError as error:
+                web_state = ('changed' if str(error) in {
+                    'mode_web_generation_changed_review_required', 'mode_backend_web_catalog_changed',
+                    'web_manager_route_digest_changed', 'web_manager_model_catalog_changed'} else 'unavailable')
+        # The entry and controller must remain bound across all observations.
+        if (bounded_bytes(path) != before or mode.load(root) != descriptor
+                or any(bounded_bytes(target) != raw for target, raw in retained.items())):
+            return unknown
+        return {'scope': 'isolated_mode',
+                'state': 'configured' if current_package and web_state != 'changed' else 'needs_review',
+                'package_current': current_package, 'web_state': web_state}
+    except Exception:
+        # Fixed projections only: no private paths, configuration or exception text.
+        return unknown
+
+
+def project_overview(project, home, inspect=inspect_entry, inspect_isolated=inspect_isolated_entry):
     project = Path(project)
     home = Path(home)
     if not project.is_absolute() or not project.is_dir() or project.is_symlink():
@@ -137,6 +227,7 @@ def project_overview(project, home, inspect=inspect_entry):
     report = {'schema_version': 2, 'command': 'product.status', 'channel': 'preview',
         'read_only': True, 'model_requests': 0, 'components': {}}
     components = report['components']
+    isolated = inspect_isolated(project)
     runtime = project / '.codex/feishu-codex-operator-runtime'
     runtime_state = file_state(runtime / 'runtime-manifest.json')
     ownership_state = (file_state(project / '.codex/operator-installation/ownership.json')
@@ -208,24 +299,42 @@ def project_overview(project, home, inspect=inspect_entry):
         elif state == 'ready' and observation.get('active') is False and observation.get('session_bound') is False:
             web = ('needs_registration', '后台已就绪，启动登记尚未完成；显式复用当前实例即可继续接入', 'web start')
         elif state == 'ready' and observation.get('active') is False:
-            binding_observation = observe(inspect, project, 'web', 'desktop-status')
-            binding = binding_observation.get('status')
-            binding_failure = web_failure(binding_observation)
-            if binding == 'stale' and binding_observation.get('reason') == 'service_generation_changed':
-                web = ('needs_review', '后台已换实例，原生 Web 提供方仍指向旧连接', 'web desktop-rebind')
-            elif binding == 'connected':
-                web = ('ready', '后台就绪，独立提供方已登记；任务绑定和实际执行需分别确认', '在已接入 Web 的 Codex 任务中提出需求')
-            elif binding in ('absent', 'disconnected'):
-                web = ('needs_connection', '后台就绪，待登记独立提供方', 'web desktop-prepare')
-            elif binding == 'prepared':
-                web = ('needs_connection', '独立提供方已准备，待登记', 'web desktop-connect')
-            elif binding_failure:
-                web, web_diagnostic = binding_failure
-                web = (web[0], '后台就绪；提供方登记检查：' + web[1], web[2])
-            elif binding in (None, 'unavailable'):
-                web = ('unavailable', '后台就绪，暂时无法确认提供方登记；现有连接仍保留', 'web desktop-status')
+            if isolated is not None:
+                # The current isolated entry owns its binding. A retained legacy
+                # native provider cannot supply its state or a rebind action.
+                isolated_web = isolated.get('web_state')
+                if isolated.get('state') == 'unavailable' or isolated_web == 'unavailable':
+                    web = ('unavailable', '后台就绪；当前拓展入口的连接暂时无法核对',
+                        '由助手核对当前拓展入口与保存记录；不要重绑历史提供方')
+                elif isolated_web == 'bound':
+                    web = ('ready', '后台就绪，当前拓展入口的 Web 绑定已核对；实际执行仍需分别确认',
+                        '受控更新拓展入口后使用已接入 Web 的任务' if isolated.get('package_current') is False
+                        else '从拓展入口使用已接入 Web 的任务')
+                elif isolated_web == 'absent':
+                    web = ('needs_connection', '后台就绪，当前拓展入口尚未接入 Web',
+                        '由助手按拓展入口的受控流程接入保存的 Web 服务')
+                else:
+                    web = ('needs_review', '后台就绪，当前拓展入口保存的 Web 绑定需要核对',
+                        '由助手核对当前拓展入口与服务代次；保留原件和失败记录')
             else:
-                web = ('changed', '后台可用，已有提供方登记需核对', 'web desktop-status')
+                binding_observation = observe(inspect, project, 'web', 'desktop-status')
+                binding = binding_observation.get('status')
+                binding_failure = web_failure(binding_observation)
+                if binding == 'stale' and binding_observation.get('reason') == 'service_generation_changed':
+                    web = ('needs_review', '后台已换实例，原生 Web 提供方仍指向旧连接', 'web desktop-rebind')
+                elif binding == 'connected':
+                    web = ('ready', '后台就绪，独立提供方已登记；任务绑定和实际执行需分别确认', '在已接入 Web 的 Codex 任务中提出需求')
+                elif binding in ('absent', 'disconnected'):
+                    web = ('needs_connection', '后台就绪，待登记独立提供方', 'web desktop-prepare')
+                elif binding == 'prepared':
+                    web = ('needs_connection', '独立提供方已准备，待登记', 'web desktop-connect')
+                elif binding_failure:
+                    web, web_diagnostic = binding_failure
+                    web = (web[0], '后台就绪；提供方登记检查：' + web[1], web[2])
+                elif binding in (None, 'unavailable'):
+                    web = ('unavailable', '后台就绪，暂时无法确认提供方登记；现有连接仍保留', 'web desktop-status')
+                else:
+                    web = ('changed', '后台可用，已有提供方登记需核对', 'web desktop-status')
         elif state in ('configured', 'stopped'):
             if observation.get('start_available') is False:
                 web = ('needs_review', '旧连接仍有占用记录，需核对后再启动', 'web recover')
@@ -269,6 +378,34 @@ def project_overview(project, home, inspect=inspect_entry):
             'api': {'state': 'endpoint_check_required', 'summary': '按所选 API 端点分别检查，不从登记总数推断可用性'},
             'local': {'state': 'endpoint_check_required', 'summary': '按所选本地服务分别检查，不自动加载或下载模型'},
             'web': web_status}}
+    if isolated is not None:
+        entry_state = isolated.get('state')
+        package_current = isolated.get('package_current')
+        if (entry_state == 'unavailable' or entry_state not in ('configured', 'needs_review')
+                or type(package_current) is not bool):
+            entry = {'scope': 'isolated_mode', 'state': 'unavailable',
+                'summary': '当前拓展入口暂时无法核对，已保存聊天与原件保留',
+                'next_action': '由助手核对准确入口与归属记录；不重启或重配后台'}
+            components['models']['state'] = 'unavailable'
+        elif package_current is False:
+            entry = {'scope': 'isolated_mode', 'state': 'needs_review',
+                'summary': '拓展入口绑定的官方包与当前应用不一致；原聊天与原件保留',
+                'next_action': '由助手受控更新拓展入口；先核对旧进程与路由退出证据'}
+            if components['models']['state'] != 'unavailable':
+                components['models']['state'] = 'needs_review'
+        elif entry_state == 'needs_review':
+            entry = {'scope': 'isolated_mode', 'state': 'needs_review',
+                'summary': '官方包一致，当前拓展入口的 Web 绑定需要核对；原聊天与原件保留',
+                'next_action': '由助手核对当前拓展入口与服务代次；保留原件和失败记录'}
+            if components['models']['state'] != 'unavailable':
+                components['models']['state'] = 'needs_review'
+        else:
+            entry = {'scope': 'isolated_mode', 'state': entry_state,
+                'summary': '当前拓展入口已核对；窗口启动与实际模型执行需分别确认',
+                'next_action': '使用当前拓展入口；实际模型能力按已验收范围判断'}
+        components['models']['entry'] = entry
+        if entry['state'] != 'configured':
+            components['models']['next_action'] = entry['next_action']
 
     routing = 'unknown'
     try:
@@ -311,7 +448,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project-root', required=True, type=Path)
     parser.add_argument('--json', action='store_true')
+    parser.add_argument('--isolated-entry-only', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.isolated_entry_only:
+        print(json.dumps(inspect_isolated_entry(args.project_root), ensure_ascii=True))
+        return 0
     try:
         result = project_overview(args.project_root,
             Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))))
@@ -325,6 +466,8 @@ def main():
             if key in result.get('components', {}):
                 row = result['components'][key]
                 print(f"{label}：{row['summary']}\n  下一步：{row['next_action']}")
+                if 'entry' in row:
+                    print(f"  拓展入口：{row['entry']['summary']}")
                 for provider, status in row.get('providers', {}).items():
                     print(f"  {provider.capitalize()}：{status['summary']}")
                     if 'next_action' in status:
