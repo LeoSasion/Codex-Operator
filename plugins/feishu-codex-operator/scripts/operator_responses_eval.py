@@ -331,7 +331,8 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
                         self.session.trace_configs.append(trace)
                     yield value
 
-        async def proxy(self, request, url, body, headers, *, context=None, stream=False):
+        async def proxy(self, request, url, body, headers, *, context=None, stream=False,
+                        web_binding=None):
             if terminal is not None:
                 from operator_core.responses_tool_adapter import loads
                 terminal.validate_followup(loads(body))
@@ -340,7 +341,8 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
             dispatches.append(record)
             token = dispatch_round.set(record)
             try:
-                result = await super().proxy(request, url, body, headers, context=context, stream=stream)
+                result = await super().proxy(request, url, body, headers, context=context,
+                                             stream=stream, web_binding=web_binding)
                 record.update(transport_result="returned", http_status=result.status)
                 return result
             except asyncio.CancelledError:

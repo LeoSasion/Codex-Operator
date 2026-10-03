@@ -272,8 +272,9 @@ saved Web service and model router must be stopped, the router entry deactivated
 and inbox/Final Callback work empty apart from the documented held failed row.
 
 Schema 1 requires the same source file set. Schema 2 permits only the reviewed
-pair `operator_core/web_native_interruption.py` and `operator_native_models.py`
-to be newly added in the same version. Both destinations must be absent. It
+pair `operator_core/web_native_interruption.py` and `operator_native_models.py`,
+the required `operator_core/native_search.py` dependency, or both complete groups
+to be newly added in the same version. Every added destination must be absent. It
 retains that absence state and the current startup Hook bytes, replaces only
 the literal file inventory, and requires all surrounding Hook bytes to match
 the canonical source. Unknown additions, removals or other Hook differences
@@ -290,7 +291,7 @@ create first-install ownership for Hooks, rules, shortcuts or runtime data;
 ordinary uninstall remains blocked until its legacy ownership is separately
 resolved. Neither preview nor apply starts services or replays a message.
 
-Schema 2 recovery removes only the two unchanged added files, restores its
+Schema 2 recovery removes only its exact unchanged added files, restores its
 retained startup inventory and runtime originals, and preserves later edits.
 An incomplete restore write is terminal and is not retried; read-only preflight
 rejection does not rewrite the transaction. Schema 1 receipts remain restorable

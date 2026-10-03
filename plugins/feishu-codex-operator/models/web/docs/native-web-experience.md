@@ -4,6 +4,46 @@ Current guidance as of 2026-10-03. Codex-Operator has two areas: Channels and Mo
 
 ## Read first
 
+2026-10-03 second official-update review: Desktop product 26.930.31730 / Windows package
+26.930.3930.0 uses CLI 0.160.0. Native configuration remains on the official direct route;
+the isolated entry still bound 26.930.2377.0 and needs explicit package maintenance.
+Thirteen new local CLI compatibility cases passed without business requests. The owner
+subsequently requested repair of all known issues. The vanished old isolated router was
+reviewed separately and the idle saved Web service normally stopped, retaining login and
+the native configuration. Neither action establishes a clean stop for the vanished router.
+Current status must inspect the current isolated entry after its Web manager observation,
+use its checked saved interpreter, and never substitute a retained legacy provider.
+An installed status helper delegates only to byte-identical canonical code through its
+fixed read-only action; it does not install canonical mode maintenance modules into runtime.
+Canonical controller dependencies must be checked before import; missing or linked files must
+not execute a same-named fallback module. Keep the superseded incomplete regression separate.
+The runtime inventory must include the native search dependency required by router startup.
+Source repairs, reviewed runtime/package deployment and fresh Desktop acceptance remain
+separate gates. Historical installation ownership is still unresolved; do not manufacture it.
+The completed second-update v3 regression failed 12 CLI cases among 1,709 Python tests
+(six conditional skips); all 157 Node tests passed. Keep this result and the earlier incomplete
+runs separate. Fresh parsed-request observations passed adaptation unchanged and showed no
+AdditionalTools envelope; do not change codecs based on the rejected initial hypothesis.
+The isolated evaluator must accept and forward the base router's `web_binding` keyword.
+Its stale override blocked dispatch before upstream/tool execution. Repair that interface
+without changing endpoint capabilities, permissions, budgets, retries or acceptance assertions.
+The complete affected module passed 12 tests without skips using actual CLI 0.160 and all
+original acceptance/rejection assertions. The subsequent frozen v4 run passed 1,709 Python
+tests with six conditional skips and all 157 Node tests, preserving source, CLI and native
+configuration. Reviewed same-version runtime maintenance then updated 16 code files, retaining
+the exact original/absent states; all 63 installed files match both manifest and canonical source.
+It does not resolve legacy first-install ownership. Local service startup was confirmed once.
+The model loaded with the saved complete configuration, but the original restoration assertion
+failed because the SDK adds an own `gpu.mainGpu=undefined` property absent from retained JSON.
+A separate read-only review confirmed identical complete JSON values, stable model identity,
+32768 context, parallel capacity four and unchanged defaults. Preserve the original failed receipt.
+The new Web startup sent no model requests and launched no browser: its preflight recorded
+`web_desktop_locked_before_dispatch`. Current Windows flags also reported locked, with a black
+window and disabled accessibility controls; the cause is unconfirmed. The exact request-free
+service was normally stopped. Package-entry update, restored-window acceptance and the prepared
+different Local/Web cases remain pending a visible unlocked desktop; do not bypass the lock gate,
+infer a login challenge, restart the native Desktop or replay an old request.
+
 2026-10-03 integrity follow-up: status publication must fit the actual 64 KiB serialized-file
 bound, including terminal fields. Only the oldest whole diagnostic browser events may be omitted
 with a count; business histories, counters and capacity stay intact. Dedicated compatibility reads

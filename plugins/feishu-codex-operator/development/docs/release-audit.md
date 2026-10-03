@@ -7,6 +7,76 @@ counts refer to their individual runs; the current source must be checked with
 the [test instructions](testing.md). A later source-only pass never changes an
 earlier live-task result or proves that installed services were updated.
 
+2026-10-03 second official-update repair candidate:
+
+- Current Desktop product 26.930.31730 / Windows package 26.930.3930.0 uses CLI 0.160.0.
+  Thirteen new local compatibility cases passed; no business turn was sent. The native
+  route remains official direct. The saved isolated entry still bound package 26.930.2377.0.
+- The owner requested all known issues repaired. The exact vanished isolated router gained
+  a separate absence review retaining its original running record; no stopped record or
+  request-free server claim was created. The idle saved Web service was then normally stopped,
+  preserving login and native configuration. Package deployment and fresh live acceptance
+  remain separate from these maintenance records.
+- Status now checks the isolated entry after the manager observation, with its checked saved
+  interpreter and current binding, rather than projecting a retained legacy provider. Installed
+  runtime status uses only a byte-identical canonical helper's fixed read-only action; missing
+  canonical maintenance modules do not justify silently installing their authority into runtime.
+- The status review also identified imports occurring before controller path validation. The
+  candidate must reject missing or linked canonical dependencies before their code executes;
+  a same-named system module is not a substitute. The incomplete superseded regression remains
+  retained and does not count as a full pass.
+- Router startup requires native_search.py, but both installer inventories and the startup
+  guard omitted it. The candidate adds that one dependency and its narrowly reviewed schema-v2
+  missing-file migration. Original absent state and Hook bytes are retained; historical pair-only
+  receipts keep their scope. Legacy first-install ownership remains unresolved.
+- Candidate full regression, runtime deployment, package entry update and different new
+  Desktop execution cases must be recorded separately. Approval/denial, native freeform patch
+  and untested models retain their original verification status. Native generic 413 retries
+  remain an official-client limitation and do not authorize global routing.
+- The completed v3 regression ran 1,709 Python tests with 12 failures and six conditional
+  skips; all 157 Node tests passed. Source, CLI and native configuration stayed unchanged,
+  with the exact Operator stopped and callbacks/inbox empty. This is a failed full run,
+  retained separately from the two earlier incomplete runs, and does not authorize deployment.
+  Two fresh private diagnostics reproduced all 12 CLI failures. Complete parsed requests
+  passed request adaptation unchanged; they contained no AdditionalTools envelope. The
+  evaluator's proxy override omitted the newer `web_binding` keyword accepted by the base
+  router, so Python rejected dispatch before entering that override. A separate signature
+  binding check confirmed the mismatch; it is not a reconstructed original traceback.
+  The narrow candidate repair adds and forwards that keyword in the evaluator only.
+  Endpoint codecs, capabilities, permissions, request limits, retries and original test
+  assertions remain unchanged. The complete affected evaluator module passed 12 tests with
+  no skips in 9.409 seconds, including both actual CLI 0.160 methods and all original
+  acceptance/rejection assertions. Its implementation, CLI, interpreter and native bytes
+  stayed unchanged. Earlier failures remain failures.
+- The subsequent complete frozen v4 run passed 1,709 Python tests, with zero failures/errors
+  and six conditional skips, plus all 157 Node tests with no failures/cancellations/skips.
+  Total elapsed time was 2,285.007 seconds. The frozen 285-file source identity was
+  `f0f7b595504e077ebd7ecafff4ae3104b8e9acc8a1a96cc6d45d2310a6ef84da`;
+  source, CLI and native configuration stayed unchanged. The exact Operator remained stopped,
+  callbacks/inbox were empty, and the owned test processes exited. The six skips retain their
+  distinct unmet conditions: three real Windows symlink cases, one explicit catalog path and
+  two selected-shell fixtures; no live Desktop gate is inferred from them.
+- A fresh reviewed schema-v2 same-version runtime transaction updated 16 code files, retaining
+  originals and the native_search absent state, without native configuration changes. A separate
+  read-only check confirms all 63 installed code files match manifest and canonical source at
+  4.2.0-alpha.138. Legacy first-install ownership remains unresolved. This deployment does not
+  establish package-entry or fresh Desktop acceptance.
+- Local loopback service startup was confirmed once against the exact application and CLI.
+  One model load completed, but the original restoration assertion failed: the SDK load object
+  adds an own `gpu.mainGpu=undefined` key absent from saved JSON. All three readback JSON values
+  match the originals. A separate read-only SDK review retained the assertion traceback and
+  confirmed complete load/prediction equality in JSON, stable model identity, 32768 context,
+  parallel capacity four and unchanged defaults. No load was retried and no inference was sent;
+  the original failed receipt remains failed.
+- The new Web service preflight recorded `web_desktop_locked_before_dispatch`, with zero model
+  requests and zero browser launches. Current Windows flags independently reported locked;
+  the exact native window showed a black capture and disabled accessibility controls. The cause
+  remains unconfirmed. The exact idle service was normally stopped with saved login intact.
+  The current-package paired entry update, restored side window and two prepared different new
+  execution cases remain pending a visible unlocked desktop. No challenge requirement is inferred,
+  and no native restart, lock bypass or old-request replay occurred. The v4 frozen source artifact
+  and receipts remain intact; this later documentation records deployment and the remaining gate.
+
 2026-10-03 status and public-page integrity follow-up:
 
 - Five completed/terminal Web attempts produced a 67,951-byte observation file, then a

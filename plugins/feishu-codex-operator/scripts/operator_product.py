@@ -1,6 +1,7 @@
 """Read-only product overview. No model request, service control or account probe."""
 import argparse
 import hashlib
+import importlib.machinery
 import json
 import os
 from pathlib import Path
@@ -140,6 +141,7 @@ def inspect_isolated_entry(project):
         return None
     unknown = {'scope': 'isolated_mode', 'state': 'unavailable',
                'package_current': None, 'web_state': 'unavailable'}
+    search_path = None
     def bounded_bytes(target):
         if file_state(target) != 'present':
             raise ValueError('entry_unavailable')
@@ -148,6 +150,22 @@ def inspect_isolated_entry(project):
         if len(raw) > BOUND:
             raise ValueError('entry_size')
         return raw
+    def child_observation(executable, helper, timeout):
+        child = subprocess.run([str(executable), '-X', 'utf8', '-E', '-s', '-B',
+            str(helper), '--project-root', str(project), '--isolated-entry-only'],
+            capture_output=True, timeout=timeout,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        if child.returncode != 0 or len(child.stdout) > 4096:
+            raise ValueError('entry_child_unavailable')
+        observed = json.loads(child.stdout.decode('utf-8-sig'))
+        if (not isinstance(observed, dict) or set(observed) != set(unknown)
+                or observed['scope'] != 'isolated_mode'
+                or observed['state'] not in ('configured', 'needs_review', 'unavailable')
+                or observed['web_state'] not in ('absent', 'bound', 'changed', 'unavailable')
+                or (observed['package_current'] is not None
+                    and type(observed['package_current']) is not bool)):
+            raise ValueError('entry_child_result_invalid')
+        return observed
     try:
         if state != 'present':
             return unknown
@@ -173,50 +191,151 @@ def inspect_isolated_entry(project):
                     or hashlib.sha256(raw).hexdigest() != expected):
                 return unknown
             retained[target] = raw
+        if SCRIPTS == project / '.codex/feishu-codex-operator-runtime':
+            # Mode maintenance stays canonical. The installed status helper may
+            # delegate only to the same exact read-only source generation.
+            caller = SCRIPTS / 'operator_product.py'
+            helper = project / 'plugins/feishu-codex-operator/scripts/operator_product.py'
+            retained[caller] = bounded_bytes(caller)
+            retained[helper] = bounded_bytes(helper)
+            if retained[caller] != retained[helper]:
+                return unknown
+            observed = child_observation(sys.executable, helper, 40)
+            if (bounded_bytes(path) != before
+                    or any(bounded_bytes(target) != raw for target, raw in retained.items())):
+                return unknown
+            return observed
+        # Validate the retained canonical source generation before importing its
+        # controller. Missing or linked project files must never use site-packages.
+        saved = json.loads(retained[root / 'entry.json'])
+        bindings = saved.get('source_bindings') if isinstance(saved, dict) else None
+        top = {'operator_mode_entry.py', 'operator_mode_entry.ps1', 'operator_mode_host.cs',
+            'operator_mode_picker.cs', 'operator_model_router.py', 'operator_native_models.py',
+            'operator_web_service.py', 'operator_mode_onboarding.py', 'operator_mode_native.cs',
+            'operator_mode_maintenance.py', 'operator_mode_pair_refresh.ps1', 'operator_mode_backends.py'}
+        if (not isinstance(bindings, dict) or not 0 < len(bindings) <= 128
+                or not top | {'operator_core/__init__.py'} <= set(bindings)):
+            return unknown
+        module_paths = {}
+        for name, expected in bindings.items():
+            if (not isinstance(name, str) or (name not in top and not re.fullmatch(
+                    r'operator_core/(?:[a-z0-9_]+/)*[a-z0-9_]+\.(?:py|json)', name))
+                    or not isinstance(expected, str) or not re.fullmatch('[a-f0-9]{64}', expected)):
+                return unknown
+            target = SCRIPTS / name
+            raw = bounded_bytes(target)
+            if hashlib.sha256(raw).hexdigest() != expected:
+                return unknown
+            retained[target] = raw
+            if target.suffix == '.py':
+                module_name = name[:-3].replace('/', '.')
+                module_paths[module_name.removesuffix('.__init__')] = target
+        current_core = set()
+        for target in (SCRIPTS / 'operator_core').rglob('*'):
+            info = target.lstat()
+            if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+                return unknown
+            if stat.S_ISREG(info.st_mode) and target.suffix in ('.py', '.json'):
+                current_core.add(target.relative_to(SCRIPTS).as_posix())
+                if len(current_core) > 128:
+                    return unknown
+        if current_core != {name for name in bindings if name.startswith('operator_core/')}:
+            return unknown
+        profile_changed = False
+        if saved.get('web') is not None:
+            web = saved['web']
+            if not isinstance(web, dict) or not isinstance(web.get('profile'), str):
+                return unknown
+            profile = Path(web['profile']) / 'profile.json'
+            if not profile.is_absolute() or project / '.codex' not in profile.parents:
+                return unknown
+            profile_raw = bounded_bytes(profile)
+            expected_profile = web.get('profile_sha256')
+            if not isinstance(expected_profile, str) or not re.fullmatch('[a-f0-9]{64}', expected_profile):
+                return unknown
+            retained[profile] = profile_raw
+            profile_changed = hashlib.sha256(profile_raw).hexdigest() != expected_profile
+            if not profile_changed:
+                configuration = json.loads(profile_raw)
+                runtime = configuration.get('runtime', {}) if isinstance(configuration, dict) else {}
+                expected = runtime.get('sources', {}).get('operator_web_model.py') if isinstance(runtime, dict) else None
+                target = SCRIPTS / 'operator_web_model.py'
+                raw = bounded_bytes(target)
+                if (runtime.get('source_root') != str(SCRIPTS) or not isinstance(expected, str)
+                        or hashlib.sha256(raw).hexdigest() != expected):
+                    return unknown
+                retained[target] = raw
+                module_paths['operator_web_model'] = target
+        # Check what Python will select without importing a parent package.
+        # A same-named package or extension must not execute before rejection.
+        for name, target in module_paths.items():
+            package = target.name == '__init__.py'
+            parent = target.parent.parent if package else target.parent
+            spec = importlib.machinery.PathFinder.find_spec(name, [str(parent)])
+            if spec is None or not isinstance(spec.origin, str) or Path(spec.origin) != target:
+                return unknown
+            locations = spec.submodule_search_locations
+            if package:
+                if locations is None or [Path(p) for p in locations] != [target.parent]:
+                    return unknown
+            elif locations is not None:
+                return unknown
+        def checked_origins():
+            for name, target in module_paths.items():
+                if name not in sys.modules:
+                    continue
+                module = sys.modules[name]
+                origin = getattr(module, '__file__', None)
+                if not isinstance(origin, str) or Path(origin) != target:
+                    raise ValueError('entry_module_origin_changed')
+                if name == 'operator_core' and [Path(p) for p in module.__path__] != [target.parent]:
+                    raise ValueError('entry_package_origin_changed')
+        checked_origins()
+        search_path = list(sys.path)
+        sys.path.insert(0, str(SCRIPTS))
         import operator_mode_entry as mode
         from operator_mode_backends import checked_web_binding
+        checked_origins()
+        if any(bounded_bytes(target) != raw for target, raw in retained.items()):
+            return unknown
         descriptor = mode.load(root)
         selected_python = Path(descriptor['python'])
         if selected_python.resolve() != Path(sys.executable).resolve():
             # Manager identity includes its saved interpreter. PATH's Python
             # must not turn an intact service into a runtime-change diagnosis.
-            child = subprocess.run([str(selected_python), '-X', 'utf8', '-E', '-s', '-B',
-                str(SCRIPTS / 'operator_product.py'), '--project-root', str(project),
-                '--isolated-entry-only'], capture_output=True, timeout=20,
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-            if child.returncode != 0 or len(child.stdout) > 4096:
-                return unknown
-            observed = json.loads(child.stdout.decode('utf-8-sig'))
-            if (not isinstance(observed, dict) or set(observed) != set(unknown)
-                    or observed['scope'] != 'isolated_mode'
-                    or observed['state'] not in ('configured', 'needs_review', 'unavailable')
-                    or observed['web_state'] not in ('absent', 'bound', 'changed', 'unavailable')
-                    or (observed['package_current'] is not None
-                        and type(observed['package_current']) is not bool)
-                    or bounded_bytes(path) != before or mode.load(root) != descriptor
+            observed = child_observation(selected_python, SCRIPTS / 'operator_product.py', 20)
+            if (bounded_bytes(path) != before or mode.load(root) != descriptor
                     or any(bounded_bytes(target) != raw for target, raw in retained.items())):
                 return unknown
+            checked_origins()
             return observed
         current_package = mode.inspect_package() == descriptor['package']
         web_state = 'absent'
         if descriptor.get('web') is not None:
-            try:
-                checked_web_binding(descriptor)
-                web_state = 'bound'
-            except ValueError as error:
-                web_state = ('changed' if str(error) in {
-                    'mode_web_generation_changed_review_required', 'mode_backend_web_catalog_changed',
-                    'web_manager_route_digest_changed', 'web_manager_model_catalog_changed'} else 'unavailable')
+            if profile_changed:
+                web_state = 'changed'
+            else:
+                try:
+                    checked_web_binding(descriptor)
+                    web_state = 'bound'
+                except ValueError as error:
+                    web_state = ('changed' if str(error) in {
+                        'mode_web_generation_changed_review_required', 'mode_backend_web_catalog_changed',
+                        'web_manager_route_digest_changed', 'web_manager_model_catalog_changed'} else 'unavailable')
         # The entry and controller must remain bound across all observations.
         if (bounded_bytes(path) != before or mode.load(root) != descriptor
                 or any(bounded_bytes(target) != raw for target, raw in retained.items())):
             return unknown
+        checked_origins()
         return {'scope': 'isolated_mode',
                 'state': 'configured' if current_package and web_state != 'changed' else 'needs_review',
                 'package_current': current_package, 'web_state': web_state}
     except Exception:
         # Fixed projections only: no private paths, configuration or exception text.
         return unknown
+    finally:
+        if search_path is not None:
+            sys.path[:] = search_path
 
 
 def project_overview(project, home, inspect=inspect_entry, inspect_isolated=inspect_isolated_entry):
@@ -227,7 +346,6 @@ def project_overview(project, home, inspect=inspect_entry, inspect_isolated=insp
     report = {'schema_version': 2, 'command': 'product.status', 'channel': 'preview',
         'read_only': True, 'model_requests': 0, 'components': {}}
     components = report['components']
-    isolated = inspect_isolated(project)
     runtime = project / '.codex/feishu-codex-operator-runtime'
     runtime_state = file_state(runtime / 'runtime-manifest.json')
     ownership_state = (file_state(project / '.codex/operator-installation/ownership.json')
@@ -249,7 +367,7 @@ def project_overview(project, home, inspect=inspect_entry, inspect_isolated=insp
         elif observation['ready']:
             feishu = ('ready', '接收与回传服务就绪，飞书消息仍需实际验证', '已有绑定可直接发送消息；需要绑定或改绑时使用 /init')
         elif ownership_state == 'absent':
-            feishu = ('needs_review', '旧通道安装缺少归属记录，现有运行时与配置已保留',
+            feishu = ('needs_review', '通道服务尚未就绪；旧通道安装缺少归属记录，现有运行时与配置已保留',
                 '由助手审核旧安装与原件，确定单独迁移方案；不要直接重装或重投消息')
         elif ownership_state == 'unavailable':
             feishu = ('unavailable', '通道安装归属记录暂时无法核对，现有文件已保留',
@@ -262,13 +380,16 @@ def project_overview(project, home, inspect=inspect_entry, inspect_isolated=insp
 
     profile = project / '.codex/operator-web-service/profile.json'
     profile_state = file_state(profile)
+    observation = observe(inspect, project, 'web', 'status') if profile_state == 'present' else {}
+    # Check the entry after the Web observation used below. A service generation
+    # change during earlier checks must not reuse an old successful binding.
+    isolated = inspect_isolated(project)
     web_diagnostic = None
     if profile_state == 'absent':
         web = ('not_configured', '尚未保存 Web 连接', '由助手引导首次登录和固定连接配置')
     elif profile_state == 'unavailable':
         web = ('unavailable', '无法读取已有 Web 配置，未要求重新登录或创建连接', 'web status')
     else:
-        observation = observe(inspect, project, 'web', 'status')
         state = observation.get('status')
         failure = web_failure(observation)
         if failure:
