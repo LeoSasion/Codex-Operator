@@ -47,6 +47,7 @@ class EntryMigrationTests(unittest.TestCase):
             'start-codex-with-web.ps1':hashlib.sha256(raw).hexdigest()}}),encoding='utf8')
         self.bootstrap="""
 $ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 . SETUP -ProjectRoot PROJECT -Library
 $p=PROJECT;$startup=Join-Path $p '.codex/startup';$receipt=Join-Path $p '.codex/legacy/receipt.json'
 $fixtureDesktop=Join-Path $p 'fake-desktop';$fixturePrograms=Join-Path $p 'fake-programs';$fixtureApp=Join-Path $p 'fake-app'

@@ -59,6 +59,8 @@ def configure(runtime: Path, grant: dict, *, executable: Path, verifier: Callabl
     profile.update(schema_version=1, status="enabled", host_id="local",
                    grant_source_thread_id=grant.get("grant_source_thread_id"), granted_at=grant.get("granted_at"))
     encoded = json.dumps(profile, ensure_ascii=True, separators=(",", ":")).encode()
+    if len(encoded) > 16_384:
+        raise UserTaskError("user_task_record_too_large")
     path = checked_path(runtime / PROFILE_NAME)
     if path.exists():
         if path.read_bytes() != encoded:
@@ -120,17 +122,20 @@ def revoke(runtime: Path) -> dict:
     profile, digest = read_object(path, 16_384)
     if profile.get("status") == "revoked":
         return {"enabled": False, "state": "revoked"}
+    profile["status"] = "revoked"
+    encoded = json.dumps(profile, ensure_ascii=True, separators=(",", ":")).encode()
+    if len(encoded) > 16_384:
+        raise UserTaskError("user_task_record_too_large")
     original = path.read_bytes()
     if hashlib.sha256(original).hexdigest() != digest:
         raise UserTaskError("user_task_grant_changed")
     backup = path.with_name(path.name + ".before-revocation-" + uuid.uuid4().hex)
     with backup.open("xb") as stream:
         stream.write(original)
-    profile["status"] = "revoked"
     temporary = path.with_name(path.name + ".revoke-" + uuid.uuid4().hex)
     try:
-        with temporary.open("x", encoding="utf-8") as stream:
-            json.dump(profile, stream, ensure_ascii=True)
+        with temporary.open("xb") as stream:
+            stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
         if path.read_bytes() != original:
@@ -562,15 +567,18 @@ class UserTaskManager:
             if self.stop.is_set() or current is None or current[1] != digest:
                 raise UserTaskError("user_task_grant_changed")
             latest = self.sessions.get(scope)
-            if latest.get("thread_id"):
-                return latest  # An explicit concurrent binding wins.
             if latest.get("user_open_id") != session["user_open_id"] or latest.get("chat_type") != "p2p":
                 raise UserTaskError("user_task_session_identity_changed")
+            if latest.get("thread_id"):
+                return latest  # An explicit concurrent binding for this user wins.
             try:
                 return self.sessions.bind_thread_if_current(scope, job["thread_id"], expected_thread_id="",
-                    host_id="local", project_id=profile["project_id"], operation_receipt=job["request_id"])
+                    host_id="local", project_id=profile["project_id"], operation_receipt=job["request_id"],
+                    expected_user_open_id=session["user_open_id"], expected_chat_type="p2p")
             except ValueError as exc:
                 latest = self.sessions.get(scope)
+                if latest.get("user_open_id") != session["user_open_id"] or latest.get("chat_type") != "p2p":
+                    raise UserTaskError("user_task_session_identity_changed") from exc
                 if latest.get("thread_id"):
                     return latest
                 raise UserTaskError("user_task_binding_changed") from exc

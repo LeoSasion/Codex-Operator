@@ -1741,6 +1741,8 @@ class SessionStore:
         host_id: str,
         project_id: str,
         operation_receipt: str,
+        expected_user_open_id: str | None = None,
+        expected_chat_type: str | None = None,
     ) -> dict[str, Any]:
         """CAS one inspected Desktop task into the active scope binding.
 
@@ -1754,6 +1756,11 @@ class SessionStore:
         candidate_host = host_id.strip()
         candidate_project = project_id.strip()
         receipt = operation_receipt.strip()
+        if ((expected_user_open_id is None) != (expected_chat_type is None)
+                or expected_user_open_id is not None and (
+                    not isinstance(expected_user_open_id, str) or not expected_user_open_id
+                    or not isinstance(expected_chat_type, str) or not expected_chat_type)):
+            raise ValueError("binding session identity must be complete")
         if not candidate or len(candidate) > 200:
             raise ValueError("thread_id is required and must be bounded")
         if not candidate_host or len(candidate_host) > 256:
@@ -1780,6 +1787,10 @@ class SessionStore:
             had_session = scope in self._sessions
             original = dict(self._sessions.get(scope, {}))
             current = dict(original)
+            if expected_user_open_id is not None and (
+                    current.get("user_open_id") != expected_user_open_id
+                    or current.get("chat_type") != expected_chat_type):
+                raise ValueError("session identity changed after the registration snapshot")
             existing_receipt = str(
                 current.get("binding_operation_receipt") or ""
             ).strip()

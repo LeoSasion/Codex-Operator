@@ -11,6 +11,10 @@ param(
     [switch]$Json
 )
 $ErrorActionPreference = 'Stop'
+# The pinned Python helper emits UTF-8 JSON. A redirected hidden PowerShell
+# process can otherwise consume its closing quote through a legacy code page.
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 $entryStage = 'request'
 $entryReason = 'web_entry_invalid_request'
 $profileState = 'unknown'

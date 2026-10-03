@@ -124,9 +124,13 @@ def service(state, port, *, stop=False, expected=None):
 
 
 def inspect(project, config, port):
-    migration = project/'.codex/operator-entry-migration/journal.json'
-    if migration.exists():
+    migration_root = project/'.codex/operator-entry-migration'
+    migration = migration_root/'journal.json'
+    if _unified_artifact_present(migration_root):
         from operator_web_service import checked_path, read_json
+        checked_path(migration_root, directory=True)
+        if not _unified_artifact_present(migration):
+            raise ValueError('restore_separate_desktop_entry_migration_before_uninstall')
         checked_path(migration)
         record = read_json(migration)
         if (record.get('scope') != 'desktop_entry_only' or record.get('project') != str(project)

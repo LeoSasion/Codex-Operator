@@ -12,16 +12,23 @@ _prepare_test_imports(_OPERATOR_PLUGIN_ROOT)
 
 import asyncio
 from copy import deepcopy
+import hashlib
 import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from test_responses_tools import ROUTE
 from test_responses_events import events_for, wire
-from operator_responses_eval import EXPECTED, SOURCE, STOP_CASES, Fixture, evaluate, isolated_environment, verify_final_message, prompt_for, json_output_summary, cancellation_observed, parse_cli_version
+import operator_responses_eval as evaluator_module
+from operator_responses_eval import (
+    EXPECTED, SOURCE, STOP_CASES, Fixture, evaluate, isolated_environment, verify_final_message,
+    prompt_for, json_output_summary, cancellation_observed, parse_cli_version,
+    collect_child, child_output_observation,
+)
 from operator_core.responses_tool_adapter import dumps, tool_alias
 
 
@@ -172,6 +179,190 @@ class EvalFixtureTests(unittest.TestCase):
             path.write_bytes(b"\xff")
             with self.assertRaises(UnicodeDecodeError):
                 verify_final_message(path, "TOKEN")
+
+
+class ObservedStreamReader(asyncio.StreamReader):
+    """Exercise real in-memory streams and observe reads without another consumer."""
+    def __init__(self):
+        super().__init__()
+        self.read_calls = self.active_reads = self.max_active_reads = 0
+        self.data_observed = asyncio.Event()
+
+    async def read(self, size):
+        self.read_calls += 1
+        self.active_reads += 1
+        self.max_active_reads = max(self.max_active_reads, self.active_reads)
+        try:
+            value = await super().read(size)
+            if value:
+                self.data_observed.set()
+            return value
+        finally:
+            self.active_reads -= 1
+
+
+def observed_reader(data=b"", *, eof=False):
+    reader = ObservedStreamReader()
+    if data:
+        reader.feed_data(data)
+    if eof:
+        reader.feed_eof()
+    return reader
+
+
+class FixtureChild:
+    """Process boundary fixture only; never starts a native executable."""
+    def __init__(self, stdout, stderr, *, exited=False):
+        self.stdout, self.stderr = stdout, stderr
+        self.returncode = 0 if exited else None
+        self.kill_calls = 0
+        self.exit = asyncio.Event()
+        if exited:
+            self.exit.set()
+
+    async def wait(self):
+        await self.exit.wait()
+        return self.returncode
+
+    def kill(self):
+        self.kill_calls += 1
+        self.returncode = -9
+        self.exit.set()
+
+
+class FixtureEvaluationRouter:
+    def __init__(self, registry, token):
+        self.registry, self.last_failure, self.prefix = registry, None, "/fixture"
+        self.metrics = SimpleNamespace(stages={}, snapshot=lambda: {})
+
+    def app(self):
+        return SimpleNamespace(middlewares=[])
+
+
+class FixtureEvaluationRunner:
+    def __init__(self, *args, **kwargs):
+        self.addresses = [("127.0.0.1", 1)]
+
+    async def setup(self):
+        pass
+
+    async def cleanup(self):
+        pass
+
+
+class FixtureEvaluationSite:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def start(self):
+        pass
+
+
+class CliOutputObservationTests(unittest.IsolatedAsyncioTestCase):
+    def assert_summary(self, observation, name, data, complete):
+        self.assertEqual(observation[name]["observed_bytes"], len(data))
+        self.assertEqual(observation[name]["observed_prefix_sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(observation[name]["complete"], complete)
+
+    async def timeout_after_data(self, child, observation):
+        task = asyncio.create_task(collect_child(child, observation=observation))
+        await asyncio.wait_for(asyncio.gather(child.stdout.data_observed.wait(),
+                                             child.stderr.data_observed.wait()), 1)
+        with self.assertRaises(asyncio.TimeoutError):
+            await asyncio.wait_for(task, 0.01)
+
+    async def evaluate_without_process_or_service(self, case, child):
+        from aiohttp import web
+        import operator_core.model_router as router_module
+        async def spawn(*args, **kwargs):
+            return child
+        with patch.object(evaluator_module, "preflight", return_value=None), \
+             patch.object(evaluator_module.subprocess, "run", return_value=SimpleNamespace(
+                 stdout=b"codex-cli 0.160.0\n", returncode=0)), \
+             patch.object(evaluator_module.asyncio, "create_subprocess_exec", spawn), \
+             patch.object(router_module, "ModelRouter", FixtureEvaluationRouter), \
+             patch.object(web, "AppRunner", FixtureEvaluationRunner), \
+             patch.object(web, "TCPSite", FixtureEvaluationSite):
+            return await evaluate(deepcopy(ROUTE), case, Path("fixture-never-executed.exe"), timeout=0.03)
+
+    async def test_timeout_retains_bounded_hashes_without_second_stream_reader(self):
+        observation = child_output_observation()
+        child = FixtureChild(observed_reader(b"PRIVATE_STDOUT"), observed_reader(b"PRIVATE_STDERR"))
+        await self.timeout_after_data(child, observation)
+        self.assert_summary(observation, "stdout", b"PRIVATE_STDOUT", False)
+        self.assert_summary(observation, "stderr", b"PRIVATE_STDERR", False)
+        reads = (child.stdout.read_calls, child.stderr.read_calls)
+        child.kill()
+        await child.wait()
+        await asyncio.sleep(0)
+        self.assertEqual(reads, (child.stdout.read_calls, child.stderr.read_calls))
+        self.assertEqual((child.stdout.max_active_reads, child.stderr.max_active_reads), (1, 1))
+        self.assertNotIn("PRIVATE_", json.dumps(observation))
+
+    async def test_eof_complete_is_independent_of_other_stream_and_process_exit(self):
+        observation = child_output_observation()
+        child = FixtureChild(observed_reader(eof=True), observed_reader(b"partial"))
+        task = asyncio.create_task(collect_child(child, observation=observation))
+        await asyncio.wait_for(child.stderr.data_observed.wait(), 1)
+        with self.assertRaises(asyncio.TimeoutError):
+            await asyncio.wait_for(task, 0.01)
+        self.assert_summary(observation, "stdout", b"", True)
+        self.assert_summary(observation, "stderr", b"partial", False)
+        self.assertIsNone(child.returncode)
+
+    async def test_success_preserves_raw_bytes_and_existing_tuple_interface(self):
+        values = (b" \r\n\xffstdout\n", b"\x00stderr\r\n")
+        observation = child_output_observation()
+        child = FixtureChild(observed_reader(values[0], eof=True), observed_reader(values[1], eof=True), exited=True)
+        self.assertEqual(await collect_child(child, observation=observation), values)
+        self.assert_summary(observation, "stdout", values[0], True)
+        self.assert_summary(observation, "stderr", values[1], True)
+        other = FixtureChild(observed_reader(b"a", eof=True), observed_reader(b"b", eof=True), exited=True)
+        self.assertEqual(await collect_child(other), (b"a", b"b"))
+
+    async def test_16_MiB_boundary_rejects_next_byte_without_expanding_diagnostics(self):
+        from operator_core.responses_capabilities import RouterError
+        raw = b"x" * (16 * 1024 * 1024)
+        observation = child_output_observation()
+        child = FixtureChild(observed_reader(raw, eof=True), observed_reader(eof=True), exited=True)
+        self.assertEqual(await collect_child(child, observation=observation), (raw, b""))
+        self.assert_summary(observation, "stdout", raw, True)
+        overflow = child_output_observation()
+        child = FixtureChild(observed_reader(raw + b"y", eof=True), observed_reader(eof=True), exited=True)
+        with self.assertRaisesRegex(RouterError, "evaluation_cli_output_too_large"):
+            await collect_child(child, observation=overflow)
+        self.assert_summary(overflow, "stdout", raw, False)
+        self.assertTrue(overflow["stdout"]["output_limit_exceeded"])
+
+    async def test_reader_failure_preserves_peer_observation_and_cancels_pending_readers(self):
+        observation = child_output_observation()
+        child = FixtureChild(observed_reader(b"observed"), observed_reader(b"other"))
+        task = asyncio.create_task(collect_child(child, observation=observation))
+        await asyncio.wait_for(asyncio.gather(child.stdout.data_observed.wait(),
+                                             child.stderr.data_observed.wait()), 1)
+        child.stdout.set_exception(OSError("synthetic read failure"))
+        with self.assertRaises(OSError):
+            await task
+        self.assert_summary(observation, "stdout", b"observed", False)
+        self.assert_summary(observation, "stderr", b"other", False)
+        self.assertEqual((child.stdout.active_reads, child.stderr.active_reads), (0, 0))
+
+    async def test_evaluate_timeout_keeps_failure_and_budget_and_records_actual_postkill_exit(self):
+        child = FixtureChild(observed_reader(b"observed-out"), observed_reader(b"observed-err"))
+        report = await self.evaluate_without_process_or_service("cli_nested", child)
+        self.assertEqual((report["status"], report["error_category"], report["exit_code"]), ("failed", "timeout", -9))
+        self.assertEqual(report["cli_process"], {"started": True, "kill_requested_by_harness": True, "exit_observed": True})
+        self.assertEqual((report["requests"], report["upstream_dispatch_attempts"], report["request_limit"]), (0, 0, 2))
+        self.assert_summary(report["cli_output"], "stdout", b"observed-out", False)
+        self.assert_summary(report["cli_output"], "stderr", b"observed-err", False)
+        self.assertEqual(child.kill_calls, 1)
+
+    async def test_cancel_case_timeout_never_becomes_successful_cancellation(self):
+        child = FixtureChild(observed_reader(b"observed"), observed_reader())
+        report = await self.evaluate_without_process_or_service("cli_cancel", child)
+        self.assertEqual((report["status"], report["error_category"], report["exit_code"]), ("failed", "timeout", -9))
+        self.assertFalse(report.get("cancel_observed", False))
+        self.assertEqual((report["requests"], report["upstream_dispatch_attempts"], report["request_limit"]), (0, 0, 1))
 
 
 @unittest.skipUnless(os.environ.get("CODEX_OPERATOR_TEST_CLI"), "explicit current Desktop CLI required")

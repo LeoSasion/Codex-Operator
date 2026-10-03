@@ -7,6 +7,75 @@ counts refer to their individual runs; the current source must be checked with
 the [test instructions](testing.md). A later source-only pass never changes an
 earlier live-task result or proves that installed services were updated.
 
+2026-10-04 follow-up candidate:
+
+- The first hidden frozen regression ran 1759 Python tests with no assertion failures,
+  two test-harness errors and six conditional skips; all 157 Node tests passed. Strict
+  UTF-8 readers rejected CP936 PowerShell error formatting in two legacy-pair cases.
+  A third launch-rejection case appeared successful without checking its failed stderr
+  reader. Independent byte captures preserved the original nonzero exits, fixed
+  rejection reasons and unchanged protected files. The test bootstraps now explicitly
+  select UTF-8, and launch rejection requires an actual captured nonempty stderr string.
+  This failed full run remains retained; the corrected source requires a new full run.
+- CLI timeout diagnostics now retain bounded consumed-stream prefix counts, SHA-256,
+  EOF and overflow observations, plus the actual process exit and harness kill request.
+  They do not reconstruct lost output, reread a stream, enlarge the 16 MiB bound,
+  change request budgets or turn a timeout into success. Synthetic cleanup observations
+  do not establish real Windows child cleanup or explain an earlier wait.
+- New independent model cases retain separate stages: the custom-source case failed;
+  a four-part synthetic-result case returned the exact marker without execution; two
+  freeform-patch cases returned exact original patch bytes, but native writing failed
+  in one and completion timed out with missing exit/output evidence in the other.
+  The first fixture's work directory was beneath a private TemporaryDirectory; its
+  original ACL was not observed. The second used normal work inheritance and a private
+  home. Native capability setup changed ACL entries, but no actual worker token or
+  denial established the wait's cause. No failed request was replayed or reclassified.
+
+2026-10-03 remaining-work candidate:
+
+- Six remaining workstreams are being completed after the owner requested all of them.
+  Sixteen old isolated acceptance chats were archived once through the native API, six
+  key chats remain active, and every history file stayed byte-identical. The extension
+  exited normally; its request-free router and Web service stopped once each, while
+  the original native Desktop and native configuration were preserved.
+- Task registration now validates sender/private-chat identity after task creation and
+  inside the final binding CAS, including a concurrent explicit binding. Oversized
+  project grants are rejected before profile/database/directory writes. An existing
+  legacy entry migration directory without its journal blocks uninstall. The complete
+  four affected modules initially passed 119 tests with no skips; eleven separate restoration,
+  interrupted-transaction and later-user-edit controls also passed.
+  Independent review found that revocation's default JSON spaces expanded a valid 16 KiB
+  grant beyond the read bound. Revocation now encodes and checks compact JSON before
+  backup/temporary writes, preserving originals and later edits. The next complete
+  four-module run passed 122 tests without skips, including exact-bound idempotent revoke.
+- Explicit Web start observes and binds only its exact late-ready generation under
+  one lock, with no second spawn. Dependency I/O is followed by fresh source/settings,
+  profile/current-record and fixed-connection checks before any launch journal. The
+  direct hidden PowerShell entry explicitly decodes UTF-8 helper JSON. Its complete
+  eight-module regression passed 172 tests with one unavailable-symlink skip, and a
+  separate hidden-entry run passed all 18 tests. Prior CP936 failures remain retained.
+- Read-only approval verification supports the current CLI 0.160 granular policy and
+  native item types. A real allow/deny gate needs identity-paired original native RPC
+  evidence and execution/denial terminal evidence. Non-null subcommand approval IDs
+  and session-root grants do not establish single-action approval. Twenty-four verifier
+  tests passed; the private summary observer's CRLF mismatch remains a separate failure,
+  independently reviewed against its complete original test log without rerunning.
+- A new Huihui custom-source probe failed once with
+  `completed_response_without_message_or_tool`; no source execution or second-step result
+  delivery occurred. The current native standalone apply_patch grammar was observed in
+  a zero-model CLI fixture and rejected by the older adapter. Its explicit registered
+  codec now admits only an explicitly registered bare apply_patch with the complete
+  observed Windows CLI 0.160 grammar. Actual nonempty input stays verbatim under the
+  existing 2 MiB bound; unknown/changed grammar and other names/namespaces remain rejected.
+  All 51 tool-adapter tests passed. No history codec or active registry was broadened.
+  A new live case remains separate; ordinary command-based file edits do not establish
+  either freeform-patch or custom-exec fidelity.
+- Complete frozen regression, runtime deployment, the next service generation, paired
+  entry refresh and restored current-window acceptance remain separate pending gates
+  at this candidate stage. A second real Channels account is still required; the supplied
+  name resolves to the existing owner, whose exact binding is preserved. No new-user,
+  untested-model/token-capacity or missing legacy first-install gate is inferred.
+
 2026-10-03 second official-update repair candidate:
 
 - Current Desktop product 26.930.31730 / Windows package 26.930.3930.0 uses CLI 0.160.0.

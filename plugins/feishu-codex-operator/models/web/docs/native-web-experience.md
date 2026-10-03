@@ -4,6 +4,21 @@ Current guidance as of 2026-10-03. Codex-Operator has two areas: Channels and Mo
 
 ## Read first
 
+2026-10-03 remaining-work follow-up: old isolated acceptance chats may be archived
+through their exact native home/task identities, preserving complete history and key
+cases. Never interpret a cached visible list as failed archive or repeat the action.
+The extension can exit normally while the original native Desktop keeps running.
+Explicit Web start owns one locked launch/reuse plus bounded observations of that
+same record; late-ready binding never requires a second launch. Recheck all source,
+settings/profile/current-record snapshots and fixed connection after dependency I/O,
+before the first launch journal. Read-only status still cannot persist a binding.
+Hidden direct PowerShell entry must decode its pinned UTF-8 helper output explicitly;
+a helper exit zero or a saved profile does not make corrupted JSON a valid result.
+GUI entry-open has no JSON stdout contract. Separate its shell result from exact
+process-birth, launch-journal and current-window evidence. Preserve the old observer
+failures and unattributed configuration drift. Candidate source, installed bytes and
+new live acceptance remain distinct; see the current conversation plan.
+
 2026-10-03 second official-update review: Desktop product 26.930.31730 / Windows package
 26.930.3930.0 uses CLI 0.160.0. Native configuration remains on the official direct route;
 before the maintenance recorded below, the isolated entry still bound 26.930.2377.0.

@@ -1,5 +1,10 @@
 # Initialization and safe removal
 
+An existing legacy entry-migration directory without its ownership journal blocks
+removal before any writes, as do linked or ambiguous migration paths. A retained
+entry-only journal cannot establish first-install runtime/Hook/rule ownership.
+Preserve the originals and resolve that separate entry transaction before teardown.
+
 ## Desktop entry pair
 
 Installations offer the two names requested on 2026-09-30. Legacy shared-home

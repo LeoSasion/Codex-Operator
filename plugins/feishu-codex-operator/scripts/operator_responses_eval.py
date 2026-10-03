@@ -236,15 +236,34 @@ def isolated_environment(home, *, terminal_shell=None):
     return environment
 
 
-async def collect_child(child):
-    async def bounded(stream):
+def child_output_observation():
+    """Bounded consumed prefixes only; EOF is independent of process exit."""
+    return {"scope": "bounded_observed_stream_prefix_not_complete_output",
+            **{name: {"observed_bytes": 0,
+                      "observed_prefix_sha256": hashlib.sha256(b"").hexdigest(),
+                      "complete": False, "output_limit_exceeded": False}
+               for name in ("stdout", "stderr")}}
+
+
+async def collect_child(child, *, observation=None):
+    observation = child_output_observation() if observation is None else observation
+    async def bounded(stream, name):
         data = bytearray()
-        while chunk := await stream.read(65536):
+        summary, hasher = observation[name], hashlib.sha256()
+        while True:
+            chunk = await stream.read(65536)
+            if not chunk:
+                summary["complete"] = True
+                return bytes(data)
             data.extend(chunk)
             if len(data) > 16 * 1024 * 1024:
+                # The rejected chunk is not part of this bounded diagnostic prefix.
+                summary["output_limit_exceeded"] = True
                 raise RouterError("evaluation_cli_output_too_large")
-        return bytes(data)
-    tasks = [asyncio.create_task(bounded(child.stdout)), asyncio.create_task(bounded(child.stderr)),
+            hasher.update(chunk)
+            summary.update(observed_bytes=len(data), observed_prefix_sha256=hasher.hexdigest())
+    tasks = [asyncio.create_task(bounded(child.stdout, "stdout")),
+             asyncio.create_task(bounded(child.stderr, "stderr")),
              asyncio.create_task(child.wait())]
     try:
         stdout, stderr, _ = await asyncio.gather(*tasks)
@@ -391,6 +410,7 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", 0).start()
     child, temporary, communication, begin = None, None, None, time.perf_counter()
+    child_output, child_kill_requested = child_output_observation(), False
     report = {"case": case, "status": "failed", "synthetic_only": True, "cli_version": version,
               "final_text_policy": final_text_policy, "codex_tool_mode": tool_mode,
               "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -457,7 +477,7 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
             env=isolated_environment(home, terminal_shell=terminal_shell),
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             creationflags=0x08000000 if os.name == "nt" else 0)
-        communication = asyncio.create_task(collect_child(child))
+        communication = asyncio.create_task(collect_child(child, observation=child_output))
         if case == "cli_cancel":
             await asyncio.wait_for(admitted.wait(), timeout=min(timeout, 30))
             # A buffered JSON endpoint may deliver headers only after generation.
@@ -517,11 +537,17 @@ async def evaluate(row, case, executable, *, timeout=90, final_text_policy="exac
         report["error_category"] = "timeout" if isinstance(exc, asyncio.TimeoutError) else "harness_error"
     finally:
         if child is not None and child.returncode is None:
+            child_kill_requested = True
             child.kill()
             await child.wait()
         if communication is not None:
             communication.cancel()
             await asyncio.gather(communication, return_exceptions=True)
+        if child is not None:
+            report["exit_code"] = child.returncode
+        report.update(cli_output=child_output, cli_process={"started": child is not None,
+            "kill_requested_by_harness": child_kill_requested,
+            "exit_observed": child is not None and child.returncode is not None})
         await runner.cleanup()
         if terminal is not None:
             report.update(terminal.report())

@@ -31,6 +31,7 @@ $digest=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256 -ErrorAction
             driver = directory / 'parent.ps1'
             driver.write_text('''param([string]$Source,[string]$Fixture,[string]$Directory)
 $ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($Source,[ref]$tokens,[ref]$errors)
 if ($errors.Count) {throw 'invalid source'}
@@ -48,6 +49,8 @@ Start-DetachedLaunchHelper '0123456789abcdef01234567'
                 capture_output=True, text=True, encoding='utf-8', timeout=20)
             output = directory / 'result.json'
             if invalid_directory:
+                self.assertIsInstance(result.stderr, str)
+                self.assertTrue(result.stderr.strip(), "creation failure stderr was empty")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(output.exists())
                 return

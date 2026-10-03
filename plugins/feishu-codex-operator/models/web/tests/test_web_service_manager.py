@@ -44,6 +44,7 @@ state=Path(a.state);state.mkdir(mode=0o700)
 ident=secrets.token_hex(16);token=secrets.token_urlsafe(32)
 details={'instance':ident,'state':'ready','needs_assistance':False,
  'browser':{'active':False},'transport':{'active_turn':None,'last_turn':None}}
+if variant=='preparing':details['state']='preparing'
 if variant=='large-status':
  details['browser']['events']=[{'kind':'public_turn_state','counts':[0]*150} for _ in range(64)]
  details['padding']=''
@@ -69,7 +70,10 @@ write('session.json',{'version':1,'instance':ident,'pid':os.getpid(),
  'expires_at':None,'mode':'mcp_v1' if (root/'route-enabled').exists() else 'text_only'})
 write('status.json',details)
 assists=0
+ready_at=time.monotonic()+.4
 while True:
+ if variant=='preparing' and time.monotonic()>=ready_at:
+  details['state']='ready';write('status.json',details);variant='normal'
  if (root/'exit-now').exists():break
  assist=state/'assist.json'
  if assist.exists():
@@ -237,6 +241,219 @@ class WebServiceManagerTests(unittest.TestCase):
         self.assertEqual(manager.status(self.profile)['status'],'ready')
         self.assertTrue(manager.start(self.profile)['reused'])
         self.assertEqual(len(self.children),1)
+
+    def test_explicit_start_finishes_late_ready_binding_with_one_child(self):
+        (self.root / 'route-enabled').write_text('synthetic tools service')
+        (self.root / 'variant').write_text('slow')
+        self.configured()
+        originals = (self.settings.read_bytes(), (self.profile / 'profile.json').read_bytes())
+        with patch.object(manager, 'START_OBSERVATION_SECONDS', 0), \
+                patch.object(manager, 'status') as status:
+            result = manager.start_ready(self.profile, observation_seconds=5)
+            status.assert_not_called()
+        self.assertEqual(result['status'], 'ready')
+        self.assertFalse(result['reused']); self.assertTrue(result['session_bound'])
+        self.assertEqual(self.spawn_mock.call_count, 1)
+        self.assertEqual((self.root / 'launches').read_text().splitlines(), ['launched'])
+        record = manager.current_record(self.profile)
+        session = manager.read_json(self.state() / 'session.json')
+        self.assertEqual(record['phase'], 'running')
+        self.assertEqual(record['instance'], session['instance'])
+        self.assertEqual(record['session_sha256'], manager.file_digest(self.state() / 'session.json'))
+        self.assertEqual(record['worker'], manager.process_identity(session['pid']))
+        self.assertNotIn(session['token'], json.dumps(result))
+        preview = manager.route_preview(self.profile)
+        self.assertTrue(manager.resolve_routes(self.profile, preview, require_bound_session=True))
+        self.assertEqual(originals, (self.settings.read_bytes(), (self.profile / 'profile.json').read_bytes()))
+        self.assertFalse((self.state() / 'assist.json').exists())
+
+    def test_explicit_readiness_deadline_leaves_the_single_launch_unbound(self):
+        (self.root / 'variant').write_text('slow')
+        self.configured()
+        with patch.object(manager, 'START_OBSERVATION_SECONDS', 0):
+            result = manager.start_ready(self.profile, observation_seconds=0)
+        self.assertEqual(result['status'], 'starting')
+        self.assertEqual(self.spawn_mock.call_count, 1)
+        record = manager.current_record(self.profile)
+        self.assertEqual(record['phase'], 'starting')
+        self.assertNotIn('session_sha256', record)
+        self.wait_for(lambda: (self.state() / 'status.json').is_file())
+        before = self.snapshot()
+        self.assertFalse(manager.status(self.profile)['session_bound'])
+        self.assertEqual(self.snapshot(), before)
+
+    def test_explicit_start_waits_for_preparing_worker_without_new_generation(self):
+        (self.root / 'variant').write_text('preparing')
+        self.configured()
+        observations = []
+        observe = manager.observe
+        def observed(profile, config, record):
+            result, live = observe(profile, config, record)
+            observations.append((result['status'], record['attempt']))
+            return result, live
+        with patch.object(manager, 'observe', side_effect=observed), \
+                patch.object(manager, 'start') as repeat:
+            result = manager.start_ready(self.profile)
+            repeat.assert_not_called()
+        self.assertEqual(result['status'], 'ready')
+        self.assertTrue(result['session_bound'])
+        self.assertIn('preparing', [state for state, _ in observations])
+        self.assertEqual({attempt for _, attempt in observations},
+            {manager.current_record(self.profile)['attempt']})
+        self.assertEqual(self.spawn_mock.call_count, 1)
+
+    def test_readiness_observation_rejects_replaced_record_without_binding_or_launch(self):
+        (self.root / 'variant').write_text('slow')
+        self.configured()
+        manager.start(self.profile, observation_seconds=0)
+        record = manager.current_record(self.profile)
+        changed = {**record, 'phase': 'uncertain'}
+        def changed_observation(*_):
+            manager.save_record(self.profile, changed)
+            return {'status': 'ready', 'active': False}, object()
+        with patch.object(manager, '_start_locked', return_value=({'status':'starting','reused':False}, record)), \
+                patch.object(manager, 'observe', side_effect=changed_observation), \
+                patch.object(manager, 'bind_session') as bind, \
+                patch.object(manager, 'spawn_child') as spawn:
+            with self.assertRaisesRegex(ValueError, 'start_identity_changed'):
+                manager.start_ready(self.profile, observation_seconds=1)
+            bind.assert_not_called(); spawn.assert_not_called()
+        self.assertEqual(manager.current_record(self.profile), changed)
+
+    def test_readiness_observation_rejects_settings_change_without_binding(self):
+        (self.root / 'variant').write_text('slow')
+        self.configured()
+        manager.start(self.profile, observation_seconds=0)
+        record = manager.current_record(self.profile)
+        changed = self.settings.read_bytes() + b' '
+        def changed_observation(*_):
+            self.settings.write_bytes(changed)
+            return {'status': 'ready', 'active': False}, object()
+        with patch.object(manager, '_start_locked', return_value=({'status':'starting','reused':False}, record)), \
+                patch.object(manager, 'observe', side_effect=changed_observation), \
+                patch.object(manager, 'bind_session') as bind, \
+                patch.object(manager, 'spawn_child') as spawn:
+            with self.assertRaisesRegex(ValueError, 'settings_changed'):
+                manager.start_ready(self.profile, observation_seconds=1)
+            bind.assert_not_called(); spawn.assert_not_called()
+        self.assertEqual(self.settings.read_bytes(), changed)
+        self.assertEqual(manager.current_record(self.profile), record)
+
+    def test_readiness_does_not_bind_active_or_assistance_observations(self):
+        (self.root / 'variant').write_text('slow')
+        self.configured()
+        manager.start(self.profile, observation_seconds=0)
+        record = manager.current_record(self.profile)
+        for observed in ({'status':'ready','active':True}, {'status':'assistance','active':False}):
+            with self.subTest(observed=observed), \
+                    patch.object(manager, '_start_locked', return_value=({'status':'starting','reused':False}, record)), \
+                    patch.object(manager, 'observe', return_value=(observed, object())), \
+                    patch.object(manager, 'bind_session') as bind, \
+                    patch.object(manager, 'spawn_child') as spawn:
+                result = manager.start_ready(self.profile, observation_seconds=1)
+                self.assertEqual(result, {**observed, 'reused':False})
+                bind.assert_not_called(); spawn.assert_not_called()
+        self.assertEqual(manager.current_record(self.profile), record)
+
+    def test_invalid_readiness_window_cannot_launch_or_write(self):
+        self.configured()
+        before = self.snapshot()
+        for value in (True, -1, 21, float('nan'), float('inf'), '5'):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'observation_invalid'):
+                manager.start_ready(self.profile, observation_seconds=value)
+        self.spawn_mock.assert_not_called()
+        self.assertEqual(self.snapshot(), before)
+
+    def test_readiness_failures_keep_fixed_public_codes_only(self):
+        from operator_core.responses_capabilities import RouterError
+        for code in ('web_manager_start_identity_changed', 'web_manager_start_observation_invalid'):
+            report = manager.error_result(RouterError(code))
+            self.assertEqual(report['code'], code)
+            self.assertEqual(set(report), {'status', 'code', 'summary'})
+            self.assertEqual(report['status'], 'unavailable')
+        self.assertEqual(manager.error_result(ValueError('web_manager_start_identity_changed PRIVATE'))['code'],
+            'web_manager_unavailable_no_retry')
+
+    def test_initial_start_preserves_later_record_edit_when_binding_is_rejected(self):
+        self.configured()
+        observe = manager.observe
+        changed = None
+        def changed_observation(profile, config, record):
+            nonlocal changed
+            result, live = observe(profile, config, record)
+            if live is not None:
+                changed = {**record, 'phase': 'uncertain', 'review_required': True}
+                manager.save_record(profile, changed)
+            return result, live
+        with patch.object(manager, 'observe', side_effect=changed_observation), \
+                patch.object(manager, 'bind_session') as bind:
+            with self.assertRaisesRegex(ValueError, 'start_identity_changed'):
+                manager.start_ready(self.profile)
+            bind.assert_not_called()
+        self.assertIsNotNone(changed)
+        self.assertEqual(manager.current_record(self.profile), changed)
+        self.assertEqual(self.spawn_mock.call_count, 1)
+
+    def dependency_change_rejected(self, change, code):
+        self.configured()
+        with patch.object(manager, 'check_python_dependencies', side_effect=change) as dependencies, \
+                patch.object(manager, 'save_record') as save, \
+                patch.object(manager, 'spawn_child') as spawn:
+            with self.assertRaisesRegex(ValueError, code):
+                manager.start_ready(self.profile)
+            dependencies.assert_called_once(); save.assert_not_called(); spawn.assert_not_called()
+
+    def test_dependency_io_settings_change_rejects_before_launch_journal(self):
+        original = self.settings.read_bytes()
+        changed = original + b' '
+        self.dependency_change_rejected(lambda *_: self.settings.write_bytes(changed), 'settings_changed')
+        self.assertEqual(self.settings.read_bytes(), changed)
+        self.assertIsNone(manager.current_record(self.profile))
+
+    def test_dependency_io_source_change_rejects_before_launch_journal(self):
+        original = self.fixture.read_bytes()
+        changed = original + b'\n# later source edit retained\n'
+        self.dependency_change_rejected(lambda *_: self.fixture.write_bytes(changed), 'runtime_changed')
+        self.assertEqual(self.fixture.read_bytes(), changed)
+        self.assertIsNone(manager.current_record(self.profile))
+
+    def test_dependency_io_profile_change_rejects_before_launch_journal(self):
+        changed = None
+        def replace_profile(*_):
+            nonlocal changed
+            changed = manager.read_json(self.profile / 'profile.json')
+            changed['runtime']['python_sha256'] = '0' * 64
+            manager.service.write_json(self.profile / 'profile.json', changed)
+        self.dependency_change_rejected(replace_profile, 'runtime_changed')
+        self.assertEqual(manager.read_json(self.profile / 'profile.json'), changed)
+        self.assertIsNone(manager.current_record(self.profile))
+
+    def test_dependency_io_pointer_change_rejects_without_overwriting_new_owner(self):
+        changed = None
+        def replace_pointer(*_):
+            nonlocal changed
+            changed = {'version':1, 'attempt':'f'*32, 'phase':'may_have_started',
+                'runtime':manager.read_json(self.profile / 'profile.json')['runtime']}
+            manager.service.write_json(self.profile / 'instances' / ('f'*32 + '.json'), changed)
+            manager.service.write_json(self.profile / 'current.json', {'version':1, 'attempt':'f'*32})
+        self.dependency_change_rejected(replace_pointer, 'start_identity_changed')
+        self.assertEqual(manager.current_record(self.profile), changed)
+        self.assertEqual(list((self.profile / 'instances').iterdir()),
+            [self.profile / 'instances' / ('f'*32 + '.json')])
+
+    def test_dependency_io_fixed_connection_occupation_rejects_before_launch_journal(self):
+        key = self.root / 'runtime-key'; key.write_text('sk-fixture-private-never-read')
+        value = json.loads(self.settings.read_bytes())
+        value.update(transport='mcp_v1', mcp={'mode':'openai_tunnel_v1',
+            'tunnel_id':'tunnel_'+'a'*32, 'tunnel_client':str(Path(sys.executable).resolve()),
+            'tunnel_client_sha256':manager.file_digest(Path(sys.executable).resolve()),
+            'api_key_file':str(key), 'binding_file':str(self.root/'connector.json')})
+        self.settings.write_text(json.dumps(value))
+        marker = self.root / ('active-tunnel_'+'a'*32+'.json')
+        changed = b'private later ownership record'
+        self.dependency_change_rejected(lambda *_: marker.write_bytes(changed), 'fixed_connection_in_use')
+        self.assertEqual(marker.read_bytes(), changed)
+        self.assertIsNone(manager.current_record(self.profile))
 
     def test_operation_lock_coalesces_another_start_without_spawn(self):
         self.configured()
@@ -604,7 +821,7 @@ class WebServiceManagerTests(unittest.TestCase):
         self.assertEqual(self.snapshot(),before)
         output=io.StringIO()
         with patch.object(sys,'argv',['operator_web_service','start','--profile',str(self.profile)]),\
-                patch.object(manager,'start',side_effect=OSError('sk-PRIVATE')),redirect_stdout(output):
+                patch.object(manager,'start_ready',side_effect=OSError('sk-PRIVATE')),redirect_stdout(output):
             self.assertEqual(manager.main(),1)
         self.assertNotIn('sk-PRIVATE',output.getvalue())
 

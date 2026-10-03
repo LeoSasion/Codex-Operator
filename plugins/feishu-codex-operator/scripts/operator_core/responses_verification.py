@@ -30,6 +30,19 @@ MAX_BYTES = 4 * 1024 * 1024
 HEX = re.compile(r"[a-f0-9]{64}")
 UUID = re.compile(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}")
 VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+_-]{0,79}")
+NATIVE_TOOL_ITEMS = frozenset({
+    "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall",
+    "collabAgentToolCall", "subAgentActivity", "webSearch", "imageView",
+    "imageGeneration", "sleep", "enteredReviewMode", "exitedReviewMode",
+})
+NATIVE_NON_TOOL_ITEMS = frozenset({
+    "userMessage", "hookPrompt", "agentMessage", "functionCallOutput", "plan",
+    "reasoning", "contextCompaction",
+})
+APPROVAL_METHODS = {
+    "item/commandExecution/requestApproval": "commandExecution",
+    "item/fileChange/requestApproval": "fileChange",
+}
 
 
 def verifier_digest():
@@ -78,11 +91,117 @@ def _read_regular(path):
     return raw
 
 
-def _observable_problems(case, artifact):
+def _valid_approval_policy(value):
+    if isinstance(value, str):
+        return value in {"on-request", "untrusted", "never"}
+    if not isinstance(value, dict) or set(value) != {"granular"}:
+        return False
+    granular = value["granular"]
+    required = {"rules", "sandbox_approval", "mcp_elicitations"}
+    optional = {"request_permissions", "skill_approval"}
+    return (isinstance(granular, dict) and required <= set(granular) <= required | optional
+            and all(type(v) is bool for v in granular.values()))
+
+
+def _approval_policy_can_prompt(value):
+    if isinstance(value, str):
+        return value in {"on-request", "untrusted"}
+    return value["granular"]["rules"] and value["granular"]["sandbox_approval"]
+
+
+def _rpc_id(value):
+    try:
+        return (type(value) is int and -(2 ** 63) <= value < 2 ** 63
+                or isinstance(value, str) and 0 < len(value.encode("utf-8")) <= 512)
+    except UnicodeError:
+        return False
+
+
+def _approval_problems(record, artifact, calls):
+    """Review an explicitly captured native request/response pair, not a claim.
+
+    The private turn artifact may retain complete RPC objects under the explicit
+    native_approval_pairs_v1 envelope. It is still reviewed local evidence, not
+    authentication or attestation, and never supplies a decision to a live task.
+    Missing historical captures stay missing; no pair is reconstructed from a
+    command, an assistant message or reviewer assertions.
+    """
+    evidence = artifact.get("operator_approval_evidence")
+    if evidence is None:
+        return ["native_approval_pair_required"]
+    if (not isinstance(evidence, dict) or set(evidence) != {"format", "pairs"}
+            or evidence["format"] != "native_approval_pairs_v1"
+            or not isinstance(evidence["pairs"], list) or len(evidence["pairs"]) != 1):
+        raise RouterError("invalid_verification_approval_evidence")
+    pair = evidence["pairs"][0]
+    if not isinstance(pair, dict) or set(pair) != {"request", "response"}:
+        raise RouterError("invalid_verification_approval_evidence")
+    request, response = pair["request"], pair["response"]
+    if (not isinstance(request, dict) or not isinstance(response, dict)
+            or not _rpc_id(request.get("id")) or not _rpc_id(response.get("id"))
+            or type(request["id"]) is not type(response["id"])
+            or request["id"] != response["id"] or "error" in response
+            or request.get("jsonrpc", "2.0") != "2.0"
+            or response.get("jsonrpc", "2.0") != "2.0"
+            or not isinstance(request.get("method"), str)
+            or request["method"] not in APPROVAL_METHODS
+            or not isinstance(request.get("params"), dict)
+            or not isinstance(response.get("result"), dict)
+            or set(response["result"]) != {"decision"}
+            or response["result"]["decision"] not in ("accept", "acceptForSession", "decline", "cancel")):
+        raise RouterError("invalid_verification_approval_evidence")
+    params, decision = request["params"], response["result"]["decision"]
+    if (params.get("threadId") != record["thread_id"]
+            or params.get("turnId") != record["turn_id"]
+            or not isinstance(params.get("itemId"), str) or not params["itemId"]
+            or type(params.get("startedAtMs")) is not int
+            or not 0 <= params["startedAtMs"] < 2 ** 63):
+        return ["native_approval_identity_mismatch"]
+    matched = [item for item in calls if item["id"] == params["itemId"]
+               and item["type"] == APPROVAL_METHODS[request["method"]]]
+    if len(matched) != 1:
+        return ["native_approval_item_required"]
+    item = matched[0]
+    if item["type"] == "commandExecution":
+        # A non-null approvalId can identify a subcommand or stdin callback;
+        # its parent itemId alone does not prove approval of the whole command.
+        if params.get("kind", "command") != "command" or params.get("approvalId") is not None:
+            return ["single_command_approval_required"]
+        # A command/cwd snapshot may be absent or null in the native protocol.
+        # A supplied snapshot must match verbatim; never infer or repair it.
+        if any(params.get(key) is not None and params[key] != item.get(key)
+               for key in ("command", "cwd")):
+            return ["native_approval_command_mismatch"]
+    elif params.get("grantRoot") is not None:
+        # A session-root grant is separate evidence, never a single file action.
+        return ["single_file_action_approval_required"]
+    if record["case"] == "desktop_approval_allow":
+        if decision != "accept":
+            return ["single_action_accept_required"]
+        if (artifact["status"] != "completed" or item.get("status") != "completed"
+                or (item["type"] == "commandExecution"
+                    and (type(item.get("exitCode")) is not int or item["exitCode"] != 0))
+                or (item["type"] == "fileChange"
+                    and (not isinstance(item.get("changes"), list) or not item["changes"]))):
+            return ["approved_action_completion_required"]
+    else:
+        if decision not in {"decline", "cancel"}:
+            return ["native_denial_decision_required"]
+        if (item.get("status") != "declined"
+                or item.get("exitCode") is not None or item.get("processId") is not None
+                or (decision == "cancel" and artifact["status"] != "interrupted")):
+            return ["declined_action_without_execution_required"]
+        if calls[-1] is not item:
+            return ["denied_action_must_be_last_tool"]
+    return []
+
+
+def _observable_problems(case, artifact, record):
     items = artifact['items']
-    if any(not isinstance(i, dict) for i in items):
+    if any(not isinstance(i, dict) or not isinstance(i.get('type'), str)
+           or i['type'] not in NATIVE_TOOL_ITEMS | NATIVE_NON_TOOL_ITEMS for i in items):
         raise RouterError('invalid_verification_turn_items')
-    calls = [i for i in items if i.get('type') in ('commandExecution', 'mcpToolCall', 'fileChange')]
+    calls = [i for i in items if i.get('type') in NATIVE_TOOL_ITEMS]
     commands = [i for i in calls if i.get('type') == 'commandExecution']
     if case == 'desktop_cancel':
         return [] if artifact['status'] == 'interrupted' else ['interrupted_turn_required']
@@ -104,6 +223,8 @@ def _observable_problems(case, artifact):
         failed = [i for i in calls if i.get('status') == 'failed']
         if not failed or calls[-1] is not failed[0]:
             return ['tool_error_must_be_last_tool']
+    if case in {'desktop_approval_allow', 'desktop_approval_deny'}:
+        return _approval_problems(record, artifact, calls)
     return []
 
 
@@ -146,7 +267,7 @@ def inspect_ledger(path, row, *, cli_version, desktop_version, model_sha256, pro
                 or any(not isinstance(record[k], str) or not UUID.fullmatch(record[k])
                        for k in ("thread_id", "turn_id"))
                 or record["context"] not in ("fresh", "reused", "guided")
-                or record["approval_policy"] not in ("on-request", "untrusted", "never")
+                or not _valid_approval_policy(record["approval_policy"])
                 or record["sandbox_mode"] not in ("workspace-write", "read-only", "danger-full-access")
                 or type(record["network_access"]) is not bool
                 or any(type(record[k]) is not int or record[k] < 0
@@ -182,10 +303,10 @@ def inspect_ledger(path, row, *, cli_version, desktop_version, model_sha256, pro
             reasons.append(record["status"])
         if not all(record["assertions"].values()):
             reasons.append("assertions_incomplete")
-        reasons.extend(_observable_problems(case, artifact))
+        reasons.extend(_observable_problems(case, artifact, record))
         if case in FRESH and record["context"] != "fresh":
             reasons.append("fresh_context_required")
-        if (record["approval_policy"] not in ("on-request", "untrusted")
+        if (not _approval_policy_can_prompt(record["approval_policy"])
                 or record["sandbox_mode"] != "workspace-write" or record["network_access"]
                 or record["request_retries"] or record["stream_retries"]):
             reasons.append("permission_or_retry_contract_not_met")
