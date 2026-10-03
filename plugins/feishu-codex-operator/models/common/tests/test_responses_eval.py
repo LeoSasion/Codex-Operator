@@ -271,7 +271,7 @@ class CliOutputObservationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(task, 0.01)
 
-    async def evaluate_without_process_or_service(self, case, child):
+    async def evaluate_without_process_or_service(self, case, child, *, row=None, terminal_shell=None):
         from aiohttp import web
         import operator_core.model_router as router_module
         async def spawn(*args, **kwargs):
@@ -283,7 +283,8 @@ class CliOutputObservationTests(unittest.IsolatedAsyncioTestCase):
              patch.object(router_module, "ModelRouter", FixtureEvaluationRouter), \
              patch.object(web, "AppRunner", FixtureEvaluationRunner), \
              patch.object(web, "TCPSite", FixtureEvaluationSite):
-            return await evaluate(deepcopy(ROUTE), case, Path("fixture-never-executed.exe"), timeout=0.03)
+            return await evaluate(deepcopy(ROUTE if row is None else row), case,
+                Path("fixture-never-executed.exe"), timeout=0.03, terminal_shell=terminal_shell)
 
     async def test_timeout_retains_bounded_hashes_without_second_stream_reader(self):
         observation = child_output_observation()
@@ -363,6 +364,296 @@ class CliOutputObservationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((report["status"], report["error_category"], report["exit_code"]), ("failed", "timeout", -9))
         self.assertFalse(report.get("cancel_observed", False))
         self.assertEqual((report["requests"], report["upstream_dispatch_attempts"], report["request_limit"]), (0, 0, 1))
+
+
+class CleanupFixtureChild(FixtureChild):
+    """Configurable in-memory process boundary; no native command is executed."""
+    def __init__(self, *, kill_mode="exit", wait_error=None, stdout=None):
+        super().__init__(stdout or observed_reader(b"observed-out"), observed_reader(b"observed-err"))
+        self.kill_mode, self.wait_error = kill_mode, wait_error
+
+    def kill(self):
+        self.kill_calls += 1
+        if self.kill_mode == "exit":
+            self.returncode = -9
+            self.exit.set()
+        elif self.kill_mode == "lookup_observed":
+            self.returncode = 0
+            self.exit.set()
+            raise ProcessLookupError("PRIVATE_PROCESS_LOOKUP")
+        elif self.kill_mode == "lookup_unknown":
+            raise ProcessLookupError("PRIVATE_PROCESS_LOOKUP")
+        elif self.kill_mode == "denied":
+            raise PermissionError("PRIVATE_KILL_DENIAL")
+        elif self.kill_mode == "wait_unknown":
+            self.exit.set()
+        elif self.kill_mode != "request_only":
+            raise AssertionError("invalid_fake_kill_mode")
+
+    async def wait(self):
+        await self.exit.wait()
+        if self.wait_error is not None:
+            raise self.wait_error
+        return 0 if self.returncode is None else self.returncode
+
+
+class DelayedCancelReader(ObservedStreamReader):
+    """One explicit release keeps this exceptional fake from leaking into teardown."""
+    def __init__(self):
+        super().__init__()
+        self.release = asyncio.Event()
+        self.feed_data(b"observed-delayed")
+
+    async def read(self, size):
+        try:
+            return await super().read(size)
+        except asyncio.CancelledError:
+            await self.release.wait()
+            return b""
+
+
+class CliCleanupTests(unittest.IsolatedAsyncioTestCase):
+    async def run_fixture(self, child, *, runner_error=None):
+        from unittest.mock import AsyncMock
+        cleanup = AsyncMock(side_effect=runner_error)
+        with patch.object(evaluator_module, "CLI_CLEANUP_TIMEOUT_SECONDS", 0.02), \
+             patch.object(FixtureEvaluationRunner, "cleanup", cleanup):
+            report = await CliOutputObservationTests.evaluate_without_process_or_service(self, "cli_nested", child)
+        self.assertEqual(cleanup.await_count, 1)
+        self.assertEqual((report["status"], report["error_category"], report["request_limit"]), ("failed", "timeout", 2))
+        self.assertEqual((report["requests"], report["upstream_dispatch_attempts"], report["configured_retry_count"]), (0, 0, 0))
+        self.assertNotIn("PRIVATE_", json.dumps(report))
+        if report.get("fixture_retained"):
+            paths = report["retained_fixture_paths"]
+            root, work = Path(paths["root"]), Path(paths["work"])
+            if work.parent != root and work.exists():
+                self.addCleanup(evaluator_module._remove_fixture_directory, work, work.parent)
+            self.addCleanup(evaluator_module._remove_fixture_directory, root, root.parent)
+        return report
+
+    async def test_successful_kill_records_observed_exit_and_keeps_timeout_failed(self):
+        child = CleanupFixtureChild()
+        report = await self.run_fixture(child)
+        self.assertEqual(report["exit_code"], -9)
+        self.assertEqual(report["cli_process"], {"started": True, "kill_requested_by_harness": True, "exit_observed": True})
+        self.assertEqual((report["cli_cleanup"]["kill_result"], report["cli_cleanup"]["wait_result"]), ("requested", "exit_observed"))
+        self.assertFalse(report["cli_cleanup"]["failed"])
+        self.assertFalse(report.get("fixture_retained", False))
+        self.assertEqual((child.stdout.active_reads, child.stderr.active_reads), (0, 0))
+
+    async def test_lookup_error_with_observed_exit_preserves_actual_code_and_failed_report(self):
+        report = await self.run_fixture(CleanupFixtureChild(kill_mode="lookup_observed"))
+        self.assertEqual(report["exit_code"], 0)
+        self.assertTrue(report["cli_process"]["exit_observed"])
+        self.assertEqual(report["cli_cleanup"]["kill_result"], "process_lookup_error")
+        self.assertTrue(report["cleanup_failed"])
+
+    async def test_lookup_error_without_exit_retains_unknown_and_fixture_after_gc(self):
+        import gc
+        report = await self.run_fixture(CleanupFixtureChild(kill_mode="lookup_unknown"))
+        self.assertIsNone(report["exit_code"])
+        self.assertFalse(report["cli_process"]["exit_observed"])
+        self.assertEqual(report["cli_cleanup"]["wait_result"], "timeout")
+        gc.collect()
+        self.assertTrue(all(Path(value).is_dir() for value in report["retained_fixture_paths"].values()))
+
+    async def test_os_error_denial_does_not_skip_output_runner_or_private_report(self):
+        report = await self.run_fixture(CleanupFixtureChild(kill_mode="denied"))
+        self.assertEqual(report["cli_cleanup"]["kill_result"], "os_error")
+        self.assertEqual(report["cli_cleanup"]["runner_result"], "completed")
+        self.assertTrue(report["fixture_retained"])
+        self.assertEqual(report["cli_output"]["stdout"]["observed_prefix_sha256"], hashlib.sha256(b"observed-out").hexdigest())
+
+    async def test_kill_request_without_exit_has_shared_bounded_wait_and_no_inferred_code(self):
+        import time
+        begin = time.monotonic()
+        report = await self.run_fixture(CleanupFixtureChild(kill_mode="request_only"))
+        self.assertLess(time.monotonic() - begin, 0.5)
+        self.assertIsNone(report["exit_code"])
+        self.assertTrue(report["cli_process"]["kill_requested_by_harness"])
+        self.assertFalse(report["cli_process"]["exit_observed"])
+        self.assertEqual(report["cli_cleanup"]["wait_result"], "timeout")
+
+    async def test_wait_value_without_observed_returncode_remains_unknown_and_failed(self):
+        report = await self.run_fixture(CleanupFixtureChild(kill_mode="wait_unknown"))
+        self.assertIsNone(report["exit_code"])
+        self.assertEqual(report["cli_cleanup"]["wait_result"], "exit_unobserved")
+        self.assertTrue(report["fixture_retained"])
+
+    async def test_wait_os_error_is_fixed_and_keeps_report_and_unknown_exit(self):
+        report = await self.run_fixture(CleanupFixtureChild(kill_mode="wait_unknown", wait_error=PermissionError("PRIVATE_WAIT_DENIAL")))
+        self.assertIsNone(report["exit_code"])
+        self.assertEqual(report["cli_cleanup"]["wait_result"], "os_error")
+        self.assertEqual(report["cli_cleanup"]["runner_result"], "completed")
+
+    async def test_wait_task_cancel_is_fixed_failure_and_does_not_drop_report(self):
+        report = await self.run_fixture(CleanupFixtureChild(kill_mode="wait_unknown", wait_error=asyncio.CancelledError()))
+        self.assertEqual(report["cli_cleanup"]["wait_result"], "cancelled")
+        self.assertIsNone(report["exit_code"])
+
+    async def test_pending_output_cancel_is_bounded_and_diagnostic_snapshot_cannot_change(self):
+        reader = DelayedCancelReader()
+        child = CleanupFixtureChild(stdout=reader)
+        try:
+            report = await self.run_fixture(child)
+            snapshot = deepcopy(report["cli_output"])
+            self.assertGreater(report["cli_cleanup"]["reader_pending_tasks"], 0)
+            self.assertTrue(report["fixture_retained"])
+            self.assertFalse(report["cli_output"]["stdout"]["complete"])
+        finally:
+            reader.release.set()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        self.assertEqual(report["cli_output"], snapshot)
+
+    async def test_runner_error_keeps_prior_failure_evidence_and_private_fixture(self):
+        report = await self.run_fixture(CleanupFixtureChild(), runner_error=OSError("PRIVATE_RUNNER_ERROR"))
+        self.assertEqual(report["exit_code"], -9)
+        self.assertEqual(report["cli_cleanup"]["runner_result"], "error")
+        self.assertTrue(report["cleanup_failed"])
+        self.assertTrue(report["fixture_retained"])
+
+    async def test_runner_self_cancel_is_fixed_failure_and_keeps_report(self):
+        report = await self.run_fixture(CleanupFixtureChild(), runner_error=asyncio.CancelledError())
+        self.assertEqual(report["cli_cleanup"]["runner_result"], "cancelled")
+        self.assertTrue(report["cleanup_failed"])
+        self.assertEqual(report["exit_code"], -9)
+
+    async def test_parent_evaluate_cancel_stays_cancelled_and_still_cleans_child_and_runner(self):
+        from unittest.mock import AsyncMock
+        child = CleanupFixtureChild()
+        cleanup = AsyncMock()
+        with patch.object(FixtureEvaluationRunner, "cleanup", cleanup):
+            task = asyncio.create_task(CliOutputObservationTests.evaluate_without_process_or_service(self, "cli_nested", child))
+            await asyncio.wait_for(asyncio.gather(child.stdout.data_observed.wait(), child.stderr.data_observed.wait()), 1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 0.5)
+        self.assertEqual((child.kill_calls, child.returncode, cleanup.await_count), (1, -9, 1))
+
+    async def test_primary_collector_child_self_cancel_returns_fixed_failed_report(self):
+        from unittest.mock import AsyncMock
+        class Child(CleanupFixtureChild):
+            async def wait(self):
+                if self.kill_calls == 0:
+                    raise asyncio.CancelledError
+                return await super().wait()
+        cleanup = AsyncMock()
+        with patch.object(FixtureEvaluationRunner, "cleanup", cleanup), \
+             patch.object(evaluator_module, "CLI_CLEANUP_TIMEOUT_SECONDS", 0.02):
+            report = await CliOutputObservationTests.evaluate_without_process_or_service(self,
+                "cli_nested", Child(kill_mode="request_only"))
+        self.assertEqual((report["status"], report["error_category"]), ("failed", "harness_error"))
+        self.assertEqual(report["cli_output"]["collection_error"], "evaluation_cli_output_task_cancelled")
+        self.assertEqual((report["requests"], report["upstream_dispatch_attempts"], report["request_limit"]), (0, 0, 2))
+        self.assertEqual((report["exit_code"], cleanup.await_count), (None, 1))
+        self.assertTrue(report["fixture_retained"])
+        root = Path(report["retained_fixture_paths"]["root"])
+        self.addCleanup(evaluator_module._remove_fixture_directory, root, root.parent)
+        self.assertNotIn("PRIVATE_", json.dumps(report))
+
+    async def test_cleanup_fence_rejects_late_request_without_handler_or_upstream(self):
+        from unittest.mock import AsyncMock
+        captured = {}
+        initial = FixtureEvaluationRunner.__init__
+        def capture(runner, app, **kwargs):
+            initial(runner, app, **kwargs)
+            captured["app"] = app
+        handler = AsyncMock()
+        async def cleanup(runner):
+            response = await captured["app"].middlewares[0](SimpleNamespace(path="/fixture/responses"), handler)
+            self.assertEqual((response.status, json.loads(response.text)), (400, {"error": "cleanup_started_no_retry"}))
+        with patch.object(FixtureEvaluationRunner, "__init__", capture), \
+             patch.object(FixtureEvaluationRunner, "cleanup", cleanup), \
+             patch.object(evaluator_module, "CLI_CLEANUP_TIMEOUT_SECONDS", 0.02):
+            report = await CliOutputObservationTests.evaluate_without_process_or_service(self, "cli_nested", CleanupFixtureChild())
+        handler.assert_not_awaited()
+        self.assertEqual((report["requests"], report["client_requests"], report["cleanup_rejected_client_requests"]), (0, 1, 1))
+        self.assertEqual((report["admitted_client_requests"], report["upstream_dispatch_attempts"], report["request_limit"]), (0, 0, 2))
+        self.assertEqual((report["status"], report["error_category"]), ("failed", "timeout"))
+
+    async def test_returned_report_freezes_late_dispatch_timing_and_failure_mutations(self):
+        captured = {}
+        initial = FixtureEvaluationRouter.__init__
+        def capture(router, registry, token):
+            initial(router, registry, token)
+            closure = dict(zip(type(router).proxy.__code__.co_freevars,
+                               (cell.cell_contents for cell in type(router).proxy.__closure__)))
+            captured["dispatches"] = closure["dispatches"]
+            captured["record"] = {"dispatch_index": 1, "transport_result": "raised"}
+            captured["dispatches"].append(captured["record"])
+            captured["timing"] = {"outcomes": {"failed": 0}}
+            captured["failure"] = {"reason": "observed_failure"}
+            router.metrics.snapshot = lambda: captured["timing"]
+            router.last_failure = captured["failure"]
+        with patch.object(FixtureEvaluationRouter, "__init__", capture), \
+             patch.object(evaluator_module, "CLI_CLEANUP_TIMEOUT_SECONDS", 0.02):
+            report = await CliOutputObservationTests.evaluate_without_process_or_service(self, "cli_nested", CleanupFixtureChild())
+        snapshot = deepcopy(report)
+        captured["record"].update(transport_result="returned", http_status=200)
+        captured["dispatches"].append({"dispatch_index": 2})
+        captured["timing"]["outcomes"]["failed"] = 1
+        captured["failure"]["reason"] = "late_failure"
+        self.assertEqual(report, snapshot)
+        self.assertEqual((report["status"], report["error_category"]), ("failed", "timeout"))
+
+    async def test_terminal_mkdir_collision_never_removes_preexisting_directory(self):
+        import gc
+        from unittest.mock import AsyncMock
+        with tempfile.TemporaryDirectory(prefix="operator-eval-collision-test-") as directory:
+            parent = Path(directory).resolve()
+            existing = parent / "operator-terminal-work-collision"
+            existing.mkdir()
+            sentinel = existing / "owner-sentinel.txt"
+            sentinel.write_bytes(b"UNCHANGED_OWNER_BYTES")
+            row = deepcopy(ROUTE)
+            row["responses"].update(codex_tool_mode="standard", upstream_response_mode="json")
+            child = CleanupFixtureChild()
+            cleanup = AsyncMock()
+            with patch.object(evaluator_module.tempfile, "gettempdir", return_value=str(parent)), \
+                 patch.object(evaluator_module.secrets, "token_hex", return_value="collision"), \
+                 patch.object(evaluator_module, "executable_digest", return_value="fixture_digest"), \
+                 patch.object(FixtureEvaluationRunner, "cleanup", cleanup):
+                report = await CliOutputObservationTests.evaluate_without_process_or_service(self,
+                    "cli_powershell", child, row=row, terminal_shell=Path("C:/fixture/powershell.exe"))
+            gc.collect()
+            self.assertEqual(sentinel.read_bytes(), b"UNCHANGED_OWNER_BYTES")
+            self.assertTrue(existing.is_dir())
+            self.assertEqual(cleanup.await_count, 1)
+            self.assertEqual((report["status"], report["error_category"]), ("failed", "harness_error"))
+            self.assertFalse(report["cli_process"]["started"])
+            self.assertIsNone(report["cli_output"]["cleanup"]["pending_tasks"])
+
+    async def test_unknown_terminal_exit_keeps_private_home_and_normal_work_after_gc(self):
+        import gc
+        from unittest.mock import AsyncMock
+        class Terminal:
+            def __init__(self, work, case, executable, marker, **kwargs):
+                self.family, self.marker, self.arguments = "powershell", marker, {"cmd": "fixture_never_executed"}
+            def report(self):
+                return {}
+        row = deepcopy(ROUTE)
+        row["responses"].update(codex_tool_mode="standard", upstream_response_mode="json")
+        cleanup = AsyncMock()
+        original_mkdir = Path.mkdir
+        with patch.object(evaluator_module, "CLI_CLEANUP_TIMEOUT_SECONDS", 0.02), \
+             patch.object(evaluator_module, "executable_digest", return_value="fixture_digest"), \
+             patch.object(evaluator_module, "TerminalFixture", Terminal), \
+             patch.object(FixtureEvaluationRunner, "cleanup", cleanup), \
+             patch.object(Path, "mkdir", autospec=True, side_effect=original_mkdir) as mkdir:
+            report = await CliOutputObservationTests.evaluate_without_process_or_service(self,
+                "cli_powershell", CleanupFixtureChild(kill_mode="request_only"), row=row,
+                terminal_shell=Path("C:/fixture/powershell.exe"))
+        paths = report["retained_fixture_paths"]
+        root, work = Path(paths["root"]), Path(paths["work"])
+        self.addCleanup(evaluator_module._remove_fixture_directory, root, root.parent)
+        self.addCleanup(evaluator_module._remove_fixture_directory, work, work.parent)
+        gc.collect()
+        self.assertTrue(all(Path(value).is_dir() for value in paths.values()))
+        self.assertNotEqual(work.parent, root)
+        self.assertTrue(any(call.args[0] == work and call.kwargs.get("mode") == 0o755 for call in mkdir.call_args_list))
+        self.assertEqual((report["status"], report["error_category"], report["exit_code"]), ("failed", "timeout", None))
+        self.assertEqual(cleanup.await_count, 1)
 
 
 @unittest.skipUnless(os.environ.get("CODEX_OPERATOR_TEST_CLI"), "explicit current Desktop CLI required")
