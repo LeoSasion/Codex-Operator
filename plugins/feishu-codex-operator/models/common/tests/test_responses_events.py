@@ -405,6 +405,52 @@ class EventAdapterTests(unittest.TestCase):
         self.assertEqual(delta, [CODE])
         self.assertEqual(adapter.items, {})
 
+    def test_interleaved_calls_with_delayed_names_and_utf8_wire_preserve_exact_input(self):
+        # Independently constructed regression inspired by CodexPlusPlus commit
+        # f55bb64663ba5024ab434017bb6212a0fd9f4bb3, tests/protocol_proxy.rs:
+        # chat_sse_waits_for_custom_tool_name_before_assigning_item_id and
+        # chat_sse_converter_handles_partial_chunks_and_utf8_boundaries.
+        function = deepcopy(FUNCTION)
+        function["parameters"]["properties"]["label"] = {"type": "string"}
+        _, context = prepare({"tools": [EXEC, function]})
+        source = CODE + "\r\n  text('source-only');  \r\n"
+        items = [call(context, source, item_id="fc_source", call_id="call_source"),
+                 {"type": "function_call", "id": "fc_unicode", "call_id": "call_unicode",
+                  "name": "add", "arguments": dumps({"a": 17, "label": " 中文😀\\n\r\n末尾 "}),
+                  "status": "completed"}]
+        events = events_for(*items)
+        # The upstream provides both IDs from added onward. Only the name is
+        # delayed until its original complete done and terminal snapshots.
+        for event in events[1:3]:
+            event["item"].pop("name")
+        original = deepcopy(events)
+        decoder, adapter = SSEDecoder(), ResponsesEventAdapter(context)
+        restored = []
+        for byte in wire(events[:-1], b"\r\n"):
+            for event in decoder.feed(bytes([byte])):
+                restored.extend(adapter.feed(event))
+        self.assertEqual([event["type"] for event in restored], ["response.created"])
+        self.assertFalse(adapter.terminal)
+
+        for byte in wire(events[-1:], b"\r\n"):
+            for event in decoder.feed(bytes([byte])):
+                restored.extend(adapter.feed(event))
+        for event in decoder.finish():
+            restored.extend(adapter.feed(event))
+        adapter.finish()
+
+        expected_source = {key: value for key, value in items[0].items() if key != "arguments"}
+        expected_source.update(type="custom_tool_call", name="exec", input=source)
+        expected = [expected_source, items[1]]
+        done = [event["item"] for event in restored if event["type"] == "response.output_item.done"]
+        self.assertEqual(done, expected)
+        self.assertEqual(restored[-1]["response"], response(*expected))
+        deltas = [event for event in restored if event["type"].endswith(".delta")]
+        self.assertEqual([(event["output_index"], event["item_id"], event["delta"])
+                          for event in deltas],
+                         [(0, items[0]["id"], source), (1, items[1]["id"], items[1]["arguments"])])
+        self.assertEqual(events, original)
+
     def test_text_flows_before_tool_commit(self):
         _, context = prepare()
         tool = call(context)

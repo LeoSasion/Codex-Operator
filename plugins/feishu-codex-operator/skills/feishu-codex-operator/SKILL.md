@@ -118,12 +118,14 @@ Channels 首版只实现飞书，不声称其他 IM 已可用。先读 [快速�
   配置加载、列表可见、真实路由、工具执行与主窗口验收分别记录。API 密钥不发到对话中。
 - 原生体验、Web 模型、工具连接、配置引导或后台生命周期：先读
   [长期项目记忆](../../models/web/docs/native-web-experience.md) 与
-  [原生对话改进计划](../../models/web/docs/native-conversation-plan.md)。2026-09-20 最新方向以
-  Chat On Steroids 为首要研究参考，目标仅为原生 Codex 对话更流畅、减少 UI 点击与配置。
-  其余四个参考冷置，仅遇到具体必要缺口才查阅，已有来源与许可记录保留。
+  [原生对话改进计划](../../models/web/docs/native-conversation-plan.md)。2026-10-05 最新方向以
+  BigPizzaV3/CodexPlusPlus（Codex++）为首要研究参考，保留自身已验证优势，
+  仅借鉴方案补救已确认的必要缺点。此前参考、采用机制和来源/许可记录保留。
+  新增功能或界面须先与所有者商量并取得同意；好的建议先讨论，参考不扩大授权。
+  已授权范围内的现有功能修复继续进行；重大内部方向调整先讨论用户收益、迁移与验证。
   不扩展独立工作界面、浏览器伴随扩展产品、Goal/Loop 或另一套多智能体编排。
-  允许大幅内部架构调整；大方向变动须先汇报用户收益、迁移影响与验证计划，再实施。
   记录实际借鉴与验证范围，不将研究结论或上游宣传当作本机验收。
+  当前 Codex++ 的固定来源、已采用方法及必要缺口见[方案吸纳记录](../../development/docs/codexplusplus-adoption.md)；先核对已有合同和覆盖，再决定修复，不能为参考项目的功能创造需求。
 - 改架构、配置或投递逻辑：先读 [Architecture](../../shared/docs/architecture.md)。
 - 复盘目录、删除垃圾或整理隔离区：先读
   [文件维护与已验证经验](../../development/docs/workspace-maintenance.md)。核对当前进程和保存引用，

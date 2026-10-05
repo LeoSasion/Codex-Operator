@@ -107,16 +107,21 @@
 - Project memory: before native UX, Web model, tool connection, onboarding or
   background-lifecycle work, read the canonical plugin's
   `models/web/docs/native-web-experience.md` and its implementation-source links.
-  The owner's 2026-09-20 direction makes totec448-spec/chat-on-steroids the
-  primary research reference, solely to improve seamless native Codex conversation
-  and reduce user UI clicks, configuration and interruptions. Keep daodao97/localmcp,
-  MCPX (opentokenz/mcpx remains an unconfirmed screenshot candidate),
-  miuuyy/codex-chatgpt-web and yyjeqhc/webcodex as dormant references; consult them
-  only for a concrete necessary gap and retain existing provenance/licenses.
+  The owner's 2026-10-05 direction makes BigPizzaV3/CodexPlusPlus (Codex++)
+  the primary research reference, superseding the 2026-09-20 priority for
+  totec448-spec/chat-on-steroids. Borrow concrete solutions only for confirmed
+  necessary shortcomings. Preserve our verified strengths: native Desktop task
+  ownership, official-direct isolation, exact model/tool identities, complete
+  history, zero replay and retained recovery originals. Keep prior references,
+  adopted mechanisms, provenance and licenses; consult secondary projects only
+  for a concrete necessary gap.
+  Do not add features or UI without the owner's agreement. Discuss useful
+  suggestions with the owner first; reference research is not implementation or
+  deployment authorization. Continue scoped repairs within existing authorization.
   Do not expand scope into a separate workspace UI, companion-extension product,
   Goal/Loop or another multi-agent orchestrator. Native Desktop owns the task.
-  Substantial internal redesign is welcome; report major direction changes with
-  their user benefit, migration and verification plan before implementation.
+  Before a major internal direction change, discuss its user benefit, migration
+  and verification plan with the owner.
   Read `models/web/docs/native-conversation-plan.md`; record actual adoption
   and verification without inferring permission or copying upstream retries.
 - Before asking the owner to log in or verify a Web session, inspect the exact

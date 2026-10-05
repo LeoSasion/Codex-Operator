@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import queue
 import re
 import secrets
 import shutil
@@ -16,8 +17,10 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
+from operator_core.app_server import AppServerSession
 from operator_core.model_registry import ModelRegistry, RouterError
 from operator_core.model_router_config import atomic_write, read_registration
 from operator_core.responses_profiles import adapter_digest, contract_digest, evaluator_digest, preflight
@@ -32,6 +35,472 @@ CASES = ("cli_nested", "cli_multiround", "cli_tool_error", "cli_error_stop", "cl
          "cli_patchplan", "cli_workspace", "cli_cancel", *TERMINAL_CASES)
 SOURCE = '# Synthetic currency helper — preserve this comment.\r\ndef cents(amount):\r\n    return round(amount * 10)\r\n'
 EXPECTED = SOURCE.replace('amount * 10)', 'amount * 100)')
+
+# Separate opt-in acceptance transport. The existing never/read-only evaluator
+# and CASES above do not enter this lane. These bounds include owner wait time.
+NATIVE_RPC_BYTES = 16 * 1024 * 1024
+NATIVE_RPC_TIMEOUT_SECONDS = 120
+NATIVE_APPROVAL_METHODS = frozenset({"item/commandExecution/requestApproval",
+                                     "item/fileChange/requestApproval"})
+NATIVE_APPROVAL_CONTRACT_0160 = "native_0160_single_action_v1"
+
+
+def _native_rpc_id(value):
+    try:
+        return ((isinstance(value, str) and 0 < len(value.encode("utf-8")) <= 512)
+                or (type(value) is int and -(2 ** 63) <= value < 2 ** 63))
+    except UnicodeError:
+        return False
+
+
+def _native_rpc_object(raw):
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) > NATIVE_RPC_BYTES:
+        raise RouterError("native_fixture_invalid_rpc")
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise RouterError("native_fixture_duplicate_json_key")
+            result[key] = value
+        return result
+    try:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=unique,
+                           parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+    except (UnicodeError, ValueError, RecursionError) as exc:
+        raise RouterError("native_fixture_invalid_rpc") from exc
+    if not isinstance(value, dict) or value.get("jsonrpc", "2.0") != "2.0":
+        raise RouterError("native_fixture_invalid_rpc")
+    return value
+
+
+class NativeApprovalGate:
+    """One observed single-action RPC; an explicit owner reply is still required.
+
+    A fresh random ticket binds the complete received bytes, exact ID type and
+    action identity. It is not approval evidence until the transport writes the
+    corresponding reply. Session grants/amendments and subcommand callbacks are
+    outside this acceptance contract. Timeout never supplies a denial decision.
+    """
+    def __init__(self, raw, *, thread_id, turn_id, command=None, cwd=None,
+                 approval_contract=None, command_argv=None):
+        if approval_contract not in (None, NATIVE_APPROVAL_CONTRACT_0160):
+            raise RouterError("native_fixture_approval_contract_rejected")
+        request = _native_rpc_object(raw)
+        params = request.get("params")
+        if (not isinstance(request.get("method"), str) or request["method"] not in NATIVE_APPROVAL_METHODS
+                or not _native_rpc_id(request.get("id")) or not isinstance(params, dict)
+                or params.get("threadId") != thread_id or params.get("turnId") != turn_id
+                or not all(isinstance(params.get(key), str) and params[key]
+                           for key in ("threadId", "turnId", "itemId"))
+                or type(params.get("startedAtMs")) is not int
+                or not 0 <= params["startedAtMs"] < 2 ** 63):
+            raise RouterError("native_fixture_approval_identity_rejected")
+        if request["method"] == "item/commandExecution/requestApproval":
+            if (params.get("approvalId") is not None or params.get("kind", "command") != "command"
+                    or any(params.get(key) is not None for key in ("additionalPermissions", "networkApprovalContext",
+                        "proposedNetworkPolicyAmendments"))
+                    or not isinstance(command, str) or not command or not isinstance(cwd, str) or not cwd
+                    or params.get("command") != command or params.get("cwd") != cwd):
+                raise RouterError("native_fixture_approval_scope_rejected")
+            if approval_contract == NATIVE_APPROVAL_CONTRACT_0160:
+                # CLI 0.160.0 / a956835d: a proposal is inert request metadata.
+                # Its argv comes from the separately constrained source call,
+                # never by parsing/reconstructing the native display command.
+                known = {"kind", "threadId", "turnId", "itemId", "startedAtMs", "approvalId",
+                         "environmentId", "reason", "networkApprovalContext", "command", "cwd",
+                         "commandActions", "additionalPermissions", "proposedExecpolicyAmendment",
+                         "proposedNetworkPolicyAmendments", "availableDecisions"}
+                proposal, offered = params.get("proposedExecpolicyAmendment"), params.get("availableDecisions")
+                if set(params) - known or params.get("environmentId") != "local":
+                    raise RouterError("native_fixture_approval_scope_rejected")
+                if proposal is not None:
+                    if (not isinstance(command_argv, list) or not command_argv
+                            or not all(isinstance(part, str) and part and "\x00" not in part for part in command_argv)
+                            or proposal != command_argv):
+                        raise RouterError("native_fixture_approval_scope_rejected")
+                    try:
+                        for part in command_argv:
+                            part.encode("utf-8", errors="strict")
+                    except UnicodeError as exc:
+                        raise RouterError("native_fixture_approval_scope_rejected") from exc
+                    expected_offered = ["accept", {"acceptWithExecpolicyAmendment": {
+                        "execpolicy_amendment": command_argv}}, "cancel"]
+                else:
+                    expected_offered = ["accept", "cancel"]
+                if offered is None and proposal is None:
+                    decisions = frozenset({"accept", "decline"})  # Unadvertised legacy request.
+                elif offered == expected_offered:
+                    decisions = frozenset({"accept", "cancel"})
+                else:
+                    raise RouterError("native_fixture_approval_scope_rejected")
+            elif params.get("proposedExecpolicyAmendment") is not None or command_argv is not None:
+                raise RouterError("native_fixture_approval_scope_rejected")
+            else:
+                decisions = frozenset({"accept", "decline"})
+        elif params.get("grantRoot") is not None:
+            raise RouterError("native_fixture_approval_scope_rejected")
+        else:
+            decisions = frozenset({"accept", "decline"})
+        self.approval_contract = approval_contract
+        self._decisions = decisions
+        self.request = deepcopy(request)
+        self.raw = bytes(raw)
+        self.nonce = secrets.token_hex(16)
+        self.used = False
+
+    def ticket(self):
+        params = self.request["params"]
+        return {"nonce": self.nonce, "request_sha256": hashlib.sha256(self.raw).hexdigest(),
+                "id": self.request["id"], **{key: params[key] for key in ("threadId", "turnId", "itemId")}}
+
+    def response(self, owner_decision):
+        ticket = self.ticket()
+        if (self.used or not isinstance(owner_decision, dict)
+                or set(owner_decision) != set(ticket) | {"decision"}
+                or type(owner_decision.get("id")) is not type(ticket["id"])
+                or any(owner_decision.get(key) != value for key, value in ticket.items())
+                or not isinstance(owner_decision.get("decision"), str)
+                or owner_decision["decision"] not in self._decisions):
+            raise RouterError("native_fixture_owner_decision_rejected")
+        self.used = True
+        return {"jsonrpc": "2.0", "id": self.request["id"],
+                "result": {"decision": owner_decision["decision"]}}
+
+
+class NativeApprovalCapture(AppServerSession):
+    """Fixture-only binary App Server transport with complete bounded raw logs.
+
+    Launch and thread parameters enforce a private read-only/untrusted lane.
+    The caller must separately constrain the model's exact tool source and
+    inspect actual terminal/file evidence; this transport never attests to it.
+    Raw artifacts are private, not public diagnostics. No server request is
+    answered automatically. Reaching the fixed deadline only fails the lane;
+    the controller must interrupt its exact turn and retain failure evidence.
+    """
+    def __init__(self, executable, home, work, capture_root, *, model, provider,
+                 timeout_seconds=NATIVE_RPC_TIMEOUT_SECONDS, approval_contract=None):
+        self._error_type = RouterError
+        self.home, self.work, self.capture_root = map(Path, (home, work, capture_root))
+        if (approval_contract not in (None, NATIVE_APPROVAL_CONTRACT_0160)
+                or type(timeout_seconds) is not int or not 0 < timeout_seconds <= NATIVE_RPC_TIMEOUT_SECONDS
+                or not all(path.is_absolute() and path.is_dir() and not path.is_symlink()
+                           for path in (self.home, self.work, self.capture_root))
+                or len({path.resolve() for path in (self.home, self.work, self.capture_root)}) != 3
+                or not all(isinstance(value, str) and value for value in (model, provider))):
+            raise RouterError("native_fixture_configuration_rejected")
+        self.model, self.provider = model, provider
+        self.approval_contract = approval_contract
+        self.timeout_seconds = timeout_seconds
+        self.deadline = time.monotonic() + timeout_seconds
+        self._next_id = 1
+        self._messages = queue.Queue()
+        self._deferred = []
+        self._observed = {}
+        self._lock = threading.Lock()
+        self._total_bytes = 0
+        self._capture_failed = False
+        self._write_pending = False
+        self._cleanup_deadline = None
+        self._interrupt_attempted = False
+        self._admission_closed = False
+        self._cleanup_write_active = False
+        self._thread_id = self._turn_id = None
+        self._start_attempted = {"thread/start": False, "turn/start": False}
+        self._streams = {}
+        self._handles = {}
+        try:
+            for name in ("server", "client", "stderr"):
+                self._handles[name] = (self.capture_root / (name + ".raw")).open("xb")
+                self._streams[name] = {"bytes": 0, "sha256_state": hashlib.sha256(), "complete": False}
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            # App Server 0.160 rejects untrusted in public startup config.
+            # Bootstrap without a turn under never/read-only; thread/start must
+            # explicitly select internal untrusted and pass the actual echo gate
+            # before this fixture can send any turn. This is not a policy fallback.
+            settings = {"approval_policy": "never", "approvals_reviewer": "user",
+                        "sandbox_mode": "read-only", "analytics.enabled": False,
+                        "skills.include_instructions": False, "project_doc_max_bytes": 0,
+                        "features.plugins": False, "features.remote_plugin": False,
+                        "features.view_image": False, "features.image_generation": False,
+                        "features.goals": False, "features.multi_agent": False,
+                        "features.multi_agent_v2": False, "web_search": "disabled"}
+            command = [str(executable), "app-server", "--listen", "stdio://"]
+            for key, value in settings.items():
+                command += ["-c", key + "=" + dumps(value)]
+            self.process = subprocess.Popen(command, stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
+                env=isolated_environment(self.home), cwd=str(self.work), creationflags=flags)
+        except Exception as exc:
+            for handle in self._handles.values():
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+            raise RouterError("native_fixture_launch_failed") from exc
+        self._reader = threading.Thread(target=self._read, daemon=True)
+        self._stderr_reader = threading.Thread(target=self._read_stderr, daemon=True)
+        try:
+            self._reader.start()
+            self._stderr_reader.start()
+        except Exception as exc:
+            self._capture_failed = True
+            report = self.close()
+            try:
+                with (self.capture_root / "reader-start-failure.json").open("xb") as handle:
+                    handle.write((dumps({"state": "failed", "reason": "native_fixture_reader_start_failed",
+                                         "cleanup": report}) + "\n").encode("utf-8"))
+            except OSError:
+                pass
+            raise RouterError("native_fixture_reader_start_failed") from exc
+
+    def _retain(self, stream, raw):
+        with self._lock:
+            if self._capture_failed or self._total_bytes + len(raw) > NATIVE_RPC_BYTES:
+                self._capture_failed = True
+                raise RouterError("native_fixture_capture_too_large")
+            self._handles[stream].write(raw)
+            self._handles[stream].flush()
+            self._total_bytes += len(raw)
+            self._streams[stream]["bytes"] += len(raw)
+            self._streams[stream]["sha256_state"].update(raw)
+
+    def _read(self):
+        try:
+            while raw := self.process.stdout.readline(NATIVE_RPC_BYTES + 1):
+                self._retain("server", raw)
+                if not raw.endswith(b"\n"):
+                    raise RouterError("native_fixture_incomplete_rpc")
+                message = _native_rpc_object(raw)
+                if "method" in message and "id" in message:
+                    if not _native_rpc_id(message["id"]):
+                        raise RouterError("native_fixture_invalid_rpc_id")
+                    key = (type(message["id"]), message["id"])
+                    if key in self._observed:
+                        raise RouterError("native_fixture_duplicate_server_request")
+                    self._observed[key] = raw
+                self._messages.put(message)
+            self._streams["server"]["complete"] = True
+        except Exception:
+            self._capture_failed = True
+            self._messages.put(RouterError("native_fixture_server_capture_failed"))
+        finally:
+            self._messages.put(None)
+
+    def _read_stderr(self):
+        try:
+            while raw := self.process.stderr.read(65536):
+                self._retain("stderr", raw)
+            self._streams["stderr"]["complete"] = True
+        except Exception:
+            self._capture_failed = True
+            self._messages.put(RouterError("native_fixture_stderr_capture_failed"))
+
+    def _write(self, message):
+        if ((self._admission_closed and not self._cleanup_write_active)
+                or time.monotonic() >= self.deadline or self.process.poll() is not None
+                or self._write_pending or self._capture_failed):
+            raise RouterError("native_fixture_transport_unavailable")
+        raw = (dumps(message) + "\n").encode("utf-8")
+        self._retain("client", raw)  # Attempted source bytes; completion is separate.
+        result, completed = [], threading.Event()
+        self._write_pending = True
+        def write():
+            try:
+                if self.process.stdin.write(raw) != len(raw):
+                    raise OSError()
+                self.process.stdin.flush()
+            except Exception:
+                result.append(False)
+            else:
+                result.append(True)
+            finally:
+                self._write_pending = False
+                completed.set()
+        threading.Thread(target=write, daemon=True).start()
+        if not completed.wait(max(0, self.deadline - time.monotonic())) or not result or not result[0]:
+            self._capture_failed = True
+            raise RouterError("native_fixture_rpc_write_incomplete")
+
+    def notify(self, method, params=None):
+        if method != "initialized" or params is not None:
+            raise RouterError("native_fixture_method_rejected")
+        super().notify(method, params)
+
+    def _validate_request(self, method, params):
+        if self._admission_closed and not (self._cleanup_write_active and method == "turn/interrupt"):
+            raise RouterError("native_fixture_admission_closed")
+        if method == "initialize" and self._thread_id is None:
+            return
+        if method == "thread/start" and self._thread_id is None and not self._start_attempted[method]:
+            required = {"model": self.model, "modelProvider": self.provider, "cwd": str(self.work),
+                        "approvalPolicy": "untrusted", "approvalsReviewer": "user",
+                        "sandbox": "read-only", "ephemeral": True, "allowProviderModelFallback": False}
+            if params == required:
+                return
+        elif (method == "turn/start" and self._thread_id is not None and self._turn_id is None
+              and not self._start_attempted[method]):
+            if (isinstance(params, dict) and set(params) == {"threadId", "input"}
+                    and params["threadId"] == self._thread_id and isinstance(params["input"], list)
+                    and len(params["input"]) == 1 and isinstance(params["input"][0], dict)
+                    and set(params["input"][0]) == {"type", "text", "text_elements"}
+                    and params["input"][0]["type"] == "text"
+                    and isinstance(params["input"][0]["text"], str)
+                    and params["input"][0]["text_elements"] == []):
+                return
+        elif method == "turn/interrupt" and self._turn_id is not None and self._cleanup_write_active:
+            if params == {"threadId": self._thread_id, "turnId": self._turn_id}:
+                return
+        raise RouterError("native_fixture_method_rejected")
+
+    def next_message(self):
+        if self._capture_failed:
+            raise RouterError("native_fixture_capture_failed")
+        if time.monotonic() >= self.deadline:
+            raise RouterError("native_fixture_deadline_exceeded")
+        if self._deferred:
+            return self._deferred.pop(0)
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise RouterError("native_fixture_deadline_exceeded")
+        try:
+            message = self._messages.get(timeout=remaining)
+        except queue.Empty as exc:
+            raise RouterError("native_fixture_deadline_exceeded") from exc
+        if message is None:
+            raise RouterError("native_fixture_exited_early")
+        if isinstance(message, Exception):
+            raise message
+        return message
+
+    def request(self, method, params=None):
+        self._validate_request(method, params)
+        request_id = str(self._next_id)
+        self._next_id += 1
+        if method in self._start_attempted:
+            self._start_attempted[method] = True  # Consume before any possible/unknown write.
+        self._write({"jsonrpc": "2.0", "id": request_id, "method": method,
+                     **({"params": params} if params is not None else {})})
+        deferred = []
+        try:
+            while True:
+                message = self.next_message()
+                if ("method" in message or type(message.get("id")) is not str
+                        or message.get("id") != request_id):
+                    deferred.append(message)
+                    continue
+                if "error" in message or "result" not in message:
+                    raise RouterError("native_fixture_request_failed")
+                result = message["result"]
+                if method == "thread/start":
+                    expected = {"model": self.model, "modelProvider": self.provider, "cwd": str(self.work),
+                                "approvalPolicy": "untrusted", "approvalsReviewer": "user"}
+                    sandbox = result.get("sandbox") if isinstance(result, dict) else None
+                    if (not isinstance(result, dict) or any(result.get(key) != value for key, value in expected.items())
+                            or not isinstance(sandbox, dict) or sandbox.get("type") != "readOnly"
+                            or set(sandbox) - {"type", "networkAccess"}
+                            or ("networkAccess" in sandbox and sandbox["networkAccess"] is not False)
+                            or result.get("runtimeWorkspaceRoots") != [str(self.work)]
+                            or result.get("instructionSources", []) != []):
+                        raise RouterError("native_fixture_thread_contract_conflict")
+                if method in {"thread/start", "turn/start"}:
+                    kind = "thread" if method == "thread/start" else "turn"
+                    identity = result.get(kind, {}).get("id") if isinstance(result, dict) else None
+                    if not isinstance(identity, str) or not identity:
+                        raise RouterError("native_fixture_response_identity_missing")
+                    setattr(self, "_" + kind + "_id", identity)
+                return result
+        finally:
+            self._deferred = deferred + self._deferred
+
+    def approval_gate(self, message, *, command=None, cwd=None, command_argv=None):
+        if not isinstance(message, dict) or not _native_rpc_id(message.get("id")):
+            raise RouterError("native_fixture_unobserved_approval")
+        key = (type(message.get("id")), message.get("id"))
+        raw = self._observed.get(key)
+        if raw is None or _native_rpc_object(raw) != message:
+            raise RouterError("native_fixture_unobserved_approval")
+        return NativeApprovalGate(raw, thread_id=self._thread_id, turn_id=self._turn_id,
+                                  command=command, cwd=cwd, approval_contract=self.approval_contract,
+                                  command_argv=command_argv)
+
+    def reply_approval(self, gate, owner_decision):
+        if self._admission_closed:
+            raise RouterError("native_fixture_admission_closed")
+        key = (type(gate.request["id"]), gate.request["id"])
+        if self._observed.get(key) != gate.raw or gate.approval_contract != self.approval_contract:
+            raise RouterError("native_fixture_unobserved_approval")
+        response = gate.response(owner_decision)
+        self._write(response)
+        del self._observed[key]
+        return {"format": "native_approval_pairs_v1",
+                "pairs": [{"request": deepcopy(gate.request), "response": deepcopy(response)}]}
+
+    def interrupt_turn(self):
+        # One exact interruption is cleanup, not another turn or a denial reply.
+        # Its response wait and subsequent process cleanup share five seconds.
+        if self._interrupt_attempted or self._thread_id is None or self._turn_id is None:
+            raise RouterError("native_fixture_interrupt_identity_rejected")
+        self._interrupt_attempted = True
+        self._admission_closed = True
+        if self._cleanup_deadline is None:
+            self._cleanup_deadline = time.monotonic() + CLI_CLEANUP_TIMEOUT_SECONDS
+        original_deadline, self.deadline = self.deadline, self._cleanup_deadline
+        self._cleanup_write_active = True
+        try:
+            return self.request("turn/interrupt", {"threadId": self._thread_id, "turnId": self._turn_id})
+        finally:
+            self._cleanup_write_active = False
+            self.deadline = original_deadline
+
+    def close(self):
+        # Five seconds cover process waits / pipe-thread joins and metadata lock
+        # acquisition. Ordinary synchronous filesystem close is not a hard wall.
+        self._admission_closed = True
+        if self._cleanup_deadline is None:
+            self._cleanup_deadline = time.monotonic() + CLI_CLEANUP_TIMEOUT_SECONDS
+        deadline = self._cleanup_deadline
+        cleanup_error = False
+        if self.process.poll() is None:
+            for index, action in enumerate((self.process.terminate, self.process.kill)):
+                try:
+                    action()
+                    remaining = max(0, deadline - time.monotonic())
+                    self.process.wait(timeout=remaining / 2 if index == 0 else remaining)
+                except (OSError, subprocess.TimeoutExpired):
+                    cleanup_error = True
+                if self.process.poll() is not None:
+                    break
+        for reader in (self._reader, self._stderr_reader):
+            if reader.is_alive():
+                reader.join(timeout=max(0, deadline - time.monotonic()))
+        complete = (self.process.poll() is not None and not self._write_pending
+                    and not self._reader.is_alive() and not self._stderr_reader.is_alive())
+        if complete:
+            for pipe in (self.process.stdin, self.process.stdout, self.process.stderr):
+                try:
+                    pipe.close()
+                except OSError:
+                    cleanup_error = True
+            self._streams["client"]["complete"] = not self._capture_failed
+            for handle in self._handles.values():
+                try:
+                    handle.close()
+                except OSError:
+                    cleanup_error = True
+        if not self._lock.acquire(timeout=max(0, deadline - time.monotonic())):
+            return {"exit_code": self.process.poll(), "cleanup_complete": False, "cleanup_error": True,
+                    "capture_failed": self._capture_failed, "capture_metadata_complete": False,
+                    "capture_bytes": None, "streams": {}}
+        try:
+            return {"exit_code": self.process.poll(), "cleanup_complete": complete,
+                    "cleanup_error": cleanup_error, "capture_failed": self._capture_failed,
+                    "capture_metadata_complete": True,
+                    "capture_bytes": self._total_bytes, "streams": {
+                        name: {"bytes": value["bytes"], "sha256": value["sha256_state"].hexdigest(),
+                               "complete": value["complete"]}
+                        for name, value in self._streams.items()}}
+        finally:
+            self._lock.release()
 
 
 class Fixture:

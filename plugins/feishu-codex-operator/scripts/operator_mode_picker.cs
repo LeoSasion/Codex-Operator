@@ -190,6 +190,62 @@ internal sealed class OperatorModePicker : Form
             (string)compiled["operator-mode-picker.exe"], "mode_picker_program_changed");
         return entry;
     }
+    private static string FailureStatus(string reason) {
+        switch (reason) {
+            case "official_package_changed":
+            case "mode_official_package_changed":
+            case "mode_package_changed":
+            case "mode_package_ambiguous":
+                return "官方应用版本或安装身份已变化；原配置保留，请检查升级记录。";
+            case "web_manager_process_observation_unavailable":
+                return "无法确认原拓展进程状态；检查记录已保留，请先核对原实例。";
+            case "previous_launch_running_or_uncertain":
+            case "previous_window_activation_uncertain":
+            case "mode_picker_dispatch_unconfirmed":
+            case "mode_picker_result_unconfirmed":
+            case "mode_launch_observation_timeout":
+            case "package_dispatch_failed":
+            case "existing_window_activation_dispatch_failed":
+            case "mode_existing_window_activation_unconfirmed":
+            case "window_activation_identity_changed":
+                return "启动或窗口派发未确认；原记录已保留，本次不会自动重试。";
+            default:
+                return "启动未完成，检查记录已保留。请关闭此窗口后检查。";
+        }
+    }
+    private static string FixedFailureReason(string output, string error, int exitCode, bool overflow) {
+        const string fallback = "mode_picker_dispatch_failed";
+        if (exitCode == 0 || overflow || output == null || error == null) return fallback;
+        try {
+            if (new UTF8Encoding(false, true).GetByteCount(output) > 65536 || error.Length > 4096)
+                return fallback;
+            string reason;
+            if (!String.IsNullOrWhiteSpace(output)) {
+                var serializer = new JavaScriptSerializer();
+                var value = serializer.Deserialize<Dictionary<string, object>>(output);
+                if (value == null || value.Count != 5 || !value.ContainsKey("contract") ||
+                    !value.ContainsKey("phase") || !value.ContainsKey("reason") ||
+                    !value.ContainsKey("native_config_writes") || !value.ContainsKey("automatically_retried") ||
+                    !(value["contract"] is string) || (string)value["contract"] != "operator_isolated_mode_entry_v1" ||
+                    !(value["phase"] is string) || (string)value["phase"] != "failed" ||
+                    !(value["reason"] is string) || !(value["native_config_writes"] is int) ||
+                    (int)value["native_config_writes"] != 0 || !(value["automatically_retried"] is bool) ||
+                    (bool)value["automatically_retried"]) return fallback;
+                reason = (string)value["reason"];
+                // Accepted values are fixed ASCII tokens. This comparison also
+                // rejects duplicate/escaped keys and any extra JSON document.
+                if (FailureStatus(reason) == FailureStatus(fallback) ||
+                    Regex.Replace(output, @"\s+", "") != serializer.Serialize(value)) return fallback;
+            } else {
+                // Early PowerShell failures have no JSON. Never display raw stderr.
+                var match = Regex.Match(error, @"\A(mode_[a-z_]+)(?:\r?\n)?\z");
+                if (!match.Success) return fallback;
+                reason = match.Groups[1].Value;
+                if (FailureStatus(reason) == FailureStatus(fallback)) return fallback;
+            }
+            return reason;
+        } catch { return fallback; }
+    }
     private void PrepareExtension() {
         preparing = true;
         nativeButton.Enabled = false;
@@ -209,7 +265,9 @@ internal sealed class OperatorModePicker : Form
             start.Arguments = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File \"" +
                 Path.Combine(entryRoot, "entry.ps1") + "\" -Action extension -Headless -Root \"" + entryRoot + "\"";
             StringBuilder output = new StringBuilder();
+            StringBuilder errorOutput = new StringBuilder();
             bool overflow = false;
+            bool errorOverflow = false;
             using (Process child = new Process()) {
                 child.StartInfo = start;
                 child.OutputDataReceived += delegate(object source, DataReceivedEventArgs line) {
@@ -219,12 +277,21 @@ internal sealed class OperatorModePicker : Form
                         else output.AppendLine(line.Data);
                     }
                 };
-                child.ErrorDataReceived += delegate { }; // Fixed errors are in the checked JSON result.
+                child.ErrorDataReceived += delegate(object source, DataReceivedEventArgs line) {
+                    if (line.Data == null) return;
+                    lock (errorOutput) {
+                        if (errorOutput.Length + line.Data.Length + 1 > 4096) errorOverflow = true;
+                        else errorOutput.AppendLine(line.Data);
+                    }
+                };
                 Require(child.Start(), "mode_picker_dispatch_failed");
                 child.BeginOutputReadLine(); child.BeginErrorReadLine();
                 Require(child.WaitForExit(120000), "mode_picker_dispatch_unconfirmed");
                 child.WaitForExit();
-                Require(child.ExitCode == 0 && !overflow, "mode_picker_dispatch_failed");
+                if (child.ExitCode != 0)
+                    throw new InvalidOperationException(FixedFailureReason(output.ToString(), errorOutput.ToString(),
+                        child.ExitCode, overflow || errorOverflow));
+                Require(!overflow, "mode_picker_dispatch_failed");
             }
             CheckedEntry();
             var result = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(output.ToString());
@@ -236,7 +303,7 @@ internal sealed class OperatorModePicker : Form
         worker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs args) {
             preparing = false;
             if (args.Error != null) {
-                status.Text = "启动未完成，检查记录已保留。请关闭此窗口后检查。";
+                status.Text = FailureStatus(args.Error is InvalidOperationException ? args.Error.Message : null);
                 return;
             }
             readyWindow = (Dictionary<string, object>)args.Result;

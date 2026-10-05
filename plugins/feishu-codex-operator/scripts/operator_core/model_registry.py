@@ -75,9 +75,15 @@ class ModelRegistry:
                     raise RouterError("invalid_route_string")
             if not row["model"] or not row["display_name"]:
                 raise RouterError("empty_route_name")
-            base = urlsplit(row["api_base"])
-            if (base.scheme not in {"http", "https"} or not base.hostname or base.username
-                    or base.password or base.query or base.fragment or "%" in base.netloc):
+            try:
+                base = urlsplit(row["api_base"])
+                valid_base = (base.scheme in {"http", "https"} and bool(base.hostname)
+                              and not base.username and not base.password
+                              and not base.query and not base.fragment and "%" not in base.netloc
+                              and (base.port is None or 1 <= base.port <= 65535))
+            except ValueError:
+                valid_base = False
+            if not valid_base:
                 raise RouterError("invalid_api_base")
             if base.scheme == "http" and base.hostname not in {"127.0.0.1", "::1", "localhost"}:
                 raise RouterError("remote_api_requires_https")

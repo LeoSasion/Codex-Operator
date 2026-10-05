@@ -138,6 +138,15 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(RouterError, "input_tool_definitions_not_supported"):
             preflight(ROUTE, request=request)
 
+    def test_invalid_endpoint_ports_fail_configuration_only_preflight(self):
+        for base in ("http://127.0.0.1:0/v1", "http://127.0.0.1:abc/v1",
+                     "http://[::1]:65536/v1"):
+            row = {**deepcopy(ROUTE), "api_base": base}
+            before = deepcopy(row)
+            with self.subTest(base=base), self.assertRaisesRegex(RouterError, "^invalid_api_base$"):
+                preflight(row)
+            self.assertEqual(row, before)
+
     def test_stale_source_and_missing_checks_are_never_verified(self):
         profile = self.profile()
         profile["adapter_sha256"] = "0" * 64

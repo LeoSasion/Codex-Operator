@@ -42,6 +42,7 @@ PROTOCOL_REASONS = frozenset({
     "invalid_external_sse_event_no_retry", "truncated_external_sse_no_retry",
     "unsupported_adapted_response_encoding_or_status", "external_json_response_required",
     "external_sse_response_required", "unsupported_adapted_stream_encoding",
+    "external_json_response_too_large",
     "text_part_too_large", "text_snapshot_mismatch", "invalid_text_part_index",
     "invalid_initial_text_parts", "text_part_type_changed", "text_event_item_type_mismatch",
     "invalid_text_part", "duplicate_or_late_text_part", "text_delta_after_done",

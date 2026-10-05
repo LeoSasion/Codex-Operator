@@ -101,6 +101,21 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(RouterError):
             registry(ROUTE, ROUTE)
 
+    def test_endpoint_ports_reject_invalid_values_and_preserve_legal_urls(self):
+        for base in ("http://127.0.0.1:0/v1", "http://127.0.0.1:abc/v1",
+                     "https://remote.example:65536/v1", "http://[::1]:-1/v1",
+                     "http://[::1/v1"):
+            with self.subTest(base=base), self.assertRaisesRegex(RouterError, "^invalid_api_base$"):
+                registry({**ROUTE, "api_base": base})
+        for base in ("https://remote.example/v1", "https://remote.example:65535/v1",
+                     "http://127.0.0.1/v1", "http://127.0.0.1:1/v1",
+                     "http://[::1]/v1", "http://[::1]:65535/v1", "http://localhost:4317/v1"):
+            row = {**ROUTE, "api_base": base}
+            before = deepcopy(row)
+            with self.subTest(base=base):
+                self.assertEqual(registry(row).routes[row["slug"]].api_base, base)
+                self.assertEqual(row, before)
+
 
 @unittest.skipIf(aiohttp is None, "optional router environment is required")
 class RouterTests(unittest.IsolatedAsyncioTestCase):
