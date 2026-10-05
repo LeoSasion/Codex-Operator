@@ -1,6 +1,19 @@
 # 后台浏览器实现来源
 
-## 2026-09-20 当前参考策略与研究范围
+## 2026-10-05 当前参考策略与范围
+
+所有者明确今后重点参考 [BigPizzaV3/CodexPlusPlus（Codex++）](https://github.com/BigPizzaV3/CodexPlusPlus)，保留我们自身优势，只借鉴其解决方案补救已确认的必要缺点。新增功能或界面须先与所有者商量并取得同意；有价值的建议先提出，参考项目的功能不自动进入本项目范围。现有已授权修复继续进行。
+
+保留原生 Desktop 的任务、上下文、权限和工具执行所有权，官方直连与拓展实例隔离，准确模型/工具身份、完整历史、零回放及恢复原件。具体内部改造按必要缺口判断，重大方向变化先讨论用户收益、迁移/恢复和验证计划。
+
+上一次源码对照固定到 [`f55bb64663ba5024ab434017bb6212a0fd9f4bb3`](https://github.com/BigPizzaV3/CodexPlusPlus/tree/f55bb64663ba5024ab434017bb6212a0fd9f4bb3)（上游提交日期 2026-10-03）。已对照 `relay_config.rs` 的 provider/目录生成、`protocol_proxy.rs` 的按型号路由与协议转换，以及 `assets/inject/renderer-inject/70-model-catalog.js` 的菜单注入。此次方向变更只更新规则，没有移植其代码、安装产品或验证其本机效果。未来实际采用须登记准确提交、文件/符号、采用机制、限制、许可和本项目验证范围。
+
+Chat On Steroids 从首要参考转为既有机制的历史/补充来源，原有参考、固定提交、已采用机制、许可及通过/失败记录完整保留。下列旧优先级均按各自日期理解，不覆盖本节当前方向。
+
+同日开始的实际研究与独立修复统一记在[Codex++ 方案吸纳记录](../../../development/docs/codexplusplus-adoption.md)，包含固定文件/符号、现有覆盖、必要缺口和本项目验证。该提交许可证为 AGPLv3；本轮只借鉴机制与验证方法，没有复制其代码或引入运行依赖。
+
+
+## 2026-09-20 历史参考策略与研究范围
 
 2026-10-02 两种入口实施采用当前官方包的精确本地源码观察和
 [Windows 注册激活接口](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-iapplicationactivationmanager-activateapplication)。
@@ -25,7 +38,7 @@
 保留原登录；只支持 macOS，运行中的同聊切换不支持。采用研究接入思路，独立写候选策略，
 未执行安装器或移植自动结束进程、签名、固定外部模型和错误回退。当前 Windows 包的私有
 JS 候选只通过静态语法和参数边界核验。主窗口、实际路由与安全部署均未验证，详见
-[原生模型菜单候选](../../common/docs/native-menu-provider-candidate.md)。主参考策略保持不变。
+[原生模型菜单候选](../../common/docs/native-menu-provider-candidate.md)。当日主参考策略保持不变；当前策略见本页开头。
 
 2026-10-01 重新核对首要参考的当前提交为
 [`2524773c8b4389c27f6c420c6a27f5a14bacbe4d`](https://github.com/totec448-spec/chat-on-steroids/tree/2524773c8b4389c27f6c420c6a27f5a14bacbe4d)。
@@ -48,7 +61,7 @@ not planned，并非本项目的验收。我们独立验证的是单一自定义
 `openai_base_url` 会重新引入本项目已实测的内置原生 413 重发边界，所以没有采用。
 没有复制上游代码或安装该参考产品。
 
-所有者将 [Chat On Steroids](https://github.com/totec448-spec/chat-on-steroids) 设为首要参考。
+2026-09-20，所有者将 [Chat On Steroids](https://github.com/totec448-spec/chat-on-steroids) 设为当时的首要参考。
 2026-09-24 核对下列四个独立仓库均可访问，但仅在出现具体缺口时查阅：
 [WebCodex](https://github.com/yyjeqhc/webcodex)、
 [localmcp](https://github.com/daodao97/localmcp)、
@@ -95,8 +108,9 @@ Desktop bridge 草案也不是已完成的 Windows 模型菜单方案。没有�
 观察失败即放行、reload 或 retry；没有复制上游代码。验证结果单列在
 [发布验收](../../../development/docs/release-audit.md)，此项不能推导当前页面已登录或服务已部署。
 
-下方历史中的“当前”“优先级不变”均指对应记录日期。2026-09-20 后统一以本节的
-Chat On Steroids 首要策略为准。2026-09-24 已移除仅用于旧验收的项目搜索禁用配置；
+下方历史中的“当前”“优先级不变”均指对应记录日期。2026-09-20 至 2026-10-04 的
+Chat On Steroids 首要策略保留为历史；2026-10-05 起以本页开头的 Codex++ 策略为准。
+2026-09-24 已移除仅用于旧验收的项目搜索禁用配置；
 当前 Web-only 搜索方案和通过/失败边界见[项目记忆](native-web-experience.md)，
 合并的逐次验收见[历史索引](native-web-history-20260924.md)。来源登记不是功能验收。
 

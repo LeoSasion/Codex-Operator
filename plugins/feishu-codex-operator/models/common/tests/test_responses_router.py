@@ -416,12 +416,21 @@ class AdaptedRouterTests(unittest.IsolatedAsyncioTestCase):
         self.mode = "normal"
         # Smaller fixture bound admits the request but rejects the larger complete response.
         size = len(dumps(prepare(self.payload)[0]).encode()) + 150
-        self.scripted_items = [text_events("X" * (size + 200))[-1]["response"]["output"][0]]
+        self.scripted_items = [text_events("X" * (size + 200))[-1]["response"]["output"][0]] * 2
         with patch("operator_core.model_router.MAX_BODY", size):
             reply = await self.client.post(self.endpoint, json={**self.payload, "stream": True})
             self.assertEqual(reply.status, 502)
-            self.assertNotIn(b"response.completed", await reply.read())
-        self.assertEqual(len(self.received), 2)
+            raw = await reply.read()
+            self.assertNotIn(b"response.completed", raw)
+            self.assertNotIn(b"custom_tool_call", raw)
+            self.assertEqual(self.router.last_failure["protocol_reason"], "external_json_response_too_large")
+            self.assertNotIn("X" * 20, json.dumps(self.router.last_failure))
+            ws = await self.client.ws_connect(self.endpoint)
+            await ws.send_json({**self.payload, "type": "response.create"})
+            self.assertEqual((await ws.receive(timeout=2)).type, aiohttp.WSMsgType.CLOSE)
+            await ws.close()
+            self.assertEqual(self.router.last_failure["protocol_reason"], "external_json_response_too_large")
+        self.assertEqual(len(self.received), 3)
 
     async def test_input_tools_opt_in_and_invalid_definitions_fail_before_upstream(self):
         block = {"type": "additional_tools", "role": "developer", "tools": [EXEC]}

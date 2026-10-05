@@ -88,7 +88,7 @@ Web 仍使用自己的独立受管服务和原生工具桥；它的原生入口�
 
 ## 研究来源
 
-首要参考仍为 [Chat On Steroids](https://github.com/totec448-spec/chat-on-steroids/tree/2524773c8b4389c27f6c420c6a27f5a14bacbe4d)。当前固定提交的 [Desktop bridge 草案](https://github.com/totec448-spec/chat-on-steroids/blob/2524773c8b4389c27f6c420c6a27f5a14bacbe4d/docs/codex-desktop-bridge.md) 仍没有生产入口；它的准确任务身份与 Desktop 所有权边界保留，不引入单独工作界面、伴随扩展、Loop 或多智能体编排。
+本阶段当时以 [Chat On Steroids](https://github.com/totec448-spec/chat-on-steroids/tree/2524773c8b4389c27f6c420c6a27f5a14bacbe4d) 为首要参考；2026-10-05 起重点参考 Codex++，按[当前策略](../../web/docs/web-background-sources.md)补救必要缺点，新增功能或界面先与所有者商量。下述固定提交的 [Desktop bridge 草案](https://github.com/totec448-spec/chat-on-steroids/blob/2524773c8b4389c27f6c420c6a27f5a14bacbe4d/docs/codex-desktop-bridge.md) 仍没有生产入口；它的准确任务身份与 Desktop 所有权边界保留，不引入单独工作界面、伴随扩展、Loop 或多智能体编排。
 
 为入口隔离这个具体缺口，额外核对 [Codex Desktop Custom Models 的固定架构](https://github.com/ademisler/codex-desktop-custom-models/blob/10a8954ea2d8fd57d6b8943dc3c035df2e18e1ab/docs/architecture.md)（MIT）。它的 macOS/Linux app clone、独立 home 与 Chat Completions 代理不能满足本项目保留同一官方应用、同一会话及直连的目标，因此仅借鉴提供方隔离的研究方向，未复制代码、安装产品或移植其状态和自动化。各项许可、历史参考及实际采用仍见[来源登记](../../web/docs/web-background-sources.md)。
 

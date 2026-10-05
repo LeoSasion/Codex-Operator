@@ -1,6 +1,6 @@
 # Native experience and project memory
 
-Current guidance as of 2026-10-03. Codex-Operator has two areas: Channels and Models; Models contains API, Local and Web Providers. The Windows preview prioritizes setup and actual task execution. Native Codex owns the conversation, context, permissions, tools and final answer; Operator supplies the transport and its local lifecycle.
+Current guidance as of 2026-10-05. Codex-Operator has two areas: Channels and Models; Models contains API, Local and Web Providers. The Windows preview prioritizes setup and actual task execution. Native Codex owns the conversation, context, permissions, tools and final answer; Operator supplies the transport and its local lifecycle.
 
 ## Read first
 
@@ -212,9 +212,9 @@ records exact Windows source hooks, the necessary additional open-source referen
 it is not installed, not a supported plugin API and not live Desktop acceptance. Do not resume improving
 the rejected external chooser or reactivate an old consumed unified plan.
 
-The owner's 2026-09-20 direction makes Chat On Steroids the primary research reference for smoother native conversation with fewer clicks, configuration steps and interruptions. The four separate dormant references, MCPX identity uncertainty, adopted ideas and applicable copied-code licenses are recorded in one place: [implementation sources](web-background-sources.md).
+The owner's 2026-10-05 direction makes BigPizzaV3/CodexPlusPlus (Codex++) the primary research reference. Borrow its concrete solutions only for confirmed necessary shortcomings, preserving our verified strengths: native Desktop task ownership, official-direct isolation, exact model/tool identities, complete history, zero replay and retained recovery originals. This supersedes Chat On Steroids' earlier priority; previous adopted mechanisms, dormant references, identity uncertainty and licenses remain in [implementation sources](web-background-sources.md).
 
-The scope remains native Codex tasks. Do not introduce a separate workspace UI, companion-extension product, Goal/Loop or another multi-agent orchestrator. For a major internal redesign, explain user benefit, migration and verification before implementation. The [current plan](native-conversation-plan.md) lists remaining work; the [dated history](native-web-history-20260924.md) records superseded approaches and failures.
+The scope remains native Codex tasks. New features or UI require the owner's agreement; discuss useful suggestions first. Continue scoped repairs within existing authorization. Do not introduce a separate workspace UI, companion-extension product, Goal/Loop or another multi-agent orchestrator. Discuss a major internal direction change, its user benefit, migration and verification with the owner before implementation. The [current plan](native-conversation-plan.md) lists remaining work; the [dated history](native-web-history-20260924.md) records superseded approaches and failures.
 
 ## Operational rules
 

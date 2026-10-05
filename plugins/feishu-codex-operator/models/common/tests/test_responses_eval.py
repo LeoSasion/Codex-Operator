@@ -12,11 +12,14 @@ _prepare_test_imports(_OPERATOR_PLUGIN_ROOT)
 
 import asyncio
 from copy import deepcopy
+from contextlib import contextmanager
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -658,6 +661,107 @@ class CliCleanupTests(unittest.IsolatedAsyncioTestCase):
 
 @unittest.skipUnless(os.environ.get("CODEX_OPERATOR_TEST_CLI"), "explicit current Desktop CLI required")
 class CurrentCliEvalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_native_app_server_bootstrap_checks_actual_untrusted_thread_without_turn(self):
+        from aiohttp import web
+        from aiohttp.test_utils import TestServer
+        calls = []
+        async def unexpected_request(request):
+            calls.append((request.method, request.path))
+            return web.json_response({"error": "no_model_request_allowed"}, status=400)
+        app = web.Application()
+        app.router.add_route("*", "/{path:.*}", unexpected_request)
+        server = TestServer(app)
+        await server.start_server()
+        retained = os.environ.get("CODEX_OPERATOR_TEST_NATIVE_CAPTURE")
+        audit = Path(retained) if retained else Path(tempfile.mkdtemp(prefix="operator-native-startup-test-")).resolve()
+        client, result, cleanup = None, None, None
+        try:
+            if retained:
+                self.assertTrue(audit.is_absolute())
+                self.assertFalse(audit.exists())
+                audit.mkdir()
+            root = audit / "private"
+            root.mkdir(mode=0o700)
+            home, work, capture = (root / name for name in ("home", "work", "capture"))
+            for path in (home, work, capture):
+                path.mkdir()
+            catalog = json.loads((Path(evaluator_module.__file__).parent /
+                "operator_core/beeper_model_catalog.json").read_bytes())
+            catalog["models"] = [{**catalog["models"][0], "slug": "synthetic-native"}]
+            catalog_path = root / "catalog.json"
+            catalog_path.write_text(dumps(catalog), encoding="utf-8")
+            settings = {"model": "synthetic-native", "model_provider": "operator_fixture",
+                "model_catalog_json": str(catalog_path),
+                "model_providers.operator_fixture.name": "No-model native startup fixture",
+                "model_providers.operator_fixture.base_url": str(server.make_url("/v1")),
+                "model_providers.operator_fixture.wire_api": "responses",
+                "model_providers.operator_fixture.request_max_retries": 0,
+                "model_providers.operator_fixture.stream_max_retries": 0,
+                "model_providers.operator_fixture.supports_websockets": False}
+            (home / "config.toml").write_text("".join(key + "=" + dumps(value) + "\n"
+                for key, value in settings.items()), encoding="utf-8")
+            try:
+                client = evaluator_module.NativeApprovalCapture(
+                    Path(os.environ["CODEX_OPERATOR_TEST_CLI"]), home, work, capture,
+                    model="synthetic-native", provider="operator_fixture", timeout_seconds=30)
+                await asyncio.to_thread(client.request, "initialize", {
+                    "clientInfo": {"name": "operator_no_model_fixture", "version": "1"},
+                    "capabilities": {"experimentalApi": True}})
+                await asyncio.to_thread(client.notify, "initialized")
+                result = await asyncio.to_thread(client.request, "thread/start", {
+                    "model": client.model, "modelProvider": client.provider, "cwd": str(work),
+                    "approvalPolicy": "untrusted", "approvalsReviewer": "user", "sandbox": "read-only",
+                    "ephemeral": True, "allowProviderModelFallback": False})
+                self.assertEqual((result["approvalPolicy"], result["approvalsReviewer"]), ("untrusted", "user"))
+                self.assertEqual(result["sandbox"]["type"], "readOnly")
+                self.assertIs(result["sandbox"].get("networkAccess", False), False)
+                self.assertEqual(result["runtimeWorkspaceRoots"], [str(work)])
+                self.assertEqual(result["thread"]["id"], client._thread_id)
+                self.assertIsNone(client._turn_id)
+            finally:
+                if client is not None:
+                    client._admission_closed = True
+                    client._cleanup_deadline = time.monotonic() + evaluator_module.CLI_CLEANUP_TIMEOUT_SECONDS
+                    try:
+                        client.process.stdin.close()  # EOF requests normal App Server exit; no turn or tool.
+                        await asyncio.to_thread(client.process.wait, timeout=max(0,
+                            client._cleanup_deadline - time.monotonic()))
+                    except (OSError, evaluator_module.subprocess.TimeoutExpired):
+                        pass  # The original close report keeps unknown/forced exit as failed evidence.
+                    cleanup = await asyncio.to_thread(client.close)
+                raw = {name: (capture / (name + ".raw")).read_bytes()
+                       for name in ("client", "server", "stderr") if (capture / (name + ".raw")).exists()}
+                sent = [json.loads(line) for line in raw.get("client", b"").splitlines()]
+                received = [json.loads(line) for line in raw.get("server", b"").splitlines()]
+                turns = sum(message.get("method") == "turn/started" for message in received)
+                tools = sum(message.get("method") == "item/started"
+                    and message.get("params", {}).get("item", {}).get("type") not in {"userMessage", "agentMessage", "reasoning"}
+                    for message in received)
+                approvals = sum(message.get("method", "").endswith("/requestApproval") for message in received)
+                observation = {"thread_response": result, "cleanup": cleanup,
+                    "fixture_root": str(root),
+                    "http_requests": len(calls), "client_turn_starts": sum(message.get("method") == "turn/start" for message in sent),
+                    "observed_turn_starts": turns, "observed_tool_items": tools, "observed_approval_requests": approvals,
+                    "actual_child_pid": client.process.pid if client is not None else None,
+                    "raw_files": {name: {"path": str(capture / (name + ".raw")),
+                                         "bytes": len(value), "sha256": hashlib.sha256(value).hexdigest()}
+                                  for name, value in raw.items()}}
+                with (audit / "observation.json").open("xb") as handle:
+                    handle.write((dumps(observation) + "\n").encode("utf-8"))
+            self.assertEqual(calls, [])
+            self.assertEqual((turns, tools, approvals), (0, 0, 0), observation)
+            self.assertTrue(cleanup["cleanup_complete"], observation)
+            self.assertFalse(cleanup["cleanup_error"], observation)
+            self.assertFalse(cleanup["capture_failed"], observation)
+            self.assertEqual(cleanup["exit_code"], 0, observation)
+            self.assertTrue(all(stream["complete"] for stream in cleanup["streams"].values()), observation)
+            self.assertEqual([message.get("method") for message in sent],
+                             ["initialize", "initialized", "thread/start"])
+            self.assertTrue(all("result" not in message for message in sent))
+            self.assertTrue(all(message.get("method") != "turn/start" for message in sent))
+        finally:
+            await server.close()
+
     async def test_json_cancellation_reaches_upstream_without_waiting_for_headers(self):
         from aiohttp import web
         from aiohttp.test_utils import TestServer
@@ -817,6 +921,461 @@ class CurrentCliEvalTests(unittest.IsolatedAsyncioTestCase):
                         self.assertTrue(all(d["json_snapshot"] is None for d in report["upstream_dispatches"]))
                 finally:
                     await server.close()
+
+
+class NativeApprovalCaptureTests(unittest.TestCase):
+    """No model/CLI: exercise actual wire identity, owner gate and bounded teardown."""
+    @staticmethod
+    def approval(rpc_id=17, method="item/commandExecution/requestApproval", **overrides):
+        params = {"threadId": "fixture-thread", "turnId": "fixture-turn", "itemId": "fixture-item",
+                  "startedAtMs": 42, "command": "Get-Content exact-fixture.txt", "cwd": "C:/fixture"}
+        if method == "item/fileChange/requestApproval":
+            params.pop("command")
+            params.pop("cwd")
+        params.update(overrides)
+        return {"jsonrpc": "2.0", "id": rpc_id, "method": method, "params": params}
+
+    def gate(self, request):
+        return evaluator_module.NativeApprovalGate((json.dumps(request) + "\r\n").encode("utf-8"),
+            thread_id="fixture-thread", turn_id="fixture-turn",
+            command="Get-Content exact-fixture.txt", cwd="C:/fixture")
+
+    @contextmanager
+    def capture(self, messages=(), *, stderr=b"", exit_observed=True, approval_contract=None):
+        class Process:
+            def __init__(self):
+                self.stdin, self.stdout, self.stderr = io.BytesIO(), io.BytesIO(b"".join(messages)), io.BytesIO(stderr)
+                self.returncode = None
+                self.actions = []
+            def poll(self):
+                return self.returncode
+            def terminate(self):
+                self.actions.append("terminate")
+                if exit_observed:
+                    self.returncode = 0
+            def kill(self):
+                self.actions.append("kill")
+                if exit_observed:
+                    self.returncode = 0
+            def wait(self, timeout):
+                if self.returncode is None:
+                    raise evaluator_module.subprocess.TimeoutExpired("synthetic", timeout)
+                return self.returncode
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ("home", "work", "capture")]
+            for path in paths:
+                path.mkdir()
+            process = Process()
+            with patch.object(evaluator_module.subprocess, "Popen", return_value=process) as launch:
+                client = evaluator_module.NativeApprovalCapture(Path(directory) / "codex.exe", *paths,
+                    model="synthetic-model", provider="fixture-provider", approval_contract=approval_contract)
+            try:
+                yield client, process, launch.call_args
+            finally:
+                client._cleanup_deadline = time.monotonic()
+                process.returncode = 0  # Release this fake only, including the unknown-exit test.
+                client.close()
+
+    def test_single_owner_reply_preserves_integer_and_string_rpc_ids_and_raw_hash(self):
+        for rpc_id in (17, "17"):
+            with self.subTest(rpc_id=rpc_id):
+                gate = self.gate(self.approval(rpc_id))
+                ticket = gate.ticket()
+                self.assertEqual(ticket["request_sha256"], hashlib.sha256(gate.raw).hexdigest())
+                self.assertEqual(gate.response({**ticket, "decision": "decline"}),
+                    {"jsonrpc": "2.0", "id": rpc_id, "result": {"decision": "decline"}})
+                with self.assertRaisesRegex(evaluator_module.RouterError, "owner_decision_rejected"):
+                    gate.response({**ticket, "decision": "accept"})
+
+    def test_unissued_stale_or_broad_owner_decisions_are_rejected_without_consuming_gate(self):
+        for changed in ({}, {"id": "17"}, {"nonce": "old"}, {"request_sha256": "0" * 64},
+                        {"threadId": "other"}, {"turnId": "other"}, {"itemId": "other"},
+                        {"decision": "acceptForSession"}, {"decision": "cancel"},
+                        {"decision": {"acceptWithExecpolicyAmendment": {}}}, {"extra": True}):
+            with self.subTest(changed=changed):
+                gate = self.gate(self.approval())
+                candidate = {**gate.ticket(), "decision": "accept", **changed}
+                if not changed:
+                    candidate = {"decision": "accept"}
+                with self.assertRaisesRegex(evaluator_module.RouterError, "owner_decision_rejected"):
+                    gate.response(candidate)
+                self.assertFalse(gate.used)
+
+    def test_command_scope_rejects_subcallbacks_stdin_and_changed_command_or_cwd(self):
+        for change in ({"approvalId": "subcallback"}, {"kind": "writeStdin"},
+                       {"command": "Get-Content another.txt"}, {"cwd": "C:/other"},
+                       {"additionalPermissions": {}}, {"networkApprovalContext": {}},
+                       {"proposedExecpolicyAmendment": []}, {"proposedNetworkPolicyAmendments": []}):
+            with self.subTest(change=change), self.assertRaisesRegex(evaluator_module.RouterError, "scope_rejected"):
+                self.gate(self.approval(**change))
+        self.assertIsNotNone(self.gate(self.approval(approvalId=None)))
+
+    def test_file_single_action_gate_rejects_session_root_grant(self):
+        self.assertIsNotNone(self.gate(self.approval(method="item/fileChange/requestApproval", grantRoot=None)))
+        with self.assertRaisesRegex(evaluator_module.RouterError, "scope_rejected"):
+            self.gate(self.approval(method="item/fileChange/requestApproval", grantRoot="C:/fixture"))
+
+    def dated_gate(self, request, argv):
+        raw = (dumps(request) + "\r\n").encode("utf-8")
+        return evaluator_module.NativeApprovalGate(raw,
+            thread_id="fixture-thread", turn_id="fixture-turn",
+            command="Get-Content exact-fixture.txt", cwd="C:/fixture",
+            approval_contract=evaluator_module.NATIVE_APPROVAL_CONTRACT_0160, command_argv=argv)
+
+    def proposed_request(self, rpc_id=17):
+        argv = ["C:/fixture/pwsh.exe", "-NoProfile", "-Command", "Get-Content exact-fixture.txt\r\n# 原件🙂"]
+        request = self.approval(rpc_id, environmentId="local", proposedExecpolicyAmendment=argv,
+            availableDecisions=["accept", {"acceptWithExecpolicyAmendment": {
+                "execpolicy_amendment": argv}}, "cancel"])
+        return request, argv
+
+    def test_dated_proposal_is_inert_and_only_exact_single_action_replies_preserve_raw(self):
+        for rpc_id in (17, "17"):
+            for decision in ("accept", "cancel"):
+                with self.subTest(rpc_id=rpc_id, decision=decision):
+                    request, argv = self.proposed_request(rpc_id)
+                    gate = self.dated_gate(request, argv)
+                    self.assertEqual(gate.request, request)
+                    self.assertEqual(gate.raw, (dumps(request) + "\r\n").encode("utf-8"))
+                    ticket = gate.ticket()
+                    self.assertEqual(ticket["request_sha256"], hashlib.sha256(gate.raw).hexdigest())
+                    self.assertEqual(gate.response({**ticket, "decision": decision}),
+                        {"jsonrpc": "2.0", "id": rpc_id, "result": {"decision": decision}})
+                    with self.assertRaisesRegex(evaluator_module.RouterError, "owner_decision_rejected"):
+                        gate.response({**ticket, "decision": decision})
+                    with self.assertRaisesRegex(evaluator_module.RouterError, "scope_rejected"):
+                        self.gate(request)  # Default contract still rejects the same proposal.
+
+    def test_dated_proposal_rejects_broad_changed_malformed_or_unbound_argv_and_permissions(self):
+        request, argv = self.proposed_request()
+        for candidate in (None, [], argv[:1], argv + ["extra"], [*argv[:-1], "another command"],
+                          [*argv[:-1], argv[-1].replace("\r\n", "\n")],
+                          [True], ["bad\x00arg"], ["\ud800"]):
+            with self.subTest(candidate=repr(candidate)), self.assertRaisesRegex(evaluator_module.RouterError, "scope_rejected"):
+                self.dated_gate(request, candidate)
+        for change in ({"proposedExecpolicyAmendment": argv[:1]}, {"proposedExecpolicyAmendment": "wrong"},
+                       {"approvalId": "child"}, {"kind": "writeStdin"}, {"additionalPermissions": {}},
+                       {"networkApprovalContext": {}}, {"proposedNetworkPolicyAmendments": []},
+                       {"environmentId": "remote"}, {"environmentId": None}, {"unknownGrant": True}, {"command": "another command"},
+                       {"cwd": "C:/other"}):
+            with self.subTest(change=change), self.assertRaisesRegex(evaluator_module.RouterError, "scope_rejected"):
+                self.dated_gate({**request, "params": {**request["params"], **change}}, argv)
+        invalid = ["\ud800"]
+        broken = {**request, "params": {**request["params"], "proposedExecpolicyAmendment": invalid,
+            "availableDecisions": ["accept", {"acceptWithExecpolicyAmendment": {
+                "execpolicy_amendment": invalid}}, "cancel"]}}
+        with self.assertRaisesRegex(evaluator_module.RouterError, "scope_rejected"):
+            evaluator_module.NativeApprovalGate((json.dumps(broken, ensure_ascii=True) + "\r\n").encode("utf-8"),
+                thread_id="fixture-thread", turn_id="fixture-turn", command="Get-Content exact-fixture.txt",
+                cwd="C:/fixture", approval_contract=evaluator_module.NATIVE_APPROVAL_CONTRACT_0160,
+                command_argv=invalid)
+
+    def test_dated_advertised_choices_never_authorize_grants_or_unoffered_decline(self):
+        request, argv = self.proposed_request()
+        for offered in (None, [], ["accept", "decline"], ["accept", "cancel", "cancel"],
+                        ["acceptForSession", "cancel"], ["accept", {"acceptWithExecpolicyAmendment": {
+                            "execpolicy_amendment": argv[:1]}}, "cancel"],
+                        ["accept", {"unknown": True}, "cancel"]):
+            with self.subTest(offered=offered), self.assertRaisesRegex(evaluator_module.RouterError, "scope_rejected"):
+                self.dated_gate({**request, "params": {**request["params"], "availableDecisions": offered}}, argv)
+        gate = self.dated_gate(request, argv)
+        for decision in ("decline", "acceptForSession", request["params"]["availableDecisions"][1],
+                         {"grantRoot": "C:/fixture"}, {"applyNetworkPolicyAmendment": {}}):
+            with self.subTest(decision=decision), self.assertRaisesRegex(evaluator_module.RouterError, "owner_decision_rejected"):
+                gate.response({**gate.ticket(), "decision": decision})
+            self.assertFalse(gate.used)
+        plain = self.approval(environmentId="local", availableDecisions=["accept", "cancel"])
+        single = self.dated_gate(plain, None)
+        self.assertEqual(single.response({**single.ticket(), "decision": "accept"})["result"], {"decision": "accept"})
+        legacy = self.dated_gate(self.approval(environmentId="local"), None)
+        self.assertEqual(legacy.response({**legacy.ticket(), "decision": "decline"})["result"], {"decision": "decline"})
+
+    def test_capture_propagates_dated_contract_and_rejects_a_foreign_contract_before_reply(self):
+        request, argv = self.proposed_request("17")
+        raw = (dumps(request) + "\r\n").encode("utf-8")
+        with self.capture([raw], approval_contract=evaluator_module.NATIVE_APPROVAL_CONTRACT_0160) as (client, process, _):
+            client._thread_id, client._turn_id = "fixture-thread", "fixture-turn"
+            observed = client.next_message()
+            gate = client.approval_gate(observed, command="Get-Content exact-fixture.txt",
+                                        cwd="C:/fixture", command_argv=argv)
+            self.assertEqual(process.stdin.getvalue(), b"")
+            pair = client.reply_approval(gate, {**gate.ticket(), "decision": "cancel"})
+            self.assertEqual(pair["pairs"][0]["request"], request)
+            self.assertEqual(json.loads(process.stdin.getvalue())["result"], {"decision": "cancel"})
+        request = self.approval(environmentId="local")
+        raw = (dumps(request) + "\n").encode("utf-8")
+        with self.capture([raw]) as (client, process, _):
+            client._thread_id, client._turn_id = "fixture-thread", "fixture-turn"
+            client.next_message()
+            foreign = self.dated_gate(request, None)
+            with self.assertRaisesRegex(evaluator_module.RouterError, "unobserved_approval"):
+                client.reply_approval(foreign, {**foreign.ticket(), "decision": "accept"})
+            self.assertEqual(process.stdin.getvalue(), b"")
+            self.assertFalse(foreign.used)
+
+    def test_dated_contract_is_explicit_and_file_root_grants_remain_rejected(self):
+        request = self.approval(method="item/fileChange/requestApproval", grantRoot="C:/fixture")
+        with self.assertRaisesRegex(evaluator_module.RouterError, "scope_rejected"):
+            self.dated_gate(request, None)
+        with self.assertRaisesRegex(evaluator_module.RouterError, "contract_rejected"):
+            evaluator_module.NativeApprovalGate((dumps(self.approval()) + "\n").encode("utf-8"),
+                thread_id="fixture-thread", turn_id="fixture-turn", approval_contract="unknown")
+        with tempfile.TemporaryDirectory() as directory, patch.object(evaluator_module.subprocess, "Popen") as launch:
+            paths = [Path(directory) / name for name in ("home", "work", "capture")]
+            for path in paths:
+                path.mkdir()
+            with self.assertRaisesRegex(evaluator_module.RouterError, "configuration_rejected"):
+                evaluator_module.NativeApprovalCapture(Path(directory) / "codex.exe", *paths,
+                    model="synthetic-model", provider="fixture-provider", approval_contract="unknown")
+            launch.assert_not_called()
+
+    def test_malformed_wire_or_approval_identity_never_creates_a_ticket(self):
+        for raw in (b'{"id":1,"id":2}\n', b'{"id":NaN}\n', b'\xff\n', b'[]\n'):
+            with self.subTest(raw=raw), self.assertRaises(evaluator_module.RouterError):
+                evaluator_module.NativeApprovalGate(raw, thread_id="fixture-thread", turn_id="fixture-turn")
+        for rpc_id in (True, None, [], "", 2 ** 63, "\ud800"):
+            with self.subTest(rpc_id=repr(rpc_id)), self.assertRaises(evaluator_module.RouterError):
+                self.gate(self.approval(rpc_id))
+        for change in ({"threadId": "other"}, {"turnId": "other"}, {"itemId": ""},
+                       {"startedAtMs": True}, {"startedAtMs": -1}):
+            with self.subTest(change=change), self.assertRaises(evaluator_module.RouterError):
+                self.gate(self.approval(**change))
+
+    def test_capture_retains_notifications_callback_unicode_crlf_and_exact_id_types(self):
+        notification = {"method": "item/started", "params": {"text": "原件\r\n🙂"}}
+        integer_response = {"id": 1, "result": {"unrelated": True}}
+        callback = self.approval("1")
+        response = {"id": "1", "result": {"server": "synthetic"}}
+        raws = [(dumps(value) + "\r\n").encode("utf-8") for value in
+                (notification, integer_response, callback, response)]
+        with self.capture(raws, stderr="原始诊断\r\n".encode("utf-8")) as (client, process, _):
+            self.assertEqual(client.request("initialize", {}), response["result"])
+            self.assertEqual([client.next_message() for _ in range(3)],
+                             [notification, integer_response, callback])
+            self.assertEqual((client.capture_root / "server.raw").read_bytes(), b"".join(raws))
+            self.assertEqual((client.capture_root / "stderr.raw").read_bytes(), "原始诊断\r\n".encode("utf-8"))
+            self.assertEqual(process.stdin.getvalue(), b'{"jsonrpc":"2.0","id":"1","method":"initialize","params":{}}\n')
+
+    def test_only_observed_pending_request_can_pair_with_explicit_reply(self):
+        request = self.approval()
+        raw = (dumps(request) + "\r\n").encode("utf-8")
+        with self.capture([raw]) as (client, process, _):
+            client._thread_id, client._turn_id = "fixture-thread", "fixture-turn"
+            observed = client.next_message()
+            gate = client.approval_gate(observed, command="Get-Content exact-fixture.txt", cwd="C:/fixture")
+            self.assertEqual(process.stdin.getvalue(), b"")  # Receiving a prompt supplies no decision.
+            pair = client.reply_approval(gate, {**gate.ticket(), "decision": "accept"})
+            self.assertEqual(pair["pairs"][0]["request"], request)
+            self.assertEqual(json.loads(process.stdin.getvalue())["result"], {"decision": "accept"})
+            with self.assertRaisesRegex(evaluator_module.RouterError, "unobserved_approval"):
+                client.reply_approval(gate, {**gate.ticket(), "decision": "accept"})
+            for forged in ({**request, "id": "17"}, {**request, "params": {}}):
+                with self.assertRaisesRegex(evaluator_module.RouterError, "unobserved_approval"):
+                    client.approval_gate(forged)
+
+    def test_fixture_launch_strips_credentials_and_keeps_readonly_never_bootstrap(self):
+        with patch.dict(os.environ, {"GLM_API_KEY": "private", "BUSINESS_TOKEN": "private"}):
+            with self.capture() as (client, _, args):
+                self.assertEqual(args.args[0][1:4], ["app-server", "--listen", "stdio://"])
+                self.assertIn('approval_policy="never"', args.args[0])
+                self.assertIn('sandbox_mode="read-only"', args.args[0])
+                self.assertIn('approvals_reviewer="user"', args.args[0])
+                self.assertIn('project_doc_max_bytes=0', args.args[0])
+                self.assertEqual(args.kwargs["cwd"], str(client.work))
+                self.assertNotIn("GLM_API_KEY", args.kwargs["env"])
+                self.assertNotIn("BUSINESS_TOKEN", args.kwargs["env"])
+                self.assertEqual(args.kwargs["env"]["CODEX_HOME"], str(client.home))
+                self.assertNotIn("text", args.kwargs)
+                self.assertEqual(args.kwargs["stderr"], evaluator_module.subprocess.PIPE)
+
+    def test_thread_and_turn_overrides_cannot_widen_fixture_permissions(self):
+        with self.capture() as (client, process, _):
+            required = {"model": client.model, "modelProvider": client.provider, "cwd": str(client.work),
+                "approvalPolicy": "untrusted", "approvalsReviewer": "user", "sandbox": "read-only",
+                "ephemeral": True, "allowProviderModelFallback": False}
+            client._validate_request("thread/start", required)
+            for change in ({"sandbox": "danger-full-access"}, {"approvalPolicy": "never"},
+                           {"approvalsReviewer": "auto_review"}, {"cwd": "C:/business"},
+                           {"allowProviderModelFallback": True}, {"config": {}}, {"dynamicTools": []}):
+                with self.subTest(change=change), self.assertRaises(evaluator_module.RouterError):
+                    client.request("thread/start", {**required, **change})
+            client._thread_id = "fixture-thread"
+            turn = {"threadId": client._thread_id, "input": [{"type": "text", "text": "synthetic", "text_elements": []}]}
+            client._validate_request("turn/start", turn)
+            with self.assertRaises(evaluator_module.RouterError):
+                client.request("turn/start", {**turn, "sandboxPolicy": {"type": "dangerFullAccess"}})
+            self.assertEqual(process.stdin.getvalue(), b"")
+
+    def test_capture_byte_budget_rejects_before_rpc_delivery_and_retains_failure(self):
+        raw = (dumps({"method": "notice", "params": {"text": "x" * 70}}) + "\n").encode()
+        with patch.object(evaluator_module, "NATIVE_RPC_BYTES", 64):
+            with self.capture([raw]) as (client, _, _):
+                with self.assertRaisesRegex(evaluator_module.RouterError, "capture_failed"):
+                    client.next_message()
+                report = client.close()
+                self.assertTrue(report["capture_failed"])
+                self.assertLessEqual(report["capture_bytes"], 64)
+
+    def test_start_error_or_missing_identity_is_consumed_and_cannot_dispatch_again(self):
+        for method in ("thread/start", "turn/start"):
+            for payload in ({"error": {"code": -1, "message": "private upstream error"}}, {"result": {}}):
+                raw = (dumps({"id": "1", **payload}) + "\n").encode()
+                with self.subTest(method=method, payload=payload), self.capture([raw]) as (client, process, _):
+                    if method == "thread/start":
+                        params = {"model": client.model, "modelProvider": client.provider, "cwd": str(client.work),
+                            "approvalPolicy": "untrusted", "approvalsReviewer": "user", "sandbox": "read-only",
+                            "ephemeral": True, "allowProviderModelFallback": False}
+                    else:
+                        client._thread_id = "fixture-thread"
+                        params = {"threadId": client._thread_id,
+                                  "input": [{"type": "text", "text": "synthetic", "text_elements": []}]}
+                    with self.assertRaises(evaluator_module.RouterError) as raised:
+                        client.request(method, params)
+                    self.assertNotIn("private upstream error", str(raised.exception))
+                    original = process.stdin.getvalue()
+                    with self.assertRaisesRegex(evaluator_module.RouterError, "method_rejected"):
+                        client.request(method, params)
+                    self.assertEqual(process.stdin.getvalue(), original)
+                    self.assertEqual(len(original.splitlines()), 1)
+
+    def test_native_thread_echo_conflicts_stop_before_turn_dispatch(self):
+        conflicts = ({"model": "different-model"}, {"modelProvider": "different-provider"},
+                     {"approvalPolicy": "never"}, {"approvalsReviewer": "auto_review"},
+                     {"cwd": "C:/business"}, {"sandbox": {"type": "dangerFullAccess"}},
+                     {"sandbox": {"type": "readOnly", "networkAccess": True}},
+                     {"runtimeWorkspaceRoots": []}, {"runtimeWorkspaceRoots": ["C:/business"]},
+                     {"instructionSources": ["business/AGENTS.md"]})
+        for conflict in ({}, *conflicts, "extra_workspace_root"):
+            with self.subTest(conflict=conflict), self.capture() as (client, process, _):
+                if conflict == "extra_workspace_root":
+                    conflict = {"runtimeWorkspaceRoots": [str(client.work), "C:/business"]}
+                params = {"model": client.model, "modelProvider": client.provider, "cwd": str(client.work),
+                    "approvalPolicy": "untrusted", "approvalsReviewer": "user", "sandbox": "read-only",
+                    "ephemeral": True, "allowProviderModelFallback": False}
+                result = {**{key: params[key] for key in ("model", "modelProvider", "cwd", "approvalPolicy", "approvalsReviewer")},
+                          "sandbox": {"type": "readOnly", "networkAccess": False}, "thread": {"id": "fixture-thread"},
+                          "runtimeWorkspaceRoots": [str(client.work)],
+                          **conflict}
+                # This is a scripted transport response, not a synthesized live echo.
+                client._deferred = [{"id": "1", "result": result}]
+                if conflict:
+                    with self.assertRaisesRegex(evaluator_module.RouterError, "thread_contract_conflict"):
+                        client.request("thread/start", params)
+                    original = process.stdin.getvalue()
+                    with self.assertRaises(evaluator_module.RouterError):
+                        client.request("turn/start", {"threadId": "fixture-thread", "input": []})
+                    self.assertEqual(process.stdin.getvalue(), original)
+                    self.assertIsNone(client._thread_id)
+                else:
+                    self.assertEqual(client.request("thread/start", params), result)
+                    self.assertEqual(client._thread_id, "fixture-thread")
+
+    def test_expired_owner_wait_sends_no_denial_and_exact_interrupt_is_once_only(self):
+        response = (dumps({"id": "1", "result": {}}) + "\n").encode()
+        with self.capture([response]) as (client, process, _):
+            client._thread_id, client._turn_id = "fixture-thread", "fixture-turn"
+            client.deadline = time.monotonic() - 1
+            with self.assertRaises(evaluator_module.RouterError):
+                client._write({"id": 17, "result": {"decision": "decline"}})
+            self.assertEqual(process.stdin.getvalue(), b"")
+            self.assertEqual(client.interrupt_turn(), {})
+            self.assertEqual(json.loads(process.stdin.getvalue())["params"],
+                             {"threadId": "fixture-thread", "turnId": "fixture-turn"})
+            self.assertEqual(json.loads(process.stdin.getvalue())["method"], "turn/interrupt")
+            self.assertLessEqual(client._cleanup_deadline - time.monotonic(), 5)
+            with self.assertRaisesRegex(evaluator_module.RouterError, "interrupt_identity_rejected"):
+                client.interrupt_turn()
+
+    def test_unobserved_process_exit_is_not_success_and_all_raw_paths_remain(self):
+        with self.capture(exit_observed=False) as (client, process, _):
+            client._thread_id, client._turn_id = "fixture-thread", "fixture-turn"
+            gate = self.gate(self.approval())
+            client._observed[(int, 17)] = gate.raw
+            client._cleanup_deadline = time.monotonic()
+            report = client.close()
+            self.assertIsNone(report["exit_code"])
+            self.assertFalse(report["cleanup_complete"])
+            self.assertTrue(report["cleanup_error"])
+            self.assertEqual(process.actions, ["terminate", "kill"])
+            self.assertTrue(all((client.capture_root / (name + ".raw")).is_file()
+                                for name in ("client", "server", "stderr")))
+            with self.assertRaisesRegex(evaluator_module.RouterError, "admission_closed"):
+                client.reply_approval(gate, {**gate.ticket(), "decision": "accept"})
+            with self.assertRaisesRegex(evaluator_module.RouterError, "admission_closed"):
+                client.request("turn/start", {})
+            with self.assertRaises(evaluator_module.RouterError):
+                client._write({"method": "turn/start"})
+            self.assertEqual(process.stdin.getvalue(), b"")
+            self.assertFalse(gate.used)
+
+    def test_deferred_messages_do_not_bypass_deadline_or_capture_failure(self):
+        for failed in (False, True):
+            with self.subTest(failed=failed), self.capture() as (client, _, _):
+                client._deferred = [self.approval()]
+                if failed:
+                    client._capture_failed = True
+                else:
+                    client.deadline = time.monotonic() - 1
+                with self.assertRaises(evaluator_module.RouterError):
+                    client.next_message()
+                self.assertEqual(len(client._deferred), 1)
+
+    def test_cleanup_io_error_or_busy_metadata_lock_preserves_fixed_failed_observation(self):
+        with self.capture() as (client, _, _):
+            original = client._handles["server"]
+            class FailedClose:
+                def close(self):
+                    raise OSError("private filesystem exception")
+            client._handles["server"] = FailedClose()
+            try:
+                report = client.close()
+                self.assertTrue(report["cleanup_error"])
+                self.assertEqual(report["exit_code"], 0)
+                self.assertNotIn("private filesystem exception", dumps(report))
+            finally:
+                client._handles["server"] = original
+                original.close()
+        with self.capture() as (client, _, _):
+            client._cleanup_deadline = time.monotonic()
+            client._lock.acquire()
+            try:
+                report = client.close()
+                self.assertFalse(report["capture_metadata_complete"])
+                self.assertFalse(report["cleanup_complete"])
+                self.assertIsNone(report["capture_bytes"])
+                self.assertEqual(report["streams"], {})
+            finally:
+                client._lock.release()
+
+    def test_second_reader_start_failure_cleans_child_and_retains_fixed_failure_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ("home", "work", "capture")]
+            for path in paths:
+                path.mkdir()
+            process = SimpleNamespace(returncode=None, stdin=io.BytesIO(), stdout=io.BytesIO(), stderr=io.BytesIO())
+            process.poll = lambda: process.returncode
+            process.terminate = process.kill = lambda: setattr(process, "returncode", 0)
+            process.wait = lambda timeout: process.returncode
+            original_start = evaluator_module.threading.Thread.start
+            calls = []
+            def start(reader):
+                calls.append(reader)
+                if len(calls) == 2:
+                    raise RuntimeError("private resource exception")
+                return original_start(reader)
+            with patch.object(evaluator_module.subprocess, "Popen", return_value=process), \
+                    patch.object(evaluator_module.threading.Thread, "start", start):
+                with self.assertRaisesRegex(evaluator_module.RouterError, "native_fixture_reader_start_failed"):
+                    evaluator_module.NativeApprovalCapture(Path(directory) / "codex.exe", *paths,
+                        model="synthetic-model", provider="fixture-provider")
+            report = json.loads((paths[2] / "reader-start-failure.json").read_bytes())
+            self.assertEqual(report["state"], "failed")
+            self.assertEqual(report["cleanup"]["exit_code"], 0)
+            self.assertTrue(report["cleanup"]["capture_failed"])
+            self.assertTrue(process.stdin.closed)
+            self.assertNotIn("private resource exception", dumps(report))
+            self.assertTrue(all((paths[2] / (name + ".raw")).is_file()
+                                for name in ("client", "server", "stderr")))
 
 
 if __name__ == "__main__":

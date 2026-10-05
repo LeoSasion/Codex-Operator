@@ -33,7 +33,7 @@ conversation manager 的 `sendRequest` 接入点。原包保持不变。候选�
 
 ## 必要参考与许可
 
-首要产品研究参考仍为 Chat On Steroids；这个菜单接入缺口额外核对了
+2026-10-02 的研究当时以 Chat On Steroids 为首要参考；2026-10-05 起按[当前参考策略](../../web/docs/web-background-sources.md)重点参考 Codex++，新增功能或界面先与所有者商量。本候选状态不因此改变。这个菜单接入缺口当时额外核对了
 [Keksuccino/Better-Codex-App-Custom-Provider-Support](https://github.com/Keksuccino/Better-Codex-App-Custom-Provider-Support/tree/4e19e474330dc5266eb814e425410127aa7c1a4e)，
 固定提交 `4e19e474330dc5266eb814e425410127aa7c1a4e`，Unlicense。
 参考 `patch_chatgpt_providers.py` 的 `CENTRAL_DIFF`、`PICKER_DIFF` 及版本变体，
