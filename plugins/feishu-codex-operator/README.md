@@ -17,7 +17,7 @@ Two functional areas share the native Codex task:
 
 Codex Desktop owns task history, files, approvals and actual tool execution.
 
-[开始使用](QUICKSTART.md) · [模块结构](MODULES.md) · [许可证与来源](NOTICE.md) · [安装与卸载](shared/docs/installation-and-removal.md)
+[开始使用](QUICKSTART.md) · [模块结构](MODULES.md) · [参考与致谢](NOTICE.md) · [安装与卸载](shared/docs/installation-and-removal.md)
 
 Install the local Marketplace from the extracted release, select **Codex-Operator**, and ask:
 

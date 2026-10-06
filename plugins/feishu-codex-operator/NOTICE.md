@@ -1,15 +1,8 @@
-# Licenses and acknowledgements
+# 参考与致谢
 
-Codex-Operator's original code is available under the MIT license in LICENSE.
-Included third-party portions retain their original licenses and attribution.
+感谢以下两个项目在设计思路与验证方法上提供的启发。相关改进由本项目独立实现，没有移植这两个项目的代码。
 
-- **BigPizzaV3/CodexPlusPlus (Codex++)** is the primary research reference under the owner's 2026-10-05 direction, to address necessary shortcomings while retaining Codex-Operator's verified strengths. The fixed research snapshot uses AGPLv3; this work independently adopts design and verification methods without copying code or introducing its runtime. New features or UI still require owner agreement, and future code reuse must retain applicable licensing and attribution. See [adoption record](development/docs/codexplusplus-adoption.md) for exact sources, changes and validation.
-- **totec448-spec/chat-on-steroids** was the primary research reference under the owner's 2026-09-20 direction, for smoother native conversations with fewer setup steps and interruptions. Its previous research and independently adopted mechanisms remain retained as historical/supplementary sources, not a code transplant.
-- **yyjeqhc/webcodex** informed native task ownership and background lifecycle. It is now a dormant reference, consulted for concrete gaps; its Apache-2.0 license is retained in `models/web/licenses/webcodex-Apache-2.0.txt`.
-- **daodao97/localmcp** is a reference for local tool connection and onboarding.
-- **MCPX** is a product reference supplied by the owner. The exact screenshot identity is unconfirmed; `opentokenz/mcpx` is only a candidate.
-- **miuuyy/codex-chatgpt-web** is a supplementary, lowest-priority reference. Adapted browser/tool transport portions retain the MIT notice in `models/web/licenses/codex-chatgpt-web-MIT.txt`.
-- **farion1231/cc-switch** informed Responses tool-map design; see the implementation references for actual adoption and boundaries.
+- [Codex++（BigPizzaV3/CodexPlusPlus）](https://github.com/BigPizzaV3/CodexPlusPlus)：为失败诊断、配置预检和工具流边界验证提供参考，具体采用见[方案吸纳记录](development/docs/codexplusplus-adoption.md)。
+- [Chat On Steroids（totec448-spec/chat-on-steroids）](https://github.com/totec448-spec/chat-on-steroids)：为保存连接复用、后台准备与模型发送的分离，以及网页状态判断提供参考。
 
-Detailed provenance and source links: [background implementation sources](models/web/docs/web-background-sources.md).
-No OpenAI, ChatGPT, Codex, Feishu or other third-party product is relicensed by this project.
+Codex-Operator 自有代码采用 [MIT](LICENSE)。其他研究资料、固定版本及已有来源与许可标注见[详细来源记录](models/web/docs/web-background-sources.md)；原有许可文件和源码版权标注继续保留。
