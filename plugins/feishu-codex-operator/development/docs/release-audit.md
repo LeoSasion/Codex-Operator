@@ -2322,3 +2322,54 @@ Real Desktop approvals, selected API models, installation ownership/lifecycle,
 Channels delivery and the unavailable second account remain separate acceptance
 gates. Web remains experimental. A fresh manually invoked Desktop-closed full
 plan will be prepared separately; preparation does not execute that plan.
+
+## 2026-10-06: frozen alpha139 full regression and protection passed
+
+The owner manually executed the new one-shot Desktop-closed full plan from
+21:27 to 21:52 Asia/Shanghai. It bound commit
+6e7cd1faace8b5ce3d599b450d72159a5f46a872, whose tree equals merged main commit
+b6ee1390cd406891ff04d92dc9bfdbf6ed279cea, and all 288 source files. The recorded
+executable versions were Python 3.14.3, Codex CLI 0.160.0, Node 24.14.0 and
+PowerShell 7.6.6. The preserved receipt SHA256 is
+d3218ab32fcda5a951cda22969c9e4df432d3536474878ab11a449be71929fcc.
+
+Python ran 1,822 tests in 1,464.712 seconds with OK and four explicit environment
+skip records: unavailable symlinks, the two reparse subcases and the unselected
+Bash fixture. These remain unverified conditions rather than successful cases.
+Node passed all 157 tests with zero failures, cancellations, skips or todo.
+Complete raw captures contain no unhandled callback, thread, Task or connection
+reset error. The terminal state is passed_with_reported_environment_skips.
+
+All nine integrity checks passed and protected_delta is empty. Independent
+reviews matched before/after existence, SHA256, size and file identities of
+all 26 protected targets, 48 retained original copies, four absent-copy states,
+the exact catalog input and 730 historical reference pins. Source snapshots
+match preparation, intent, before and after. The saved native configuration,
+cache and authentication originals are byte-identical for this run. Fixed
+native-client counts were zero at the two observation endpoints; no continuous
+absence or whole-process-tree claim is added. Only the new output directory and
+precreated outer harness home have the reviewed private ACL scope; synthetic
+work directories retain ordinary inheritance, and prior/inner-directory privacy
+is not retroactively attested. The first unexecuted preparation remains retained.
+
+This closes the frozen source regression and protection gate without changing
+any earlier failure or replaying an old request. The exact pre-recording preview
+ZIP SHA256 is 2c6126876b956c6895d77e5feb6979a169dfe6073647b45f9aec14a4535e3892.
+These result documents and their reviewed inventory digest are recorded after
+the run; a subsequent package binds its own full bytes and does not inherit
+that whole-source or whole-ZIP identity.
+
+A later read-only review found the old pinned CLI file absent and a current
+official candidate with different bytes. Its current version was not probed;
+the writer/removal cause is unknown. This later state does not invalidate the
+preserved run or qualify the new executable or live Desktop. The installed
+alpha138 runtime is still unchanged. It lacks first-install ownership, so the
+ordinary installer refuses replacement; the legacy code-maintenance transaction
+also refuses cross-version updates. Alpha139 deployment needs a separately
+reviewed maintenance path and cannot bypass either check.
+
+Real Desktop approvals, selected API-model acceptance, clean-user installation
+lifecycle, Channels attachment/scope/recovery cases and the unavailable second
+account remain separate open release gates. Web stays experimental. No runtime
+deployment, service restart, routing activation or formal publication occurred
+as part of this evidence review.
