@@ -373,7 +373,7 @@ function Write-RuntimeManifest {
     }
     $manifest = [ordered]@{
         schema_version = 1
-        operator_version = '4.2.0-alpha.138'
+        operator_version = '4.2.0-alpha.139'
         public_entry = [ordered]@{
             path = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'codex-operator.ps1'))
             sha256 = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'codex-operator.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -502,6 +502,6 @@ if (Test-Path -LiteralPath $health -PathType Leaf) {
     Remove-Item -LiteralPath $health -Force
 }
 
-Write-Output "Installed Codex-Operator runtime 4.2.0-alpha.138 into $runtime"
+Write-Output "Installed Codex-Operator runtime 4.2.0-alpha.139 into $runtime"
 Write-Output 'The Operator remains stopped. Configure the minimal Beeper UUID, register Final Callback routing, review Hooks in Desktop settings, then start it.'
 if (-not $SkipDesktopEntry) { Install-OperatorDesktopExperience -ProjectRoot $project | ConvertTo-Json }

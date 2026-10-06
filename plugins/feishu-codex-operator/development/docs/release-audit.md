@@ -2260,3 +2260,65 @@ upgrade plus native opening rather than implying custom-model activation. Its
 PowerShell parse check and eight existing feedback tests passed in 7.321 seconds.
 This later renderer change is separate from the retained full run and does not
 change any candidate or direct-plan source binding.
+
+## 2026-10-06: alpha139 opaque response framing candidate
+
+The owner's manually executed Desktop-closed full run retained one failure:
+Python ran 1,815 tests in 1,475.699 seconds, with one failure and four explicit
+environment skips; Node passed 157 tests. All nine protection checks passed.
+The exact native-client absence checks passed before and after the run, without
+claiming continuous absence. The strict CLI fixture reported a Windows Proactor
+connection-close callback error (WinError 10054). Its business assertions and
+complete history were preserved; no failed receipt was reclassified.
+
+Two new independent 32-case diagnostic batches on the old source retained five
+and six failures. Observations identified the router's inbound connection, not
+the upstream response connection. The observed final response operation had
+returned after write_eof; this does not attest to client consumption or establish
+the operating-system reset's root cause. The original exception handler and
+default logging remained enabled. No loop-policy change, callback filtering,
+request replay, original CLI assertion change or upstream fixture workaround
+was adopted.
+
+The alpha139 repair preserves an upstream Content-Length only for opaque
+response passthrough with one valid ASCII decimal length, no Transfer-Encoding,
+and no Connection field nomination of content-length. Its original value is
+retained. Adapted response bodies keep their existing framing. The stream counts
+actual bytes before each write and at EOF and retains the fixed protocol failure
+upstream_response_length_mismatch; it never truncates, pads, buffers the complete
+response, removes SSE terminal content or retries. This preserves fixed-length
+framing rather than unnecessarily converting that response to chunked transfer.
+
+Seven new tests cover header eligibility, genuine chunked passthrough, delivery
+of a first fixed-length chunk before upstream completion, and controlled
+overrun/underrun with a real downstream client. Existing native/external SSE,
+compressed-byte and 413 cases retain their assertions and check the framing.
+Controlled malformed streams test the writer guard, not parser acceptance of
+arbitrary malicious raw HTTP. Responses without an eligible length retain the
+existing path; the repair is not an attestation about every upstream stream.
+
+On the frozen alpha139 code, a new 32-case CLI sampling run passed all cases with
+zero skips and all nine protections. A subsequent five-module run passed all
+123 tests in 71.089 seconds, with zero skips and no unhandled callback, thread
+or task errors in the complete captures. Its overall receipt nevertheless
+remains failed: only the native model cache changed, with ten differing bytes
+inside the top-level fetched_at value and all other raw bytes identical. Both
+retained files were 418,901 bytes with the same file identity. The writer is
+unknown; neither that field nor either failed protection check is waived.
+
+Independent review matched all 288 frozen source files, 607 prior references,
+retained originals and complete captures. The two test runs used identical
+source snapshots. These results support this scoped source repair and do not
+establish a passing full local acceptance run. The newly expected full suite is
+1,822 Python tests and 157 Node tests; the four explicit environment skips and
+all earlier failures stay visible. Final documentation and its reviewed digest
+are revised after those terminal results, so the final preview binds its own
+complete source rather than inheriting the previous whole-source snapshot.
+
+The source version is 4.2.0-alpha.139 and the package remains 1.2.0-preview.1.
+The installed alpha138 runtime, native configuration, credentials, shortcuts,
+services, model choices and failed histories were not deployed or rewritten.
+Real Desktop approvals, selected API models, installation ownership/lifecycle,
+Channels delivery and the unavailable second account remain separate acceptance
+gates. Web remains experimental. A fresh manually invoked Desktop-closed full
+plan will be prepared separately; preparation does not execute that plan.

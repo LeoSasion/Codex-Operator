@@ -50,6 +50,18 @@ def clean_headers(headers) -> dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in excluded}
 
 
+def opaque_response_headers(headers) -> dict[str, str]:
+    """Retain valid framing only when the upstream response bytes are unchanged."""
+    result = clean_headers(headers)
+    lengths = headers.getall("Content-Length", [])
+    connection_fields = {part.strip().lower()
+        for value in headers.getall("Connection", []) for part in value.split(",")}
+    if (len(lengths) == 1 and re.fullmatch(r"[0-9]{1,20}", lengths[0])
+            and "Transfer-Encoding" not in headers and "content-length" not in connection_fields):
+        result["Content-Length"] = lengths[0]
+    return result
+
+
 def encode(value) -> bytes:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
@@ -567,12 +579,19 @@ class ModelRouter:
                 raise RouterError("upstream_redirect_refused")
             if context is not None and upstream.status < 400:
                 return await self.adapted_response(request, upstream, context, stream, begin)
-            output = web.StreamResponse(status=upstream.status, headers=clean_headers(upstream.headers))
+            output = web.StreamResponse(status=upstream.status, headers=opaque_response_headers(upstream.headers))
             await output.prepare(request)
             request[RESPONSE_STARTED] = True
             PHASE.set("http_stream")
+            declared = output.content_length
+            transferred = 0
             async for chunk in self.metrics.chunks(upstream.content.iter_any(), begin):
+                transferred += len(chunk)
+                if declared is not None and transferred > declared:
+                    raise UpstreamProtocolError("upstream_response_length_mismatch")
                 await output.write(chunk)
+            if declared is not None and transferred != declared:
+                raise UpstreamProtocolError("upstream_response_length_mismatch")
             await output.write_eof()
             return output
 
