@@ -2,7 +2,7 @@
 
 Connect IM channels, online/local models, and ChatGPT Web to Codex Desktop.
 
-**Windows preview · MIT · 1.2.0-preview.1**
+**Windows preview · MIT · [1.2.0-preview.1](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.1)**
 
 The first-release scope is Windows and Feishu, with two API registrations selected
 for release qualification: `api/glm-5.3-flash` / `low` and

@@ -4,7 +4,7 @@
 
 面向 Codex Desktop 的两个职能板块：Channels 连接 IM 会话，Models 接入 API、本地和 Web 模型。Codex 原生任务继续负责上下文、工具、审批和执行。
 
-Windows 预览版 **1.2.0-preview.1**，项目原始代码采用 [MIT](LICENSE)。此版本目前为本地发布候选，尚未创建远程 Release。
+Windows 预览版 **[1.2.0-preview.1](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.1)**，项目自有代码采用 [MIT](LICENSE)。此版本为 Pre-release，实机验收尚未全部完成，支持范围与待验项见[发布验收清单](plugins/feishu-codex-operator/development/docs/first-release-readiness.md)。
 
 - **Channels**：首版实现飞书，其他 IM 作为后续通道扩展。
 - **Models**：分为 API Providers、Local Providers、Web Providers。ChatGPT Web 属于 Web Providers，复用登录与固定连接。
@@ -21,4 +21,4 @@ Windows 预览版 **1.2.0-preview.1**，项目原始代码采用 [MIT](LICENSE)�
 
 文档、测试和示例配置按功能放入 `channels/`、`models/`、`shared/`、`development/`。待确认旧内容放在所属功能目录的 `_quarantine/` 子目录，完整保留并排除发布。
 
-发布包按明确清单生成，采用公开文档替换私人开发日志，不包括账号、密钥、浏览器资料、任务历史或运行数据库。构建器位于 `plugins/feishu-codex-operator/scripts/build_codex_operator_release.py`，只生成本地包，不上传或发布。
+发布包按明确清单生成，包含经审查的公开源码与文档，不包括账号、密钥、浏览器资料、任务历史或运行数据库。构建器位于 `plugins/feishu-codex-operator/scripts/build_codex_operator_release.py`，只生成本地包，不上传或发布。
