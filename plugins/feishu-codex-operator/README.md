@@ -4,6 +4,12 @@ Connect IM channels, online/local models, and ChatGPT Web to Codex Desktop.
 
 **Windows preview · MIT · 1.2.0-preview.1**
 
+The first-release scope is Windows and Feishu, with two API registrations selected
+for release qualification: `api/glm-5.3-flash` / `low` and
+`api/deepseek-v4-flash` / `none`. Their dated live checks cover specific cases;
+current-version release qualification is still pending. Local and Web Providers
+remain experimental. See the [support matrix and release checklist](development/docs/first-release-readiness.md).
+
 Two functional areas share the native Codex task:
 
 - **Channels** receives messages and attachments and delivers results. Feishu is implemented; other IM channels are planned.
@@ -19,7 +25,7 @@ Install the local Marketplace from the extracted release, select **Codex-Operato
 
 The unified entry is `scripts/codex-operator.ps1`. Run `status` to inspect both areas without model requests or configuration writes. Use `channels` and `models`; the Web Provider entry is `models web`. API and local [native profiles](models/common/docs/native-models.md) use `models native` for preparation, installation, status and restoration, keeping the official default unchanged.
 
-The reviewed Windows [mode entry](models/common/docs/mode-entry-window.md) opens a native/extension choice. Extension mode has its own home and chat list, with custom models in the Codex conversation menu; native mode retains the official configuration. The current package passed GLM/DeepSeek continuation, standalone search and actual shortcut switching. Local and Web backends require their own acceptance. Known-version initialization avoids repeated welcome preferences without copying login or bypassing permissions.
+The reviewed Windows [mode entry](models/common/docs/mode-entry-window.md) opens a native/extension choice. Extension mode has its own home and chat list, with custom models in the Codex conversation menu; native mode retains the official configuration. Dated live checks passed GLM/DeepSeek continuation, standalone search and actual shortcut switching; they do not qualify every later package or model. Local and Web backends require their own acceptance. Known-version initialization avoids repeated welcome preferences without copying login or bypassing permissions.
 
 In Feishu, `/model` reads the bound task's settings. `/model list` lists validated official models and provides an exact command for selecting a model for the next new business message. Use the full model ID when multiple generations share a name. `/model cancel` removes a pending choice. Beeper keeps its own model. API, Local and Web switching through this command remains pending.
 
