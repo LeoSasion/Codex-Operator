@@ -9,7 +9,7 @@ Windows 预览版 **1.2.0-preview.1**，项目原始代码采用 [MIT](LICENSE)�
 - **Channels**：首版实现飞书，其他 IM 作为后续通道扩展。
 - **Models**：分为 API Providers、Local Providers、Web Providers。ChatGPT Web 属于 Web Providers，复用登录与固定连接。
 
-[开始使用](plugins/feishu-codex-operator/QUICKSTART.md) · [模块说明](plugins/feishu-codex-operator/MODULES.md) · [第三方许可与来源](plugins/feishu-codex-operator/NOTICE.md)
+[开始使用](plugins/feishu-codex-operator/QUICKSTART.md) · [模块说明](plugins/feishu-codex-operator/MODULES.md) · [参考与致谢](plugins/feishu-codex-operator/NOTICE.md)
 
 在 Codex 中添加本目录的本地 Marketplace（`.agents/plugins/marketplace.json`），安装 **Codex-Operator**，再输入：
 
