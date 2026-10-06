@@ -9,7 +9,7 @@ import re
 from typing import Mapping
 
 
-OPERATOR_VERSION = "4.2.0-alpha.138"
+OPERATOR_VERSION = "4.2.0-alpha.139"
 
 BOOLEAN_ENV_DEFAULTS = {
     "CODEX_OPERATOR_DOWNLOAD_RESOURCES": True,

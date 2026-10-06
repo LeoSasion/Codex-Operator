@@ -29,6 +29,7 @@ try:
     import aiohttp
     from aiohttp import web
     from aiohttp.test_utils import TestClient, TestServer
+    from multidict import CIMultiDict
     from yarl import URL
     from operator_core.model_router import ModelRouter
 except ImportError:
@@ -118,6 +119,61 @@ class RegistryTests(unittest.TestCase):
 
 
 @unittest.skipIf(aiohttp is None, "optional router environment is required")
+class OpaqueResponseHeaderTests(unittest.TestCase):
+    def test_unique_length_preserves_original_ascii_text_and_unrelated_headers(self):
+        from operator_core.model_router import opaque_response_headers
+        for length in ("0", "0009", "9" * 20):
+            headers = CIMultiDict([("Content-Type", "text/event-stream"),
+                ("Content-Length", length), ("Connection", "keep-alive, X-Private"),
+                ("Keep-Alive", "timeout=5"), ("X-Private", "hop only"),
+                ("X-Proof", "retained")])
+            before = list(headers.items())
+            with self.subTest(length=length):
+                self.assertEqual(opaque_response_headers(headers), {
+                    "Content-Type": "text/event-stream", "Content-Length": length,
+                    "X-Proof": "retained"})
+                self.assertEqual(list(headers.items()), before)
+
+    def test_invalid_or_missing_length_cannot_become_downstream_framing(self):
+        from operator_core.model_router import opaque_response_headers
+        for length in (None, "", " ", " 9", "9 ", "\t9", "-1", "+9", "9,9",
+                       "1.0", "0x09", "9" * 21, "９", "١"):
+            headers = CIMultiDict({"Content-Type": "text/event-stream", "X-Proof": "retained"})
+            if length is not None:
+                headers["Content-Length"] = length
+            before = list(headers.items())
+            with self.subTest(length=length):
+                self.assertEqual(opaque_response_headers(headers), {
+                    "Content-Type": "text/event-stream", "X-Proof": "retained"})
+                self.assertEqual(list(headers.items()), before)
+
+    def test_duplicate_lengths_are_not_forwarded_even_when_the_values_match(self):
+        from operator_core.model_router import opaque_response_headers
+        for values in (("9", "9"), ("9", "10"), ("0009", "9")):
+            headers = CIMultiDict([("Content-Length", values[0]),
+                                  ("content-length", values[1]), ("X-Proof", "retained")])
+            before = list(headers.items())
+            with self.subTest(values=values):
+                self.assertEqual(opaque_response_headers(headers), {"X-Proof": "retained"})
+                self.assertEqual(list(headers.items()), before)
+
+    def test_transfer_encoding_or_any_connection_nomination_excludes_length(self):
+        from operator_core.model_router import opaque_response_headers
+        cases = (
+            [("Transfer-Encoding", "chunked")],
+            [("transfer-encoding", "")],
+            [("Connection", " Content-Length , keep-alive ")],
+            [("Connection", "keep-alive"), ("connection", "cOnTeNt-LeNgTh")],
+        )
+        for extra in cases:
+            headers = CIMultiDict([("Content-Length", "0009"), ("X-Proof", "retained"), *extra])
+            before = list(headers.items())
+            with self.subTest(extra=extra):
+                self.assertEqual(opaque_response_headers(headers), {"X-Proof": "retained"})
+                self.assertEqual(list(headers.items()), before)
+
+
+@unittest.skipIf(aiohttp is None, "optional router environment is required")
 class RouterTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.received = []
@@ -125,6 +181,8 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
         self.handshakes = []
         self.redirect_ws = False
         self.response_headers = {}
+        self.response_chunked = False
+        self.response_split_release = None
         self.ws_headers = {}
         self.status = 200
         self.json_response = False
@@ -171,6 +229,20 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
                     "input_tokens": 1, "output_tokens": 1, "total_tokens": 2}})
             if self.status == 302:
                 return web.Response(status=302, headers={"Location": self.base + "/leak"})
+            if self.response_chunked or self.response_split_release is not None:
+                response = web.StreamResponse(status=self.status,
+                    headers={"Content-Type": "text/event-stream", "X-Proof": "preserved",
+                             **self.response_headers})
+                if self.response_chunked:
+                    response.enable_chunked_encoding()
+                await response.prepare(request)
+                split = len(self.stream_body) // 2
+                await response.write(self.stream_body[:split])
+                if self.response_split_release is not None:
+                    await self.response_split_release.wait()
+                await response.write(self.stream_body[split:])
+                await response.write_eof()
+                return response
             return web.Response(status=self.status, body=self.stream_body,
                                 headers={"Content-Type": "text/event-stream", "X-Proof": "preserved",
                                          **self.response_headers})
@@ -316,21 +388,119 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
         catalog = await response.json()
         self.assertEqual(CATALOG["models"], catalog["models"][:1])
         raw = b'{ "model" : "native-test", "input": [], "future_field": {"opaque":"yes"} }'
+        length = "000" + str(len(self.stream_body))
+        self.response_headers = {"Content-Length": length}
         response = await self.client.post(self.prefix + "/responses", data=raw, headers=self.headers)
         self.assertEqual(200, response.status)
         self.assertEqual(b'data: {"type":"response.completed"}\n\ndata: [DONE]\n\n', await response.read())
         self.assertEqual(raw, self.received[0][0])
         self.assertEqual("Bearer native-test-secret", self.received[0][1]["Authorization"])
         self.assertEqual("preserved", response.headers["X-Proof"])
+        self.assertEqual(response.headers.getall("Content-Length"), [length])
+        self.assertNotIn("Transfer-Encoding", response.headers)
+        self.assertEqual(len(self.received), 1)
 
     async def test_external_route_never_receives_native_credentials(self):
         response = await self.client.post(self.prefix + "/responses", json={"model": "api/example", "input": "hello"}, headers=self.headers)
-        await response.read()
+        response_body = await response.read()
         body, headers = self.received[0]
         self.assertEqual("upstream-test", json.loads(body)["model"])
         self.assertEqual("Bearer external-test-secret", headers["Authorization"])
         self.assertNotIn("ChatGPT-Account-Id", headers)
         self.assertNotIn("X-Test", headers)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response_body, self.stream_body)
+        self.assertEqual(response.headers.getall("Content-Length"), [str(len(self.stream_body))])
+        self.assertNotIn("Transfer-Encoding", response.headers)
+        self.assertEqual(len(self.received), 1)
+
+    async def test_chunked_native_and_external_passthrough_keep_complete_sse_without_length(self):
+        self.response_chunked = True
+        for model in ("native-test", "api/example"):
+            before = len(self.received)
+            with self.subTest(model=model):
+                response = await self.client.post(self.prefix + "/responses",
+                    json={"model": model, "input": "synthetic chunked request"}, headers=self.headers)
+                self.assertEqual(response.status, 200)
+                self.assertEqual(await response.read(), self.stream_body)
+                self.assertEqual(response.headers.get("Transfer-Encoding"), "chunked")
+                self.assertNotIn("Content-Length", response.headers)
+                self.assertEqual(response.headers["X-Proof"], "preserved")
+                self.assertEqual(len(self.received), before + 1)
+        self.assertEqual(self.router.failure_count, 0)
+
+    async def test_fixed_length_passthrough_delivers_first_chunk_before_upstream_finishes(self):
+        self.response_split_release = asyncio.Event()
+        length = "000" + str(len(self.stream_body))
+        self.response_headers = {"Content-Length": length}
+        split = len(self.stream_body) // 2
+        try:
+            response = await asyncio.wait_for(self.client.post(self.prefix + "/responses",
+                json={"model": "native-test", "input": "synthetic split stream"},
+                headers=self.headers), 3)
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers.getall("Content-Length"), [length])
+            self.assertNotIn("Transfer-Encoding", response.headers)
+            first = await asyncio.wait_for(response.content.readexactly(split), 3)
+            self.assertEqual(first, self.stream_body[:split])
+            self.assertFalse(self.response_split_release.is_set())
+            self.assertFalse(response.content.at_eof())
+            self.assertEqual(len(self.received), 1)
+            self.response_split_release.set()
+            remaining = await asyncio.wait_for(response.read(), 3)
+            self.assertEqual(first + remaining, self.stream_body)
+            self.assertEqual(len(self.received), 1)
+        finally:
+            self.response_split_release.set()
+
+    async def test_opaque_response_length_mismatch_fails_without_truncating_or_padding(self):
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+        catalog = await self.client.get(self.prefix + "/models", headers=self.headers)
+        self.assertEqual(catalog.status, 200)
+        self.assertEqual((await catalog.json())["models"][0], CATALOG["models"][0])
+        raw = b'{"model":"native-test","input":"synthetic length mismatch"}'
+        for mode, tail in (("overrun", (b"cdef",)), ("underrun", ())):
+            release = asyncio.Event()
+            before = self.router.failure_count
+            async def chunks():
+                yield b"ab"
+                await release.wait()
+                for chunk in tail:
+                    yield chunk
+            @asynccontextmanager
+            async def controlled_upstream():
+                source = chunks()
+                try:
+                    yield SimpleNamespace(status=200, headers=CIMultiDict({
+                        "Content-Type": "text/event-stream", "Content-Length": "3"}),
+                        content=SimpleNamespace(iter_any=lambda: source))
+                finally:
+                    await source.aclose()
+            with self.subTest(mode=mode), patch.object(self.router.session, "post",
+                    return_value=controlled_upstream()) as post:
+                try:
+                    response = await asyncio.wait_for(self.client.post(self.prefix + "/responses",
+                        data=raw, headers=self.headers), 3)
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.headers.getall("Content-Length"), ["3"])
+                    self.assertNotIn("Transfer-Encoding", response.headers)
+                    self.assertEqual(await asyncio.wait_for(response.content.readexactly(2), 3), b"ab")
+                    self.assertFalse(release.is_set())
+                    release.set()
+                    with self.assertRaises(aiohttp.ClientPayloadError):
+                        await asyncio.wait_for(response.read(), 3)
+                    self.assertIsInstance(response.content.exception(), aiohttp.ClientPayloadError)
+                    self.assertEqual(self.router.failure_count, before + 1)
+                    self.assertEqual(self.router.last_failure, {"phase": "http_stream",
+                        "category": "protocol", "upstream_status": None,
+                        "protocol_reason": "upstream_response_length_mismatch"})
+                    post.assert_called_once()
+                    self.assertEqual(post.call_args.kwargs["data"], raw)
+                    self.assertFalse(post.call_args.kwargs["allow_redirects"])
+                finally:
+                    release.set()
+        self.assertEqual(self.received, [])
 
     async def test_unknown_model_never_dispatches(self):
         response = await self.client.post(self.prefix + "/responses", json={"model": "api/unknown", "input": "hello"}, headers=self.headers)
@@ -376,6 +546,8 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(200, response.status)
                     body = await response.read()
                     self.assertEqual(accepted, self.received[-1][1].get("Accept-Encoding"))
+                    self.assertEqual(response.headers.getall("Content-Length"), [str(len(body))])
+                    self.assertNotIn("Transfer-Encoding", response.headers)
                     if accepted == "gzip":
                         self.assertEqual("gzip", response.headers.get("Content-Encoding"))
                         self.assertEqual(raw, gzip.decompress(body))
@@ -390,26 +562,38 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
             from backports import zstd
         raw = b'{ "model":"native-test", "input":[], "future_field":"retain" }'
         self.stream_body = gzip.compress(self.stream_body)
-        self.response_headers = {"Content-Encoding": "gzip"}
+        length = "000" + str(len(self.stream_body))
+        self.response_headers = {"Content-Encoding": "gzip", "Content-Length": length}
         for encoding, body in (("gzip", gzip.compress(raw)), ("zstd", zstd.compress(raw))):
+            before = len(self.received)
             response = await self.client.post(self.prefix + "/responses", data=body,
                 headers={**self.headers, "Content-Encoding": encoding}, auto_decompress=False)
             self.assertEqual(200, response.status, await response.text() if response.status != 200 else "")
             self.assertEqual(self.stream_body, await response.read())
             self.assertEqual(body, self.received[-1][0])
             self.assertEqual(encoding, self.received[-1][1]["Content-Encoding"])
+            self.assertEqual(response.headers.getall("Content-Length"), [length])
+            self.assertNotIn("Transfer-Encoding", response.headers)
+            self.assertEqual(len(self.received), before + 1)
 
     async def test_compressed_external_requests_still_isolate_credentials(self):
         raw = json.dumps({"model": "api/example", "input": "unchanged"}).encode()
+        self.stream_body = gzip.compress(self.stream_body)
+        self.response_headers = {"Content-Encoding": "gzip"}
         response = await self.client.post(self.prefix + "/responses", data=gzip.compress(raw),
-            headers={**self.headers, "Content-Encoding": "gzip"})
+            headers={**self.headers, "Content-Encoding": "gzip"}, auto_decompress=False)
         self.assertEqual(200, response.status)
-        await response.read()
+        response_body = await response.read()
         body, headers = self.received[0]
         self.assertEqual("unchanged", json.loads(body)["input"])
         self.assertEqual("Bearer external-test-secret", headers["Authorization"])
         self.assertNotIn("Content-Encoding", headers)
         self.assertNotIn("ChatGPT-Account-Id", headers)
+        self.assertEqual(response_body, self.stream_body)
+        self.assertEqual(response.headers.get("Content-Encoding"), "gzip")
+        self.assertEqual(response.headers.getall("Content-Length"), [str(len(response_body))])
+        self.assertNotIn("Transfer-Encoding", response.headers)
+        self.assertEqual(len(self.received), 1)
 
     async def test_native_http_above_old_16_mib_limit_preserves_wire_bytes(self):
         self.upstream.app._client_max_size = 65 * 1024 * 1024
@@ -484,6 +668,16 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(413, response.status)
         self.assertEqual(self.stream_body, await response.read())
         self.assertEqual(len(self.received), 1)
+        self.assertEqual(response.headers.getall("Content-Length"), [str(len(self.stream_body))])
+        self.assertNotIn("Transfer-Encoding", response.headers)
+        response = await self.client.post(self.prefix + "/responses",
+            json={"model": "api/example", "input": []}, headers=self.headers)
+        self.assertEqual(response.status, 413)
+        self.assertEqual(await response.read(), self.stream_body)
+        self.assertEqual(response.headers.getall("Content-Length"), [str(len(self.stream_body))])
+        self.assertNotIn("Transfer-Encoding", response.headers)
+        self.assertEqual(len(self.received), 2)
+        self.assertEqual(self.router.failure_count, 2)
 
     async def test_identity_works_without_native_credentials(self):
         response = await self.client.post(self.prefix + "/responses", json={"model": "beeper", "input": "hello"})
