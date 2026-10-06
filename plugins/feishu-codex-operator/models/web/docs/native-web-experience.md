@@ -1,8 +1,13 @@
 # Native experience and project memory
 
-Current guidance as of 2026-10-05. Codex-Operator has two areas: Channels and Models; Models contains API, Local and Web Providers. The Windows preview prioritizes setup and actual task execution. Native Codex owns the conversation, context, permissions, tools and final answer; Operator supplies the transport and its local lifecycle.
+Current guidance as of 2026-10-06. Codex-Operator has two areas: Channels and Models; Models contains API, Local and Web Providers. The Windows preview prioritizes setup and actual task execution. Native Codex owns the conversation, context, permissions, tools and final answer; Operator supplies the transport and its local lifecycle.
 
 ## Read first
+
+2026-10-06 Desktop startup flicker: after another computer reboot, the owner reports
+that the startup flicker has disappeared. See the [concise incident record](native-conversation-plan.md)
+for symptoms and current status; the underlying cause remains unconfirmed and original
+diagnostics are retained privately.
 
 2026-10-03 remaining-work follow-up: old isolated acceptance chats may be archived
 through their exact native home/task identities, preserving complete history and key
