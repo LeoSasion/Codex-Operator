@@ -30,6 +30,204 @@ from operator_core.app_server import AppServerSession
 from operator_core.model_registry import ModelRegistry
 
 
+class _FixtureCleanupWitness:
+    """Retain bounded failure metadata; never hide an event-loop exception."""
+
+    PHASES = frozenset({"startup", "business", "app_server_exit", "reader_exit",
+                        "router_stop", "router_cleanup", "loop_drain", "loop_close",
+                        "server_cleanup", "complete"})
+    SCOPES = frozenset({"loop", "reader", "router", "server", "app_server"})
+    EXCEPTIONS = frozenset({"ConnectionResetError", "TimeoutError", "RuntimeError",
+                           "OSError", "ValueError", "TypeError", "AssertionError"})
+    FAILURES = frozenset({"app_server_stdin_close_failed", "app_server_exit_timeout",
+                         "app_server_exit_unconfirmed", "app_server_exit_nonzero",
+                         "reader_exit_timeout", "router_exit_timeout", "server_exit_timeout",
+                         "router_stop_failed"})
+
+    def __init__(self):
+        self.phase = "startup"
+        self.errors = []
+        self.failures = set()
+        self.overflow = False
+        self.lock = threading.Lock()
+
+    def set_phase(self, phase):
+        if phase not in self.PHASES:
+            raise ValueError("unknown_fixture_phase")
+        with self.lock:
+            self.phase = phase
+
+    def record_error(self, scope, exc):
+        if scope not in self.SCOPES:
+            raise ValueError("unknown_fixture_scope")
+        kind = type(exc).__name__ if type(exc).__name__ in self.EXCEPTIONS else "unclassified_exception"
+        try:
+            code = getattr(exc, "winerror", None)
+        except BaseException:
+            kind, code = "unclassified_exception", None
+        code = code if type(code) is int and 0 <= code <= 65535 else None
+        with self.lock:
+            if len(self.errors) < 32:
+                self.errors.append({"scope": scope, "phase": self.phase,
+                                    "exception": kind, "winerror": code})
+            else:
+                self.overflow = True
+
+    def loop_exception(self, loop, context):
+        try:
+            self.record_error("loop", context.get("exception"))
+        finally:
+            loop.default_exception_handler(context)
+
+    def fail(self, code):
+        if code not in self.FAILURES:
+            raise ValueError("unknown_fixture_failure")
+        with self.lock:
+            self.failures.add(code)
+
+    def join(self, thread, scope, timeout=5):
+        if scope not in {"reader", "router", "server"}:
+            raise ValueError("unknown_fixture_thread")
+        try:
+            thread.join(timeout=timeout)
+        except RuntimeError as exc:
+            self.record_error(scope, exc)
+        if thread.is_alive():
+            self.fail(scope + "_exit_timeout")
+
+    def close_unstarted_router_loop(self, loop, thread):
+        if (thread.ident is None and not thread.is_alive()
+                and not loop.is_running() and not loop.is_closed()):
+            self.set_phase("loop_close")
+            try:
+                loop.close()
+            except Exception as exc:
+                loop.call_exception_handler({
+                    "message": "Synthetic unstarted router loop close failed", "exception": exc})
+
+    def assert_clean(self, *, original_error=None):
+        with self.lock:
+            report = {"errors": list(self.errors), "failures": sorted(self.failures),
+                      "overflow": self.overflow}
+        if report["errors"] or report["failures"] or report["overflow"]:
+            message = "synthetic_fixture_cleanup_failed:" + json.dumps(report, separators=(",", ":"))
+            if original_error is not None and not isinstance(original_error, unittest.SkipTest):
+                original_error.add_note(message)
+            else:
+                raise AssertionError(message)
+
+
+class FixtureCleanupWitnessTests(unittest.TestCase):
+    def test_unhandled_callback_is_logged_and_rejects_fixture_success(self):
+        witness = _FixtureCleanupWitness()
+        witness.set_phase("business")
+        loop = asyncio.new_event_loop()
+        loop.set_exception_handler(witness.loop_exception)
+        error = ConnectionResetError("synthetic details must not enter witness metadata")
+        error.winerror = 10054
+
+        def fail_callback():
+            raise error
+
+        try:
+            loop.call_soon(fail_callback)
+            with self.assertLogs("asyncio", level="ERROR") as captured:
+                loop.run_until_complete(asyncio.sleep(0))
+            self.assertTrue(any("Exception in callback" in line for line in captured.output))
+            self.assertEqual(witness.errors, [{"scope": "loop", "phase": "business",
+                                              "exception": "ConnectionResetError", "winerror": 10054}])
+            with self.assertRaisesRegex(AssertionError, "synthetic_fixture_cleanup_failed") as rejected:
+                witness.assert_clean()
+            self.assertNotIn("synthetic details", str(rejected.exception))
+        finally:
+            loop.close()
+
+    def test_owned_thread_timeout_rejects_success_and_thread_is_then_joined(self):
+        witness = _FixtureCleanupWitness()
+        release = threading.Event()
+        thread = threading.Thread(target=release.wait, daemon=True)
+        thread.start()
+        try:
+            witness.join(thread, "reader", timeout=0)
+            with self.assertRaisesRegex(AssertionError, "reader_exit_timeout"):
+                witness.assert_clean()
+        finally:
+            release.set()
+            thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+
+    def test_business_failure_stays_primary_with_cleanup_failure_note(self):
+        witness = _FixtureCleanupWitness()
+        witness.fail("router_exit_timeout")
+        business_error = AssertionError("original_business_failure")
+
+        def failing_business():
+            try:
+                raise business_error
+            finally:
+                witness.assert_clean(original_error=sys.exc_info()[1])
+
+        with self.assertRaises(AssertionError) as propagated:
+            failing_business()
+        self.assertIs(propagated.exception, business_error)
+        self.assertEqual(len(business_error.__notes__), 1)
+        self.assertIn("synthetic_fixture_cleanup_failed:", business_error.__notes__[0])
+        self.assertIn("router_exit_timeout", business_error.__notes__[0])
+
+    def test_unknown_exception_winerror_property_cannot_hide_loop_failure(self):
+        witness = _FixtureCleanupWitness()
+
+        class UnknownError(Exception):
+            @property
+            def winerror(self):
+                raise RuntimeError("synthetic property details must remain private")
+
+        class DefaultHandler:
+            def __init__(self):
+                self.calls = []
+
+            def default_exception_handler(self, context):
+                self.calls.append(context)
+
+        context = {"exception": UnknownError("synthetic unknown details")}
+        loop = DefaultHandler()
+        witness.loop_exception(loop, context)
+        self.assertEqual(loop.calls, [context])
+        self.assertEqual(witness.errors, [{"scope": "loop", "phase": "startup",
+                                          "exception": "unclassified_exception", "winerror": None}])
+        with self.assertRaisesRegex(AssertionError, "unclassified_exception") as rejected:
+            witness.assert_clean()
+        self.assertNotIn("synthetic", str(rejected.exception).split(":", 1)[1])
+
+    def test_router_thread_start_failure_closes_loop_and_preserves_original_error(self):
+        witness = _FixtureCleanupWitness()
+        loop = asyncio.new_event_loop()
+        loop.set_exception_handler(witness.loop_exception)
+        thread = threading.Thread(target=lambda: None, daemon=True)
+        startup_error = RuntimeError("synthetic_thread_start_failed")
+
+        def start_fixture():
+            try:
+                thread.start()
+            finally:
+                original_error = sys.exc_info()[1]
+                witness.close_unstarted_router_loop(loop, thread)
+                witness.assert_clean(original_error=original_error)
+
+        try:
+            with patch.object(thread, "start", side_effect=startup_error):
+                with self.assertRaises(RuntimeError) as propagated:
+                    start_fixture()
+            self.assertIs(propagated.exception, startup_error)
+            self.assertTrue(loop.is_closed())
+            self.assertIsNone(thread.ident)
+            self.assertFalse(thread.is_alive())
+            self.assertFalse(witness.errors)
+        finally:
+            if not loop.is_closed():
+                loop.close()
+
+
 @unittest.skipUnless(os.environ.get("CODEX_OPERATOR_TEST_CLI") and
                      os.environ.get("CODEX_OPERATOR_TEST_CATALOG"),
                      "explicit current Desktop CLI and read-only catalog paths required")
@@ -224,10 +422,38 @@ class CurrentCliSameTaskModelSwitchTests(unittest.TestCase):
                 self.end_headers()
                 self.wfile.write(wire)
 
-        server = ThreadingHTTPServer(("127.0.0.1", 0), FixtureHandler)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+        witness = _FixtureCleanupWitness()
+
+        class FixtureServer(ThreadingHTTPServer):
+            # Track daemon request handlers ourselves so joining them is bounded.
+            block_on_close = False
+
+            def __init__(self, *args):
+                self.request_threads = []
+                super().__init__(*args)
+
+            def process_request(self, request, client_address):
+                thread = threading.Thread(target=self.process_request_thread,
+                    args=(request, client_address), daemon=self.daemon_threads)
+                self.request_threads.append(thread)
+                thread.start()
+
+            def process_request_thread(self, request, client_address):
+                try:
+                    super().process_request_thread(request, client_address)
+                except Exception as exc:
+                    witness.record_error("server", exc)
+                    raise
+
+            def handle_error(self, request, client_address):
+                witness.record_error("server", sys.exc_info()[1])
+                super().handle_error(request, client_address)
+
+        server = FixtureServer(("127.0.0.1", 0), FixtureHandler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         router_loop = router_thread = router_env = None
         try:
+            server_thread.start()
             if use_router:
                 router_env = patch.dict(os.environ, {"OPERATOR_SYNTHETIC_EXTERNAL_KEY": "synthetic-external-key"})
                 router_env.start()
@@ -248,27 +474,81 @@ class CurrentCliSameTaskModelSwitchTests(unittest.TestCase):
                 router = ModelRouter(registry, "a" * 64,
                     native_base=f"http://127.0.0.1:{server.server_port}/native/v1")
                 router_loop = asyncio.new_event_loop()
+                router_loop.set_exception_handler(witness.loop_exception)
                 ready = queue.Queue(maxsize=1)
 
                 def run_router():
                     asyncio.set_event_loop(router_loop)
+                    runner = None
                     async def start():
-                        runner = web.AppRunner(router.app())
                         await runner.setup()
                         site = web.TCPSite(runner, "127.0.0.1", 0)
                         await site.start()
-                        return runner, site._server.sockets[0].getsockname()[1]
-                    runner, port = router_loop.run_until_complete(start())
-                    ready.put(port)
+                        return site._server.sockets[0].getsockname()[1]
+
+                    async def cleanup():
+                        # Stay inside the existing five-second thread join.
+                        async with asyncio.timeout(4):
+                            witness.set_phase("router_cleanup")
+                            if runner is not None:
+                                try:
+                                    await runner.cleanup()
+                                except Exception as exc:
+                                    router_loop.call_exception_handler({
+                                        "message": "Synthetic router runner cleanup failed",
+                                        "exception": exc})
+                            witness.set_phase("loop_drain")
+                            # This fixture has HTTP loopback only. Let non-SSL
+                            # transport close callbacks run before closing its loop.
+                            await asyncio.sleep(0)
+                            pending = [task for task in asyncio.all_tasks(router_loop)
+                                       if task is not asyncio.current_task() and not task.done()]
+                            for task in pending:
+                                task.cancel()
+                            if pending:
+                                await asyncio.gather(*pending, return_exceptions=True)
+                                for task in pending:
+                                    if not task.cancelled() and task.exception() is not None:
+                                        router_loop.call_exception_handler({
+                                            "message": "Synthetic router task failed during cleanup",
+                                            "exception": task.exception()})
+                            await router_loop.shutdown_asyncgens()
+                            if sys.version_info >= (3, 12):
+                                await router_loop.shutdown_default_executor(timeout=1)
+                            else:
+                                await router_loop.shutdown_default_executor()
+                            await asyncio.sleep(0)
+
                     try:
+                        runner = web.AppRunner(router.app())
+                        port = router_loop.run_until_complete(start())
+                        ready.put(port)
+                        witness.set_phase("business")
                         router_loop.run_forever()
+                    except Exception as exc:
+                        router_loop.call_exception_handler({
+                            "message": "Synthetic router fixture failed", "exception": exc})
+                        if ready.empty():
+                            ready.put(None)
                     finally:
-                        router_loop.run_until_complete(runner.cleanup())
-                        router_loop.close()
+                        try:
+                            router_loop.run_until_complete(cleanup())
+                        except Exception as exc:
+                            router_loop.call_exception_handler({
+                                "message": "Synthetic router fixture cleanup failed", "exception": exc})
+                        finally:
+                            witness.set_phase("loop_close")
+                            asyncio.set_event_loop(None)
+                            try:
+                                router_loop.close()
+                            except Exception as exc:
+                                router_loop.call_exception_handler({
+                                    "message": "Synthetic router loop close failed", "exception": exc})
 
                 router_thread = threading.Thread(target=run_router, daemon=True)
                 router_thread.start()
                 router_port = ready.get(timeout=5)
+                self.assertIsNotNone(router_port, "synthetic router fixture startup failed")
             with tempfile.TemporaryDirectory(prefix="operator-provider-switch-") as directory:
                 root = Path(directory)
                 home, work = root / "home", root / "work"
@@ -300,6 +580,7 @@ class CurrentCliSameTaskModelSwitchTests(unittest.TestCase):
                                    ALL_PROXY=f"http://127.0.0.1:{server.server_port}",
                                    NO_PROXY="127.0.0.1,localhost,::1")
                 flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+                witness.set_phase("business")
                 process = subprocess.Popen([str(executable), "app-server", "--listen", "stdio://"],
                     cwd=work, env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL, text=True, encoding="utf-8", bufsize=1,
@@ -307,14 +588,18 @@ class CurrentCliSameTaskModelSwitchTests(unittest.TestCase):
                 messages, notifications = queue.Queue(), []
 
                 def read_messages():
-                    for line in process.stdout:
-                        try:
-                            messages.put(json.loads(line))
-                        except ValueError:
-                            messages.put({"error": "invalid_fixture_response"})
-                    messages.put(None)
+                    try:
+                        for line in process.stdout:
+                            try:
+                                messages.put(json.loads(line))
+                            except ValueError:
+                                messages.put({"error": "invalid_fixture_response"})
+                    except Exception as exc:
+                        witness.record_error("reader", exc)
+                    finally:
+                        messages.put(None)
 
-                threading.Thread(target=read_messages, daemon=True).start()
+                reader_thread = threading.Thread(target=read_messages, daemon=True)
                 next_id = 0
 
                 def receive(deadline):
@@ -357,6 +642,7 @@ class CurrentCliSameTaskModelSwitchTests(unittest.TestCase):
                         notifications.append(receive(deadline))
 
                 try:
+                    reader_thread.start()
                     request("initialize", {"clientInfo": {"name": "operator_synthetic_probe",
                         "title": "Operator synthetic probe", "version": "1"}})
                     send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
@@ -443,21 +729,79 @@ class CurrentCliSameTaskModelSwitchTests(unittest.TestCase):
                                         for turn in retained["turns"]), "the failed synthetic turn must remain")
                     self.assertFalse(unexpected)
                 finally:
-                    process.stdin.close()
+                    witness.set_phase("app_server_exit")
                     try:
-                        process.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
-                        process.terminate()
-                        process.wait(timeout=3)
-                    process.stdout.close()
+                        process.stdin.close()
+                    except Exception as exc:
+                        witness.fail("app_server_stdin_close_failed")
+                        witness.record_error("app_server", exc)
+                    try:
+                        try:
+                            process.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            witness.fail("app_server_exit_timeout")
+                            process.terminate()
+                            process.wait(timeout=3)
+                    except Exception as exc:
+                        witness.fail("app_server_exit_unconfirmed")
+                        witness.record_error("app_server", exc)
+                    try:
+                        exited = process.poll() is not None
+                    except Exception as exc:
+                        exited = False
+                        witness.record_error("app_server", exc)
+                    if not exited:
+                        witness.fail("app_server_exit_unconfirmed")
+                    elif process.returncode != 0:
+                        witness.fail("app_server_exit_nonzero")
+                    witness.set_phase("reader_exit")
+                    witness.join(reader_thread, "reader")
+                    if not reader_thread.is_alive():
+                        try:
+                            process.stdout.close()
+                        except Exception as exc:
+                            witness.record_error("reader", exc)
         finally:
+            original_error = sys.exc_info()[1]
             if router_loop is not None and router_thread is not None:
-                router_loop.call_soon_threadsafe(router_loop.stop)
-                router_thread.join(timeout=5)
+                witness.set_phase("router_stop")
+                if router_thread.is_alive() and not router_loop.is_closed():
+                    try:
+                        router_loop.call_soon_threadsafe(router_loop.stop)
+                    except RuntimeError:
+                        witness.fail("router_stop_failed")
+                witness.join(router_thread, "router")
+                witness.close_unstarted_router_loop(router_loop, router_thread)
             if router_env is not None:
-                router_env.stop()
-            server.shutdown()
-            server.server_close()
+                try:
+                    router_env.stop()
+                except Exception as exc:
+                    witness.record_error("router", exc)
+            witness.set_phase("server_cleanup")
+            server_deadline = time.monotonic() + 5
+
+            def stop_server():
+                try:
+                    server.shutdown()
+                except Exception as exc:
+                    witness.record_error("server", exc)
+
+            if server_thread.ident is not None:
+                shutdown_thread = threading.Thread(target=stop_server, daemon=True)
+                try:
+                    shutdown_thread.start()
+                except Exception as exc:
+                    witness.record_error("server", exc)
+                witness.join(shutdown_thread, "server", timeout=max(0, server_deadline - time.monotonic()))
+            try:
+                server.server_close()
+            except Exception as exc:
+                witness.record_error("server", exc)
+            witness.join(server_thread, "server", timeout=max(0, server_deadline - time.monotonic()))
+            for request_thread in tuple(server.request_threads):
+                witness.join(request_thread, "server", timeout=max(0, server_deadline - time.monotonic()))
+            witness.set_phase("complete")
+            witness.assert_clean(original_error=original_error)
 
 
 if __name__ == "__main__":
