@@ -1094,7 +1094,12 @@ class ReleaseTests(unittest.TestCase):
         write('LICENSE', 'MIT License')
         write(str(release.PLUGIN/'LICENSE'), 'MIT License')
         write(str(release.PLUGIN/'.codex-plugin/plugin.json'), json.dumps({'name': 'codex-operator', 'version': '1.2.0-preview.1'}))
-        write(str(release.PLUGIN/'assets/AGENTS.feishu-codex-operator.md'), 'public rules')
+        self.public_rules = (b'<!-- FEISHU_CODEX_OPERATOR_RULES_START -->\r\n'
+                             b'public rules\r\n'
+                             b'<!-- FEISHU_CODEX_OPERATOR_RULES_END -->\r\n')
+        rules = self.plugin / 'assets/AGENTS.feishu-codex-operator.md'
+        rules.parent.mkdir(parents=True, exist_ok=True)
+        rules.write_bytes(self.public_rules)
         for name in release.REVIEWED_DOCS:
             path = self.plugin / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -1106,18 +1111,47 @@ class ReleaseTests(unittest.TestCase):
 
     def test_archive_uses_allowlist_and_reviewed_docs_preserves_source(self):
         self.write('.codex/runtime.key', 'sk-'+'K'*30)
+        self.write('AGENTS.md', 'PRIVATE_ROOT_ONLY\nprivate owner preferences')
         original = (self.plugin/'README.md').read_bytes()
-        output = self.base/'preview.zip'; receipt = release.build(self.repo, output)
+        read_source = release.read_source
+
+        def public_source(root, relative):
+            self.assertNotEqual(relative.casefold(), 'agents.md', 'Private root rules must not be read.')
+            return read_source(root, relative)
+
+        output = self.base/'preview.zip'
+        with patch.object(release, 'read_source', side_effect=public_source):
+            receipt = release.build(self.repo, output)
         with zipfile.ZipFile(output) as z:
             self.assertNotIn('.codex/runtime.key', z.namelist())
             self.assertFalse(any('/assets/public-docs/' in name for name in z.namelist()))
             for relative in release.REVIEWED_DOCS:
                 self.assertEqual(z.read(str(release.PLUGIN/relative)), b'public documentation\n')
-            self.assertEqual(z.read('AGENTS.md'), b'public rules')
+            self.assertEqual(z.read('AGENTS.md'), self.public_rules)
+            self.assertFalse(any(b'PRIVATE_ROOT_ONLY' in z.read(name) for name in z.namelist()))
         self.assertEqual((self.plugin/'README.md').read_bytes(), original)
+        self.assertEqual((self.plugin/'assets/AGENTS.feishu-codex-operator.md').read_bytes(), self.public_rules)
         self.assertFalse(receipt['published'])
         self.assertEqual(receipt['reviewed_documents'], len(release.REVIEWED_DOCS))
         with self.assertRaises(ValueError): release.build(self.repo, output)
+
+    def test_build_refuses_private_mirror_surroundings_without_writing_output(self):
+        mirror = self.plugin / 'assets/AGENTS.feishu-codex-operator.md'
+        private = b'PRIVATE_MIRROR_ONLY\r\n'
+        for label, raw in (('prefix', private + self.public_rules),
+                           ('suffix', self.public_rules + private)):
+            with self.subTest(label=label):
+                mirror.write_bytes(raw)
+                before = {str(path.relative_to(self.repo)): path.read_bytes()
+                          for path in self.repo.rglob('*') if path.is_file()}
+                output = self.base / ('private-' + label + '.zip')
+                with self.assertRaisesRegex(ValueError, '^private_rules_mirror_surroundings$') as caught:
+                    release.build(self.repo, output)
+                self.assertNotIn('PRIVATE_MIRROR_ONLY', str(caught.exception))
+                self.assertFalse(output.exists())
+                self.assertFalse(output.with_suffix('.receipt.json').exists())
+                self.assertEqual({str(path.relative_to(self.repo)): path.read_bytes()
+                                  for path in self.repo.rglob('*') if path.is_file()}, before)
 
     def test_review_digest_accepts_checkout_line_endings_without_rewriting_release_bytes(self):
         source = self.plugin / 'README.md'

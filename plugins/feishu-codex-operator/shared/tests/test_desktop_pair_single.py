@@ -145,14 +145,21 @@ class SingleEntryTests(ModePairRefreshTests):
         altered = self.run_ps(f'''
 & $legacy {{
  $script:FixtureSourceReader=(Get-Command Read-LegacyPairBytes).ScriptBlock
- $script:FixtureChangedSource=Join-Path $PSScriptRoot 'operator_desktop_pair_upgrade.psm1'
+ $script:FixtureChangedSource={self.q(Path(__file__).resolve().parents[2] / 'scripts/operator_desktop_pair_upgrade.psm1')}
+ $script:FixtureChangedReads=0
  function script:Read-LegacyPairBytes([string]$Path) {{
   $raw=& $script:FixtureSourceReader $Path
-  if ($Path -ieq $script:FixtureChangedSource) {{return ,([byte[]]($raw+[byte]10))}}
+  if ($Path -ieq $script:FixtureChangedSource) {{$script:FixtureChangedReads++;return ,([byte[]]($raw+[byte]10))}}
   return ,$raw
  }}
+ $original=Get-LegacyPairHash (& $script:FixtureSourceReader $script:FixtureChangedSource)
+ $injected=Get-LegacyPairHash (Read-LegacyPairBytes $script:FixtureChangedSource)
+ if ($original -ceq $injected -or $script:FixtureChangedReads -ne 1) {{throw 'fixture_changed_source_not_injected'}}
 }}
-Restore-OperatorDesktopSingleEntry $p -ExpectedPlanSha256 {sha}
+try {{Restore-OperatorDesktopSingleEntry $p -ExpectedPlanSha256 {sha}}} catch {{
+ & $legacy {{if ($script:FixtureChangedReads -lt 2) {{throw 'fixture_changed_source_not_observed_by_restore'}}}}
+ throw
+}}
 ''')
         self.assertNotEqual(altered.returncode, 0)
         self.assertIn('legacy_pair_single_entry_preview_changed', altered.stderr)

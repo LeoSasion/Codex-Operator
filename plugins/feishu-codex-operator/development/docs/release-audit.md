@@ -30,6 +30,13 @@ earlier live-task result or proves that installed services were updated.
   real Desktop startup, approvals and model execution remain separate maintenance
   and acceptance gates. Original failures, rollback records and legacy runtime
   ownership remain retained; this entry does not claim they were repaired in place.
+- Integration regression also caught a duplicated installer version literal.
+  The installer now reads one plain source version constant, compares the release
+  inventory before runtime writes, and uses that value for its manifest and output.
+  Invalid/mixed declarations, escaped values and mismatched metadata fail closed.
+  Updated negative source-injection, public mirror and UTF-8 console fixtures keep
+  their strict assertions. Related shared-port fixtures are serialized; product
+  port reservation limits and rejection behavior remain unchanged.
 
 2026-10-04 bounded evaluator-cleanup delta:
 
