@@ -66,6 +66,23 @@ def read_source(root, relative):
     return raw
 
 
+def validate_public_rules_mirror(raw):
+    """The public mirror owns one rule block, never private root surroundings."""
+    text = raw.decode('utf-8')
+    start = '<!-- FEISHU_CODEX_OPERATOR_RULES_START -->'
+    end = '<!-- FEISHU_CODEX_OPERATOR_RULES_END -->'
+    for marker in (start, end):
+        if (text.count(marker) != 1 or len(re.findall(
+                r'(?m)(?:^|\A\ufeff)' + re.escape(marker) + r'(?=\r?$)', text)) != 1):
+            raise ValueError('invalid_rules_mirror_markers')
+    first, last = text.index(start), text.index(end)
+    if last <= first:
+        raise ValueError('invalid_rules_mirror_markers')
+    if (re.fullmatch(r'(?:\ufeff)?\s*', text[:first]) is None
+            or re.fullmatch(r'\s*', text[last + len(end):]) is None):
+        raise ValueError('private_rules_mirror_surroundings')
+
+
 def collect(root):
     root = Path(root)
     if not root.is_absolute() or not root.is_dir():
@@ -98,6 +115,7 @@ def collect(root):
             raise ValueError('reviewed_document_changed:' + relative)
     # Distribution checks use this exact mirrored policy, never private root history.
     data['AGENTS.md'] = read_source(root, str(PLUGIN / 'assets/AGENTS.feishu-codex-operator.md'))
+    validate_public_rules_mirror(data['AGENTS.md'])
     provenance['AGENTS.md'] = str(PLUGIN / 'assets/AGENTS.feishu-codex-operator.md')
     if sum(map(len, data.values())) > MAX_TOTAL:
         raise ValueError('release_size_bound')

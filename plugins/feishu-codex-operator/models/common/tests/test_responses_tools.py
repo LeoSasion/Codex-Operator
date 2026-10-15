@@ -912,6 +912,114 @@ class ToolAdapterTests(unittest.TestCase):
         self.assertEqual(wire["input"][1]["output"], output["output"])
 
 
+class OpaqueFunctionArgumentsTests(unittest.TestCase):
+    """Current encrypted function arguments stay outside adapted providers."""
+
+    def cases(self):
+        search = {"type": "tool_search", "execution": "client", "parameters": {"type": "object"}}
+        for kind, tool, changes in (
+                ("function", FUNCTION, {}), ("custom_wrap", EXEC, {}),
+                ("custom_native", EXEC, {"custom_tools": {"exec": "native"}}),
+                ("tool_search", search, {})):
+            _, context = prepare({"tools": [FUNCTION, tool] if tool != FUNCTION else [FUNCTION]}, **changes)
+            if kind == "function":
+                upstream = {"type": "function_call", "name": "add", "arguments": '{"a":17}'}
+            elif kind == "custom_wrap":
+                upstream = call(context)
+            elif kind == "custom_native":
+                upstream = {"type": "custom_tool_call", "name": "exec", "input": CODE}
+            else:
+                spec = context.specs[("tool_search", None, "tool_search")]
+                upstream = {"type": "function_call", "name": spec.upstream_name, "arguments": '{}'}
+            upstream = {**upstream, "id": "item_opaque_fixture", "call_id": "call_opaque_fixture",
+                        "status": "completed"}
+            source = restore_response(response(upstream), context)["output"][0]
+            output = {"type": {"function_call": "function_call_output",
+                               "custom_tool_call": "custom_tool_call_output",
+                               "tool_search_call": "tool_search_output"}[source["type"]],
+                      "call_id": source["call_id"], "output": "synthetic result"}
+            if kind == "tool_search":
+                output = {k: v for k, v in output.items() if k != "output"}
+                output.update(execution="client", status="completed", tools=[])
+            yield kind, context, upstream, {"tools": [FUNCTION, tool] if tool != FUNCTION else [FUNCTION],
+                                            "input": [source, output]}, changes
+
+    def test_nonempty_opaque_arguments_are_rejected_in_complete_paired_history(self):
+        for kind, _, _, payload, changes in self.cases():
+            for value in (["PRIVATE_OPAQUE_ARGUMENTS"], [""], "", {}, False, 0):
+                with self.subTest(kind=kind, value_type=type(value).__name__):
+                    original = deepcopy(payload)
+                    payload["input"][0]["encrypted_function_args"] = value
+                    before = deepcopy(payload)
+                    with self.assertRaisesRegex(RouterError, "^opaque_cross_provider_context_not_supported$"):
+                        prepare(payload, **changes)
+                    self.assertEqual(payload, before)
+                    payload = original
+
+    def test_absent_null_and_empty_arguments_stay_distinct_in_history(self):
+        for kind, _, _, payload, changes in self.cases():
+            for fields in ({}, {"encrypted_function_args": None}, {"encrypted_function_args": []}):
+                with self.subTest(kind=kind, fields=fields):
+                    original = deepcopy(payload)
+                    payload["input"][0].update(fields)
+                    before = deepcopy(payload)
+                    wire, _ = prepare(payload, **changes)
+                    self.assertEqual(payload, before)
+                    self.assertEqual("encrypted_function_args" in wire["input"][0], bool(fields))
+                    if fields:
+                        self.assertEqual(wire["input"][0]["encrypted_function_args"], fields["encrypted_function_args"])
+                    payload = original
+
+    def test_late_opaque_arguments_reject_entire_terminal_response(self):
+        from operator_core.responses_capabilities import protocol_reason, protocol_response_state
+        for kind, context, upstream, _, _ in self.cases():
+            valid = {"type": "function_call", "name": "add", "arguments": '{"a":23}',
+                     "id": "item_valid_fixture", "call_id": "call_valid_fixture", "status": "completed"}
+            for value in (["PRIVATE_OPAQUE_ARGUMENTS"], [""], "", {}, False, 0):
+                with self.subTest(kind=kind, value_type=type(value).__name__):
+                    raw = response(valid, {**upstream, "encrypted_function_args": value})
+                    before = deepcopy(raw)
+                    with self.assertRaises(UpstreamProtocolError) as rejected:
+                        restore_response(raw, context)
+                    self.assertEqual(protocol_reason(rejected.exception), "opaque_upstream_context_not_supported")
+                    self.assertNotIn("PRIVATE_OPAQUE_ARGUMENTS", dumps(protocol_response_state(rejected.exception)))
+                    self.assertEqual(raw, before)
+
+    def test_absent_null_and_empty_arguments_stay_distinct_in_terminal_output(self):
+        for kind, context, upstream, _, _ in self.cases():
+            for fields in ({}, {"encrypted_function_args": None}, {"encrypted_function_args": []}):
+                with self.subTest(kind=kind, fields=fields):
+                    raw = response({**upstream, **fields})
+                    before = deepcopy(raw)
+                    restored = restore_response(raw, context)["output"][0]
+                    self.assertEqual(raw, before)
+                    self.assertEqual("encrypted_function_args" in restored, bool(fields))
+                    if fields:
+                        self.assertEqual(restored["encrypted_function_args"], fields["encrypted_function_args"])
+
+    def test_sse_late_opaque_arguments_never_release_an_earlier_valid_tool(self):
+        from operator_core.responses_events import ResponsesEventAdapter
+        for kind, context, upstream, _, _ in self.cases():
+            valid = {"type": "function_call", "name": "add", "arguments": '{"a":23}',
+                     "id": "item_valid_fixture", "call_id": "call_valid_fixture", "status": "completed"}
+            opaque = {**upstream, "encrypted_function_args": ["PRIVATE_OPAQUE_ARGUMENTS"]}
+            raw = response(valid, opaque)
+            events = [{"type": "response.created", "response": {**raw, "status": "in_progress", "output": []}}]
+            for index, item in enumerate(raw["output"]):
+                key = "input" if item["type"] == "custom_tool_call" else "arguments"
+                events.extend([
+                    {"type": "response.output_item.added", "output_index": index,
+                     "item": {**item, "status": "in_progress", key: ""}},
+                    {"type": "response.output_item.done", "output_index": index, "item": item}])
+            adapter, delivered = ResponsesEventAdapter(context), []
+            with self.subTest(kind=kind):
+                for event in events:
+                    delivered.extend(adapter.feed(event))
+                with self.assertRaises(UpstreamProtocolError):
+                    adapter.feed({"type": "response.completed", "response": raw})
+                self.assertEqual([event["type"] for event in delivered], ["response.created"])
+
+
 class InputToolDefinitionTests(unittest.TestCase):
     """Codex 0.153.4 Responses Lite declarations use the ordinary tool codec."""
 

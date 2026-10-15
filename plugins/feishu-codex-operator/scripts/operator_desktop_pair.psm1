@@ -117,6 +117,16 @@ function Get-OperatorDesktopPairRestorePlan {
     $project = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\')
     $root = Get-OperatorPairRoot $project
     if (Test-Path -LiteralPath (Join-Path $root 'pending.json')) { throw 'pair_pending_requires_review' }
+    $record = Get-OperatorPairJson (Join-Path $root 'ownership.json')
+    # Legacy entry-only transactions have their own strict retained-rollback
+    # witness. Let that validator inspect every transaction; the normal pair's
+    # completed-only gate must not reject a reviewed legacy rollback first.
+    if ($record.scope -ceq 'legacy_entry_only' -or (Test-Path -LiteralPath (Join-Path $root 'legacy-origin.json'))) {
+        Import-Module (Join-Path $PSScriptRoot 'operator_desktop_pair_legacy.psm1') -DisableNameChecking
+        $record=Get-OperatorDesktopLegacyPairState -ProjectRoot $project -CheckCurrent
+        return @{status=$(if ($record.phase -ceq 'installed') {'ready'} else {'restored'});record=$record;
+            receipt_sha256=(Get-RecoveryHash (Read-RecoveryBytes (Join-Path $root 'ownership.json')));configuration_changed=$false}
+    }
     $upgrades=Join-Path $root 'upgrades'
     Assert-RecoveryPlainPath $upgrades
     if (Test-Path -LiteralPath $upgrades) {
@@ -127,16 +137,9 @@ function Get-OperatorDesktopPairRestorePlan {
                 -not (Test-Path -LiteralPath (Join-Path $folder.FullName 'committed-intent.json') -PathType Leaf)) {throw 'pair_upgrade_pending_requires_review'}
         }
     }
-    $record = Get-OperatorPairJson (Join-Path $root 'ownership.json')
     if (-not $record) {
         if (Test-Path -LiteralPath $root) { throw 'pair_ownership_missing' }
         return @{status='not_installed';configuration_changed=$false}
-    }
-    if ($record.scope -ceq 'legacy_entry_only' -or (Test-Path -LiteralPath (Join-Path $root 'legacy-origin.json'))) {
-        Import-Module (Join-Path $PSScriptRoot 'operator_desktop_pair_legacy.psm1') -DisableNameChecking
-        $record=Get-OperatorDesktopLegacyPairState -ProjectRoot $project -CheckCurrent
-        return @{status=$(if ($record.phase -ceq 'installed') {'ready'} else {'restored'});record=$record;
-            receipt_sha256=(Get-RecoveryHash (Read-RecoveryBytes (Join-Path $root 'ownership.json')));configuration_changed=$false}
     }
     Assert-OperatorPairRecord $project $record
     if ($record.phase -eq 'installed') {

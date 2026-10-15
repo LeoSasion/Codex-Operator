@@ -329,6 +329,271 @@ function Assert-LegacyPairShortcut([string]$Path,$Expected,[switch]$Renamed) {
         elseif ($com[$key] -cne $wanted[$key]) {throw 'legacy_pair_shortcut_changed'}
     }
 }
+function Assert-LegacyPairCurrentBuild($project,$record,$RecoveredConfig) {
+    $configActual=Get-LegacyPairHash (Read-LegacyPairBytes (Join-Path $project '.codex/operator-desktop-entry/desktop-entry.json'))
+    if (-not $RecoveredConfig -and $configActual -cne $record.build['desktop-entry.json']) {
+        if (Test-Path -LiteralPath (Join-Path $record.home 'operator-unified-activation')) {
+            $witness=& $script:LegacyEntry {param($P,$B) Get-OperatorUnifiedRetiredEntryHash $P $B} $project $record.build
+            $RecoveredConfig=@{before_sha256=$record.build['desktop-entry.json'];after_sha256=$witness}
+        } else {
+            $RecoveredConfig=Get-LegacyArchivedEntryWitness $project $record.home $record.build['desktop-entry.json'] $configActual $record.steps[-1].workflow
+        }
+    }
+    foreach ($name in $record.build.Keys) {
+        $actual=Get-LegacyPairHash (Read-LegacyPairBytes (Join-Path $project ('.codex/operator-desktop-entry/'+$name)))
+        if ($actual -cne $record.build[$name] -and -not ($name -ceq 'desktop-entry.json' -and $RecoveredConfig -and
+            $RecoveredConfig.before_sha256 -ceq $record.build[$name] -and $RecoveredConfig.after_sha256 -ceq $actual)) {throw 'legacy_pair_build_changed'}
+    }
+    $currentConfig=Get-LegacyPairJson (Join-Path $project '.codex/operator-desktop-entry/desktop-entry.json')
+    if ($currentConfig.mode -ceq 'direct_profile') {
+        $bound=Get-LegacyDirectWorkflow $project $record.home $currentConfig
+        if (-not (Test-LegacyPairEqual $bound $record.steps[-1].workflow)) {throw 'legacy_pair_direct_workflow_changed'}
+    } elseif ($currentConfig.mode -ceq 'isolated_mode') {
+        $bound=Get-LegacyIsolatedWorkflow $project $record.home $currentConfig
+        if (-not (Test-LegacyPairEqual $bound $record.steps[-1].workflow)) {throw 'legacy_pair_isolated_workflow_changed'}
+    }
+}
+
+function Get-LegacyPairSingleRoot([string]$Project) {return Join-Path $Project '.codex/operator-desktop-single-entry'}
+
+function Assert-LegacyPairSingleLayout($Record,$Origin,$Plan) {
+    $native=Join-Path $Record.desktop 'ChatGPT 原生入口.lnk'
+    $dated=Join-Path $Record.desktop ('ChatGPT 拓展模型 '+$Record.build_date.Substring(5)+' 入口.lnk')
+    $selected=Join-Path $Record.desktop 'ChatGPT 自定义启动.lnk'
+    $retained=[IO.Path]::GetFullPath($Plan.retained_native.path)
+    if ($Plan.selected -cne $selected -or $Plan.native -cne $native -or $Plan.dated -cne $dated -or
+        -not $retained.StartsWith((Join-Path $Record.project '.codex')+'\',[StringComparison]::OrdinalIgnoreCase) -or
+        $Plan.retained_native.sha256 -cne $Record.links[$native].after -or
+        (Get-LegacyPairHash (Read-LegacyPairBytes $retained)) -cne $Plan.retained_native.sha256 -or
+        (Get-LegacyPairIdentity $retained) -cne $Plan.retained_native.identity -or
+        $Plan.retained_native.identity.Split(':')[0] -cne $Origin.entries[$Origin.desktop].identity.Split(':')[0]) {throw 'legacy_pair_single_entry_retained_changed'}
+    foreach ($path in @($native,$dated,$Origin.desktop)) {
+        if ($null -ne (Read-LegacyPairBytes $path)) {throw 'legacy_pair_single_entry_name_conflict'}
+    }
+    Assert-LegacyPairShortcut $selected $Origin.entries[$Origin.desktop] -Renamed
+    Assert-LegacyPairShortcut $Origin.start $Origin.entries[$Origin.start]
+}
+
+function Get-LegacyPairSingleState([string]$Project,$Record,$Origin) {
+    $root=Get-LegacyPairSingleRoot $Project
+    Assert-LegacyPairPath $root
+    if (-not (Test-Path -LiteralPath $root)) {return $null}
+    $receipt=Join-Path $root 'ownership.json';$single=Get-LegacyPairJson $receipt
+    if ($single.schema_version -ne 1 -or $single.scope -cne 'legacy_single_entry_only' -or
+        $single.project -cne $Project -or $single.phase -notin @('installed','restored') -or
+        $single.transaction -cnotmatch '^[a-f0-9]{32}$' -or $single.generation -cnotmatch '^[a-f0-9]{32}$' -or
+        $single.plan.contract -cne 'operator_legacy_single_entry_review_v1' -or
+        $single.plan.project -cne $Project -or $single.runtime_ownership -cne 'unresolved') {throw 'legacy_pair_single_entry_record_invalid'}
+    $planHash=& $script:LegacyUpgrade {param($P) Get-OperatorPairPreviewHash $P} $single.plan
+    if ($single.plan_sha256 -cne $planHash) {throw 'legacy_pair_single_entry_record_invalid'}
+    $folders=@(Get-ChildItem -LiteralPath (Join-Path $root 'upgrades') -Directory -ErrorAction SilentlyContinue)
+    $identities=@($single.generation,$single.transaction|Select-Object -Unique)
+    if ($folders.Count -ne $identities.Count) {throw 'legacy_pair_single_entry_transaction_changed'}
+    foreach ($folder in $folders) {
+        if ($folder.Name -cnotin $identities) {throw 'legacy_pair_single_entry_transaction_changed'}
+        if (Test-Path -LiteralPath (Join-Path $folder.FullName 'pending.json')) {throw 'legacy_pair_single_entry_pending_requires_review'}
+        Get-LegacyPairTransaction $root $folder.Name | Out-Null
+    }
+    $transaction=Get-LegacyPairTransaction $root $single.transaction
+    $rows=@($transaction.changes|Where-Object {$_.path -ceq $receipt})
+    if ($rows.Count -ne 1 -or $rows[0].after -cne (Get-LegacyPairHash (Read-LegacyPairBytes $receipt))) {throw 'legacy_pair_single_entry_receipt_changed'}
+    $initial=Get-LegacyPairTransaction $root $single.generation
+    $initialBytes=Read-LegacyPairBytes (Join-Path $root ('upgrades/'+$single.generation+'/0.after'))
+    $initialOwner=Get-LegacyPairJson (Join-Path $root ('upgrades/'+$single.generation+'/0.after'))
+    if (@($initial.changes).Count -ne 1 -or @($initial.moves).Count -ne 0 -or
+        $initial.changes[0].path -cne $receipt -or $initial.changes[0].before -cne 'absent' -or
+        $initial.changes[0].after -cne (Get-LegacyPairHash $initialBytes) -or
+        $initialOwner.phase -cne 'installed' -or $initialOwner.transaction -cne $single.generation -or
+        ($single.phase -ceq 'installed' -and $single.transaction -cne $single.generation)) {throw 'legacy_pair_single_entry_transaction_changed'}
+    $initialOwner.phase=$single.phase;$initialOwner.transaction=$single.transaction
+    if (-not (Test-LegacyPairEqual $initialOwner $single)) {throw 'legacy_pair_single_entry_transaction_changed'}
+    if ($single.phase -ceq 'restored') {
+        if ($single.transaction -ceq $single.generation -or @($transaction.changes).Count -ne 1 -or
+            $transaction.changes[0].before -cne (Get-LegacyPairHash $initialBytes) -or @($transaction.moves).Count -ne 2) {throw 'legacy_pair_single_entry_transaction_changed'}
+        $expectedMoves=@(@{source=$single.plan.selected;destination=$single.plan.dated;sha256=$Origin.entries[$Origin.desktop].sha256;identity=$Origin.entries[$Origin.desktop].identity},
+            @{source=$single.plan.retained_native.path;destination=$single.plan.native;sha256=$single.plan.retained_native.sha256;identity=$single.plan.retained_native.identity})
+        if (-not (Test-LegacyPairEqual $transaction.moves $expectedMoves)) {throw 'legacy_pair_single_entry_transaction_changed'}
+    }
+    $originals=@{'pair-ownership.json'=$single.plan.pair_sha256;'native-shortcut.lnk'=$single.plan.retained_native.sha256}
+    if ($single.originals -isnot [Collections.IDictionary] -or $single.originals.Count -ne ($originals.Count+$single.plan.evidence.Count)) {throw 'legacy_pair_single_entry_original_changed'}
+    foreach ($name in $originals.Keys) {
+        if ($single.originals[$name] -cne $originals[$name]) {throw 'legacy_pair_single_entry_original_changed'}
+    }
+    foreach ($name in $single.originals.Keys) {
+        if ($name -cnotmatch '^(pair-ownership\.json|native-shortcut\.lnk|evidence-[0-9]+\.bin)$' -or
+            (Get-LegacyPairHash (Read-LegacyPairBytes (Join-Path $root ('originals/'+$name)))) -cne $single.originals[$name]) {throw 'legacy_pair_single_entry_original_changed'}
+    }
+    $i=0
+    foreach ($path in @($single.plan.evidence.Keys|Sort-Object -CaseSensitive)) {
+        if ($single.originals['evidence-'+$i+'.bin'] -cne $single.plan.evidence[$path] -or
+            (Get-LegacyPairHash (Read-LegacyPairBytes $path)) -cne $single.plan.evidence[$path]) {throw 'legacy_pair_single_entry_evidence_changed'}
+        $i++
+    }
+    $baseline=Get-LegacyPairJson (Join-Path $root 'originals/pair-ownership.json')
+    $old=Get-LegacyPairTransaction (Join-Path $Project '.codex/operator-desktop-pair') $baseline.transaction
+    $rows=@($old.changes|Where-Object {$_.path -ceq (Join-Path $Project '.codex/operator-desktop-pair/ownership.json')})
+    if ($rows.Count -ne 1 -or $rows[0].after -cne $single.plan.pair_sha256 -or
+        $baseline.phase -cne 'installed' -or $baseline.steps.Count -gt $Record.steps.Count) {throw 'legacy_pair_single_entry_owner_changed'}
+    for ($i=0;$i -lt $baseline.steps.Count;$i++) {
+        if (-not (Test-LegacyPairEqual $baseline.steps[$i] $Record.steps[$i])) {throw 'legacy_pair_single_entry_owner_changed'}
+    }
+    if ($single.phase -ceq 'installed') {
+        # Bound mode refresh may append steps and replace the current build only.
+        # It cannot invent first-install ownership or change the legacy links.
+        $expected=Get-LegacyPairJson (Join-Path $root 'originals/pair-ownership.json')
+        foreach ($key in @('generation','transaction','build','steps')) {$expected[$key]=$Record[$key]}
+        if (-not (Test-LegacyPairEqual $expected $Record)) {throw 'legacy_pair_single_entry_owner_changed'}
+        Assert-LegacyPairSingleLayout $Record $Origin $single.plan
+    }
+    return $single
+}
+
+function New-LegacyPairSingleReview([string]$Project,[string]$RetainedNativeShortcut,[string[]]$EvidenceFiles) {
+    $record=Get-OperatorDesktopLegacyPairState $Project
+    if ($record.phase -cne 'installed' -or $record.steps[-1].workflow.contract -cne 'operator_isolated_mode_entry_v1' -or
+        $EvidenceFiles.Count -lt 1 -or $EvidenceFiles.Count -gt 16) {throw 'legacy_pair_single_entry_review_scope_invalid'}
+    Assert-LegacyPairCurrentBuild $Project $record $null
+    if ((Get-LegacyPairJson (Join-Path $Project '.codex/operator-desktop-entry/desktop-entry.json')).mode -cne 'isolated_mode') {throw 'legacy_pair_single_entry_review_scope_invalid'}
+    $pairRoot=Join-Path $Project '.codex/operator-desktop-pair'
+    $origin=Get-LegacyPairJson (Join-Path $pairRoot 'legacy-origin.json')
+    if (-not [IO.Path]::IsPathFullyQualified($RetainedNativeShortcut)) {throw 'legacy_pair_single_entry_review_scope_invalid'}
+    $retained=[IO.Path]::GetFullPath($RetainedNativeShortcut)
+    $plan=[ordered]@{contract='operator_legacy_single_entry_review_v1';project=$Project;
+        pair_sha256=(Get-LegacyPairHash (Read-LegacyPairBytes (Join-Path $pairRoot 'ownership.json')));
+        selected=(Join-Path $record.desktop 'ChatGPT 自定义启动.lnk');native=(Join-Path $record.desktop 'ChatGPT 原生入口.lnk');
+        dated=(Join-Path $record.desktop ('ChatGPT 拓展模型 '+$record.build_date.Substring(5)+' 入口.lnk'));
+        retained_native=@{path=$retained;sha256=(Get-LegacyPairHash (Read-LegacyPairBytes $retained));identity=(Get-LegacyPairIdentity $retained)};
+        evidence=[ordered]@{};protected_files=[ordered]@{};sources=[ordered]@{};runtime_ownership='unresolved'}
+    Assert-LegacyPairSingleLayout $record $origin $plan
+    foreach ($path in $EvidenceFiles) {
+        if (-not [IO.Path]::IsPathFullyQualified($path)) {throw 'legacy_pair_single_entry_evidence_scope_invalid'}
+        $full=[IO.Path]::GetFullPath($path)
+        if (-not $full.StartsWith((Join-Path $Project '.codex/audit')+'\',[StringComparison]::OrdinalIgnoreCase) -or
+            $full -ieq $retained -or
+            $plan.evidence.Contains($full)) {throw 'legacy_pair_single_entry_evidence_scope_invalid'}
+        $sha=Get-LegacyPairHash (Read-LegacyPairBytes $full)
+        if ($sha -ceq 'absent') {throw 'legacy_pair_single_entry_evidence_missing'}
+        # Evidence bytes are retained and bound; their JSON claims grant nothing.
+        $plan.evidence[$full]=$sha
+    }
+    foreach ($name in $record.build.Keys) {$path=Join-Path $Project ('.codex/operator-desktop-entry/'+$name);$plan.protected_files[$path]=Get-LegacyPairHash (Read-LegacyPairBytes $path)}
+    foreach ($name in $record.files.Keys) {$path=Join-Path $pairRoot ('generations/'+$record.generation+'/'+$name);$plan.protected_files[$path]=Get-LegacyPairHash (Read-LegacyPairBytes $path)}
+    foreach ($path in @((Join-Path $record.home 'config.toml'),(Join-Path $pairRoot 'legacy-origin.json'),$origin.start)) {$plan.protected_files[$path]=Get-LegacyPairHash (Read-LegacyPairBytes $path)}
+    foreach ($name in @('operator_desktop_pair.psm1','operator_desktop_pair_legacy.psm1','operator_desktop_pair_upgrade.psm1')) {$plan.sources[$name]=Get-LegacyPairHash (Read-LegacyPairBytes (Join-Path $PSScriptRoot $name))}
+    return $plan
+}
+
+function Get-OperatorDesktopSingleEntryPlan {
+    param([Parameter(Mandatory)][string]$ProjectRoot,[Parameter(Mandatory)][string]$RetainedNativeShortcut,
+        [Parameter(Mandatory)][string[]]$EvidenceFiles)
+    $project=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\');$root=Get-LegacyPairSingleRoot $project
+    Assert-LegacyPairPath $root
+    if (Test-Path -LiteralPath $root) {throw 'legacy_pair_single_entry_existing_requires_review'}
+    $plan=New-LegacyPairSingleReview $project $RetainedNativeShortcut $EvidenceFiles
+    return @{plan=$plan;sha256=(& $script:LegacyUpgrade {param($P) Get-OperatorPairPreviewHash $P} $plan);desktop_changed=$false;runtime_ownership='unresolved'}
+}
+
+function Invoke-OperatorDesktopSingleEntryReview {
+    param([Parameter(Mandatory)][string]$ProjectRoot,[Parameter(Mandatory)][string]$RetainedNativeShortcut,
+        [Parameter(Mandatory)][string[]]$EvidenceFiles,[Parameter(Mandatory)][string]$ExpectedPlanSha256)
+    $project=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\');$root=Get-LegacyPairSingleRoot $project
+    $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($script:LegacyUtf8.GetBytes($project.ToLowerInvariant())))
+    $mutex=[Threading.Mutex]::new($false,('Local\CodexOperatorDesktopEntry-'+$hash));$owns=$false;$lock=$null
+    try {
+        try {$owns=$mutex.WaitOne(0)} catch [Threading.AbandonedMutexException] {$owns=$true}
+        if (-not $owns) {throw 'pair_entry_busy'}
+        $lock=[IO.File]::Open((Join-Path $project '.codex/operator-desktop-pair/transaction.lock'),[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+        $review=Get-OperatorDesktopSingleEntryPlan $project $RetainedNativeShortcut $EvidenceFiles
+        if ($review.sha256 -cne $ExpectedPlanSha256) {throw 'legacy_pair_single_entry_preview_changed'}
+        $plan=$review.plan;New-LegacyPairDirectory $root;New-LegacyPairDirectory (Join-Path $root 'originals')
+        $originals=@{'pair-ownership.json'=(Read-LegacyPairBytes (Join-Path $project '.codex/operator-desktop-pair/ownership.json'));
+            'native-shortcut.lnk'=(Read-LegacyPairBytes $plan.retained_native.path)}
+        $i=0;foreach ($path in @($plan.evidence.Keys|Sort-Object -CaseSensitive)) {$originals['evidence-'+$i+'.bin']=Read-LegacyPairBytes $path;$i++}
+        $saved=@{}
+        foreach ($name in $originals.Keys) {[IO.File]::WriteAllBytes((Join-Path $root ('originals/'+$name)),$originals[$name]);$saved[$name]=Get-LegacyPairHash $originals[$name]}
+        $generation=[Guid]::NewGuid().ToString('N')
+        $record=@{schema_version=1;scope='legacy_single_entry_only';project=$project;phase='installed';generation=$generation;transaction=$generation;
+            plan=$plan;plan_sha256=$review.sha256;originals=$saved;runtime_ownership='unresolved'}
+        $boundary={
+            $current=New-LegacyPairSingleReview $project $RetainedNativeShortcut $EvidenceFiles
+            if (-not (Test-LegacyPairEqual $plan $current)) {throw 'legacy_pair_single_entry_preview_changed'}
+            foreach ($name in $saved.Keys) {if ((Get-LegacyPairHash (Read-LegacyPairBytes (Join-Path $root ('originals/'+$name)))) -cne $saved[$name]) {throw 'legacy_pair_single_entry_original_changed'}}
+        }
+        $receipt=Join-Path $root 'ownership.json'
+        Invoke-OperatorEntryExactTransaction -TransactionRoot (Join-Path $root ('upgrades/'+$generation)) -Changes @(@{path=$receipt;before=$null;after=(ConvertTo-LegacyPairBytes $record)}) -Boundary $boundary
+        Get-OperatorDesktopLegacyPairState $project -CheckCurrent | Out-Null
+        return @{status='single_entry_reviewed';desktop_changed=$false;routing_changed=$false;runtime_ownership='unresolved'}
+    } finally {if ($lock) {$lock.Dispose()};if ($owns) {$mutex.ReleaseMutex()};$mutex.Dispose()}
+}
+
+function Get-OperatorDesktopLegacyPairCurrentFiles {
+    param([Parameter(Mandatory)][string]$ProjectRoot,[Parameter(Mandatory)]$Record)
+    $root=Join-Path $ProjectRoot '.codex/operator-desktop-pair';$origin=Get-LegacyPairJson (Join-Path $root 'legacy-origin.json')
+    $single=Get-LegacyPairSingleState $ProjectRoot $Record $origin;$files=[ordered]@{}
+    foreach ($path in $Record.links.Keys) {$files[$path]=$Record.links[$path].after}
+    if ($single) {
+        $singleRoot=Get-LegacyPairSingleRoot $ProjectRoot
+        $files[(Join-Path $singleRoot 'ownership.json')]=Get-LegacyPairHash (Read-LegacyPairBytes (Join-Path $singleRoot 'ownership.json'))
+        foreach ($name in $single.originals.Keys) {$files[(Join-Path $singleRoot ('originals/'+$name))]=$single.originals[$name]}
+        foreach ($identity in @($single.generation,$single.transaction|Select-Object -Unique)) {
+            $folder=Join-Path $singleRoot ('upgrades/'+$identity)
+            foreach ($file in @(Get-ChildItem -LiteralPath $folder -File)) {$files[$file.FullName]=Get-LegacyPairHash (Read-LegacyPairBytes $file.FullName)}
+        }
+        foreach ($path in $single.plan.evidence.Keys) {$files[$path]=$single.plan.evidence[$path]}
+        if ($single.phase -ceq 'installed') {
+            $files[$single.plan.native]='absent';$files[$single.plan.dated]='absent';$files[$single.plan.selected]=$origin.entries[$origin.desktop].sha256
+            $files[$single.plan.retained_native.path]=$single.plan.retained_native.sha256
+        }
+    }
+    return $files
+}
+
+function Get-OperatorDesktopSingleEntryRestorePlan {
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+    $project=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\')
+    $record=Get-OperatorDesktopLegacyPairState $project -CheckCurrent
+    $origin=Get-LegacyPairJson (Join-Path $project '.codex/operator-desktop-pair/legacy-origin.json')
+    $single=Get-LegacyPairSingleState $project $record $origin
+    if (-not $single -or $single.phase -cne 'installed') {throw 'legacy_pair_single_entry_installed_required'}
+    $files=Get-OperatorDesktopLegacyPairCurrentFiles $project $record
+    foreach ($path in @((Join-Path $project '.codex/operator-desktop-pair/ownership.json'),(Join-Path $project '.codex/operator-desktop-pair/legacy-origin.json'))) {$files[$path]=Get-LegacyPairHash (Read-LegacyPairBytes $path)}
+    foreach ($name in $record.build.Keys) {$path=Join-Path $project ('.codex/operator-desktop-entry/'+$name);$files[$path]=Get-LegacyPairHash (Read-LegacyPairBytes $path)}
+    foreach ($name in $record.files.Keys) {$path=Join-Path $project ('.codex/operator-desktop-pair/generations/'+$record.generation+'/'+$name);$files[$path]=$record.files[$name]}
+    $plan=@{contract='operator_legacy_single_entry_restore_v1';project=$project;files=$files;
+        selected=$single.plan.selected;dated=$single.plan.dated;native=$single.plan.native;retained_native=$single.plan.retained_native;
+        sources=@{};runtime_ownership='unresolved'}
+    foreach ($name in @('operator_desktop_pair_legacy.psm1','operator_desktop_pair_upgrade.psm1')) {$plan.sources[$name]=Get-LegacyPairHash (Read-LegacyPairBytes (Join-Path $PSScriptRoot $name))}
+    return @{plan=$plan;sha256=(& $script:LegacyUpgrade {param($P) Get-OperatorPairPreviewHash $P} $plan);desktop_changed=$false}
+}
+
+function Restore-OperatorDesktopSingleEntry {
+    param([Parameter(Mandatory)][string]$ProjectRoot,[Parameter(Mandatory)][string]$ExpectedPlanSha256)
+    $project=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\');$root=Get-LegacyPairSingleRoot $project
+    $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($script:LegacyUtf8.GetBytes($project.ToLowerInvariant())))
+    $mutex=[Threading.Mutex]::new($false,('Local\CodexOperatorDesktopEntry-'+$hash));$owns=$false;$lock=$null
+    try {
+        try {$owns=$mutex.WaitOne(0)} catch [Threading.AbandonedMutexException] {$owns=$true}
+        if (-not $owns) {throw 'pair_entry_busy'}
+        $lock=[IO.File]::Open((Join-Path $project '.codex/operator-desktop-pair/transaction.lock'),[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+        $review=Get-OperatorDesktopSingleEntryRestorePlan $project
+        if ($review.sha256 -cne $ExpectedPlanSha256) {throw 'legacy_pair_single_entry_preview_changed'}
+        $plan=$review.plan;$receipt=Join-Path $root 'ownership.json';$before=Read-LegacyPairBytes $receipt
+        $single=Get-LegacyPairJson $receipt;$single.phase='restored';$single.transaction=[Guid]::NewGuid().ToString('N')
+        $record=Get-OperatorDesktopLegacyPairState $project -CheckCurrent
+        $origin=Get-LegacyPairJson (Join-Path $project '.codex/operator-desktop-pair/legacy-origin.json')
+        $moves=@(@{source=$plan.selected;destination=$plan.dated;sha256=$origin.entries[$origin.desktop].sha256;identity=$origin.entries[$origin.desktop].identity},
+            @{source=$plan.retained_native.path;destination=$plan.native;sha256=$plan.retained_native.sha256;identity=$plan.retained_native.identity})
+        $boundary={
+            foreach ($path in $plan.files.Keys) {if ((Get-LegacyPairHash (Read-LegacyPairBytes $path)) -cne $plan.files[$path]) {throw 'legacy_pair_single_entry_preview_changed'}}
+            foreach ($name in $plan.sources.Keys) {if ((Get-LegacyPairHash (Read-LegacyPairBytes (Join-Path $PSScriptRoot $name))) -cne $plan.sources[$name]) {throw 'legacy_pair_single_entry_source_changed'}}
+            Assert-LegacyPairSingleLayout $record $origin $single.plan
+        }
+        Invoke-OperatorEntryExactTransaction -TransactionRoot (Join-Path $root ('upgrades/'+$single.transaction)) -Changes @(@{path=$receipt;before=$before;after=(ConvertTo-LegacyPairBytes $single)}) -Moves $moves -Boundary $boundary -SingleEntryRestore $plan
+        Get-OperatorDesktopLegacyPairState $project -CheckCurrent | Out-Null
+        return @{status='single_entry_restored';desktop_changed=$true;routing_changed=$false;runtime_ownership='unresolved';native_pin_helpers_retained=$true}
+    } finally {if ($lock) {$lock.Dispose()};if ($owns) {$mutex.ReleaseMutex()};$mutex.Dispose()}
+}
+
 function Get-OperatorDesktopLegacyPairState {
     param([Parameter(Mandatory)][string]$ProjectRoot,[switch]$CheckCurrent,[Collections.IDictionary]$RecoveredConfig)
     $project=[IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\')
@@ -349,29 +614,11 @@ function Get-OperatorDesktopLegacyPairState {
             (Get-LegacyPairHash (Read-LegacyPairBytes (Join-Path $root ('generations/'+$record.generation+'/'+$name)))) -cne $record.files[$name]) {throw 'legacy_pair_helper_changed'}
     }
     if ($CheckCurrent) {
-        $configActual=Get-LegacyPairHash (Read-LegacyPairBytes (Join-Path $project '.codex/operator-desktop-entry/desktop-entry.json'))
-        if (-not $RecoveredConfig -and $configActual -cne $record.build['desktop-entry.json']) {
-            if (Test-Path -LiteralPath (Join-Path $record.home 'operator-unified-activation')) {
-                $witness=& $script:LegacyEntry {param($P,$B) Get-OperatorUnifiedRetiredEntryHash $P $B} $project $record.build
-                $RecoveredConfig=@{before_sha256=$record.build['desktop-entry.json'];after_sha256=$witness}
-            } else {
-                $RecoveredConfig=Get-LegacyArchivedEntryWitness $project $record.home $record.build['desktop-entry.json'] $configActual $record.steps[-1].workflow
-            }
-        }
-        foreach ($name in $record.build.Keys) {
-            $actual=Get-LegacyPairHash (Read-LegacyPairBytes (Join-Path $project ('.codex/operator-desktop-entry/'+$name)))
-            if ($actual -cne $record.build[$name] -and -not ($name -ceq 'desktop-entry.json' -and $RecoveredConfig -and
-                $RecoveredConfig.before_sha256 -ceq $record.build[$name] -and $RecoveredConfig.after_sha256 -ceq $actual)) {throw 'legacy_pair_build_changed'}
-        }
-        $currentConfig=Get-LegacyPairJson (Join-Path $project '.codex/operator-desktop-entry/desktop-entry.json')
-        if ($currentConfig.mode -ceq 'direct_profile') {
-            $bound=Get-LegacyDirectWorkflow $project $record.home $currentConfig
-            if (-not (Test-LegacyPairEqual $bound $record.steps[-1].workflow)) {throw 'legacy_pair_direct_workflow_changed'}
-        } elseif ($currentConfig.mode -ceq 'isolated_mode') {
-            $bound=Get-LegacyIsolatedWorkflow $project $record.home $currentConfig
-            if (-not (Test-LegacyPairEqual $bound $record.steps[-1].workflow)) {throw 'legacy_pair_isolated_workflow_changed'}
-        }
-        if ($record.phase -ceq 'installed') {
+        Assert-LegacyPairCurrentBuild $project $record $RecoveredConfig
+        $single=Get-LegacyPairSingleState $project $record $origin
+        if ($single -and $single.phase -ceq 'installed') {
+            if ($record.phase -cne 'installed') {throw 'legacy_pair_single_entry_owner_changed'}
+        } elseif ($record.phase -ceq 'installed') {
             if ($null -ne (Read-LegacyPairBytes $origin.desktop)) {throw 'legacy_pair_old_name_conflict'}
             Assert-LegacyPairShortcut $extended $origin.entries[$origin.desktop] -Renamed
             Assert-LegacyPairShortcut $origin.start $origin.entries[$origin.start]
@@ -418,6 +665,8 @@ function Get-OperatorDesktopLegacyPairPlan {
     $paths=Get-LegacyPairPaths;$previous=$null;$entries=[ordered]@{};$recoveredEntry=$null
     if (Test-Path -LiteralPath $root) {
         $previous=Get-OperatorDesktopLegacyPairState $project -CheckCurrent
+        $single=Get-LegacyPairSingleState $project $previous (Get-LegacyPairJson (Join-Path $root 'legacy-origin.json'))
+        if ($single -and $single.phase -ceq 'installed') {throw 'legacy_pair_single_entry_restore_required'}
         if ($previous.phase -cne 'installed') {throw 'legacy_pair_restored_requires_review'}
         $base=@{};foreach ($name in $previous.build.Keys) {$base[$name]=$previous.build[$name]}
         $actualConfig=Get-LegacyPairHash (Read-LegacyPairBytes (Join-Path $project '.codex/operator-desktop-entry/desktop-entry.json'))
@@ -633,6 +882,8 @@ function Restore-OperatorDesktopLegacyPair {
     $record=Get-OperatorDesktopLegacyPairState $ProjectRoot -CheckCurrent
     if ($record.phase -ceq 'restored') {return @{status='restored';changed=$false}}
     $project=$record.project;$root=Join-Path $project '.codex/operator-desktop-pair'
+    $single=Get-LegacyPairSingleState $project $record (Get-LegacyPairJson (Join-Path $root 'legacy-origin.json'))
+    if ($single -and $single.phase -ceq 'installed') {throw 'legacy_pair_single_entry_restore_required'}
     $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($script:LegacyUtf8.GetBytes($project.ToLowerInvariant())))
     $mutex=[Threading.Mutex]::new($false,('Local\CodexOperatorDesktopEntry-'+$hash));$owns=$false;$lock=$null
     try {
@@ -666,4 +917,4 @@ function Restore-OperatorDesktopLegacyPair {
     } finally {if ($lock) {$lock.Dispose()};if ($owns) {$mutex.ReleaseMutex()};$mutex.Dispose()}
 }
 
-Export-ModuleMember -Function Get-OperatorLegacyPairAttachment,Get-OperatorDesktopLegacyPairState,Get-OperatorDesktopLegacyPairPlan,Invoke-OperatorDesktopLegacyPair,Restore-OperatorDesktopLegacyPair
+Export-ModuleMember -Function Get-OperatorLegacyPairAttachment,Get-OperatorDesktopLegacyPairState,Get-OperatorDesktopLegacyPairPlan,Invoke-OperatorDesktopLegacyPair,Restore-OperatorDesktopLegacyPair,Get-OperatorDesktopSingleEntryPlan,Invoke-OperatorDesktopSingleEntryReview,Get-OperatorDesktopSingleEntryRestorePlan,Restore-OperatorDesktopSingleEntry,Get-OperatorDesktopLegacyPairCurrentFiles

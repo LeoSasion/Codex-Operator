@@ -2,14 +2,32 @@
 [CmdletBinding()]
 param([ValidateSet('preview','install','restore','preview-migration','migrate','restore-migration',
         'preview-entry-upgrade','upgrade-entry','preview-shortcut-adoption','adopt-shortcut',
-        'preview-pair','install-pair','pair-status','restore-pair','prepare-pair-build','preview-pair-upgrade','upgrade-pair')][string]$Action = 'preview',
+        'preview-pair','install-pair','pair-status','restore-pair','prepare-pair-build','preview-pair-upgrade','upgrade-pair',
+        'single-entry-preview','single-entry-review','single-entry-preview-restore','single-entry-restore')][string]$Action = 'preview',
       [Parameter(Mandatory=$true)][string]$ProjectRoot,
       [string]$StartupBundle, [string]$LegacyReceipt, [string]$ExpectedPlanSha256,
       [string]$CodexHome, [string]$RecoveryReceipt, [switch]$OwnerApprovedShortcutAdoption,
       [string]$CandidateDirectory, [string]$BuildDate, [string]$DirectPickerPath, [string]$IsolatedModePath,
+      [string]$RetainedNativeShortcut, [string[]]$EvidenceFiles, [string]$EvidenceFilesJson,
       [ValidateRange(1024,65535)][int]$RouterPort = 4317,
       [switch]$Library)
 $ErrorActionPreference = 'Stop'
+if ($PSBoundParameters.ContainsKey('EvidenceFilesJson')) {
+    if ($PSBoundParameters.ContainsKey('EvidenceFiles') -or $EvidenceFilesJson.Length -gt 32768) {
+        throw 'Use one bounded evidence path array.'
+    }
+    $parsedEvidence = ConvertFrom-Json -InputObject $EvidenceFilesJson -NoEnumerate -ErrorAction Stop
+    if ($parsedEvidence -isnot [array] -or $parsedEvidence.Count -lt 1 -or $parsedEvidence.Count -gt 16) {
+        throw 'EvidenceFilesJson must be an array of 1 to 16 absolute file paths.'
+    }
+    foreach ($evidencePath in $parsedEvidence) {
+        if ($evidencePath -isnot [string] -or [string]::IsNullOrWhiteSpace($evidencePath) -or
+            -not [IO.Path]::IsPathFullyQualified($evidencePath)) {
+            throw 'EvidenceFilesJson contains an invalid path.'
+        }
+    }
+    $EvidenceFiles = [string[]]$parsedEvidence
+}
 Import-Module (Join-Path $PSScriptRoot 'operator_installation.psm1') -Force -DisableNameChecking
 . (Join-Path $PSScriptRoot 'operator_entry_migration.ps1')
 . (Join-Path $PSScriptRoot 'operator_entry_shortcut_adoption.ps1')
@@ -327,6 +345,22 @@ switch ($Action) {
     'pair-status' {
         Import-Module (Join-Path $PSScriptRoot 'operator_desktop_pair.psm1') -Force -DisableNameChecking
         Get-OperatorDesktopPairRestorePlan -ProjectRoot $ProjectRoot | ConvertTo-Json -Depth 12
+    }
+    'single-entry-preview' {
+        Import-Module (Join-Path $PSScriptRoot 'operator_desktop_pair_legacy.psm1') -DisableNameChecking
+        Get-OperatorDesktopSingleEntryPlan -ProjectRoot $ProjectRoot -RetainedNativeShortcut $RetainedNativeShortcut -EvidenceFiles $EvidenceFiles | ConvertTo-Json -Depth 16
+    }
+    'single-entry-review' {
+        Import-Module (Join-Path $PSScriptRoot 'operator_desktop_pair_legacy.psm1') -DisableNameChecking
+        Invoke-OperatorDesktopSingleEntryReview -ProjectRoot $ProjectRoot -RetainedNativeShortcut $RetainedNativeShortcut -EvidenceFiles $EvidenceFiles -ExpectedPlanSha256 $ExpectedPlanSha256 | ConvertTo-Json -Depth 16
+    }
+    'single-entry-preview-restore' {
+        Import-Module (Join-Path $PSScriptRoot 'operator_desktop_pair_legacy.psm1') -DisableNameChecking
+        Get-OperatorDesktopSingleEntryRestorePlan -ProjectRoot $ProjectRoot | ConvertTo-Json -Depth 16
+    }
+    'single-entry-restore' {
+        Import-Module (Join-Path $PSScriptRoot 'operator_desktop_pair_legacy.psm1') -DisableNameChecking
+        Restore-OperatorDesktopSingleEntry -ProjectRoot $ProjectRoot -ExpectedPlanSha256 $ExpectedPlanSha256 | ConvertTo-Json -Depth 16
     }
     'restore-pair' {
         Restore-OperatorDesktopExperience $ProjectRoot $CodexHome $RouterPort | ConvertTo-Json

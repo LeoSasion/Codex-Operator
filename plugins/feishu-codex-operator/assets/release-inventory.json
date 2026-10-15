@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "release_name": "feishu-codex-operator-plugin",
-  "source_version": "4.2.0-alpha.139",
+  "source_version": "4.2.0-alpha.140",
   "reviewed_document_sha256": {
     "README.md": "60c5aa480418b6cf28839d97bcfaf236343f4810c0c3ecdd2eeb8093be2f22a6",
     "models/web/docs/native-web-experience.md": "36657666df4fadae627861eb52c3f7263986df23a0b08ab518f7778143b9f77e",
     "models/web/docs/chatgpt-web-integration.md": "8c4dbb5b52d65436d38d253c2fba2b67a70c0d420fb3788723920d5b9902d3df",
-    "development/docs/release-audit.md": "c501d107f0549ca68319815db7b76f019cc976956dde0c97e5098a8cbe843846",
-    "development/docs/testing.md": "83ec938d6375d037999c3fe77332f282696fb339e343b5ca2aac9e1e93275e57"
+    "development/docs/release-audit.md": "ff75802c8326d8922248e22edaafb9608fcefb46b846b31f05276a544d66b51b",
+    "development/docs/testing.md": "ada2ec36f6afe8d8c3251fb0761e4e8005385a5b4eff7668c66185bfba1d3257"
   },
   "repository_files": [
     ".agents/plugins/marketplace.json",
@@ -40,6 +40,7 @@
         "channels/feishu/tests/test_beeper_relay.py",
         "channels/feishu/tests/test_channel_launcher.py",
         "channels/feishu/tests/test_channel_models.py",
+        "channels/feishu/tests/test_channel_process_identity.py",
         "channels/feishu/tests/test_config.py",
         "channels/feishu/tests/test_final_callback.py",
         "channels/feishu/tests/test_performance.py",
@@ -282,7 +283,9 @@
         "shared/tests/test_desktop_pair.py",
         "shared/tests/test_desktop_pair_legacy.py",
         "shared/tests/test_desktop_pair_renewed_witness.py",
+        "shared/tests/test_desktop_pair_single.py",
         "shared/tests/test_desktop_pair_upgrade.py",
+        "shared/tests/test_desktop_single_cli.py",
         "shared/tests/test_direct_desktop_entry.py",
         "shared/tests/test_direct_recovery.py",
         "shared/tests/test_entry_migration.py",
@@ -300,6 +303,7 @@
         "shared/tests/test_operator_uninstall.py",
         "shared/tests/test_python_runtime.py",
         "shared/tests/test_recovery_shortcut.py",
+        "shared/tests/test_release_rules.py",
         "shared/tests/test_source_route_contract.py",
         "skills/feishu-codex-operator/SKILL.md",
         "skills/feishu-codex-operator/agents/openai.yaml",

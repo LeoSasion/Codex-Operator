@@ -119,6 +119,27 @@ Real acceptance still needs normal exit, native start with unavailable extension
 services, extension startup and duplicate clicks. Keep the existing recovery
 shortcut and legacy journals throughout the reviewed migration and acceptance.
 
+## Reviewed single Desktop entry
+
+An owner-selected legacy layout may retain only `ChatGPT 自定义启动` on Desktop.
+Its separate `.codex/operator-desktop-single-entry` journal does not rewrite the
+original two-entry ownership or infer first-install runtime ownership. Use
+`models desktop-pair single-entry-preview`, then `single-entry-review` with
+`-RetainedNativeShortcut <retained native link> -EvidenceFilesJson <JSON absolute path array>`
+and the preview's `-ExpectedPlanSha256`. The review retains original bytes and
+binds the current shortcut's raw hash, Windows file identity, exact target and
+arguments, absent old names, current build and complete legacy chain. Historical
+audit claims alone grant no ownership. Registration changes no Desktop files,
+routing, services or native configuration.
+
+Bound package refresh preserves this layout. Dated launcher upgrades and older
+pair restoration require `single-entry-preview-restore`, then digest-bound
+`single-entry-restore` first. This separate restore moves the same retained
+native entity and renames the chooser back to the historical dated name; it
+retains the journal, originals and native pin helpers. Later changes, replaced
+entities, missing materials and incomplete transactions stop for review.
+This maintenance does not prove cold-launch or live Desktop acceptance.
+
 ## Current installation and migration behavior
 
 The explicit native-first `direct_profile` candidate is documented in

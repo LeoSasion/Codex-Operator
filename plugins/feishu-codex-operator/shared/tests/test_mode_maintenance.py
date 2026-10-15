@@ -507,18 +507,42 @@ class ModeMaintenanceTests(ModeEntryTests):
             maintenance.review_pair_rollback(self.root, stage, preview['preview_sha256'])
         program = r'''$ErrorActionPreference='Stop'
 $module=Import-Module (Join-Path $env:OPERATOR_TEST_SCRIPTS 'operator_desktop_pair_legacy.psm1') -PassThru -DisableNameChecking
-& $module {param($R,$I) Get-LegacyPairTransaction $R $I} $env:OPERATOR_TEST_PAIR $env:OPERATOR_TEST_STAGE | ConvertTo-Json -Compress
+if ($env:OPERATOR_TEST_PUBLIC_PAIR -eq '1') {
+ # Isolate the public dispatch boundary while keeping the complete retained
+ # rollback validator real. The synthetic owner omits unrelated migration data.
+ & $module {
+  $script:FixturePair=$env:OPERATOR_TEST_PAIR;$script:FixtureStage=$env:OPERATOR_TEST_STAGE
+  function script:Get-OperatorDesktopLegacyPairState {
+   param($ProjectRoot,[switch]$CheckCurrent)
+   if (-not $CheckCurrent) {throw 'fixture_public_current_check_required'}
+   Get-LegacyPairTransaction $script:FixturePair $script:FixtureStage | Out-Null
+   return @{phase='installed'}
+  }
+  Export-ModuleMember -Function Get-OperatorDesktopLegacyPairState
+ }
+ Import-Module (Join-Path $env:OPERATOR_TEST_SCRIPTS 'operator_desktop_pair.psm1') -DisableNameChecking
+ Get-OperatorDesktopPairRestorePlan (Split-Path -Parent (Split-Path -Parent $env:OPERATOR_TEST_PAIR)) | ConvertTo-Json -Compress
+} else {
+ & $module {param($R,$I) Get-LegacyPairTransaction $R $I} $env:OPERATOR_TEST_PAIR $env:OPERATOR_TEST_STAGE | ConvertTo-Json -Compress
+}
 '''
-        def reader():
+        def reader(public=False):
             return maintenance.subprocess.run(['pwsh', '-NoProfile', '-NonInteractive', '-Command', program],
                 env={**mode.os.environ, 'OPERATOR_TEST_SCRIPTS': str(mode.SCRIPTS),
-                     'OPERATOR_TEST_PAIR': str(transaction.parent.parent), 'OPERATOR_TEST_STAGE': stage.name},
+                     'OPERATOR_TEST_PAIR': str(transaction.parent.parent), 'OPERATOR_TEST_STAGE': stage.name,
+                     'OPERATOR_TEST_PUBLIC_PAIR': '1' if public else '0'},
                 capture_output=True, text=True, encoding='utf8', timeout=30)
         result = reader()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(mode.json.loads(result.stdout)['phase'], 'pair_rollback_reviewed')
+        result = reader(public=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(mode.json.loads(result.stdout)['status'], 'ready')
         (generation / 'native-entry.json').write_bytes(b'later edit')
         result = reader()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('legacy_pair_rollback_review_changed', result.stderr)
+        result = reader(public=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('legacy_pair_rollback_review_changed', result.stderr)
 

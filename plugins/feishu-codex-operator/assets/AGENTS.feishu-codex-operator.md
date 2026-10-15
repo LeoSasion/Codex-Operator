@@ -839,4 +839,18 @@
 - Publish only files in `assets/release-inventory.json`. Never publish
   `.codex`, credentials, tokens, logs, databases, callback contents, local
   paths, caches, attachments, temporary files, or retained evidence.
+- Hook process control parses Windows argv and validates the exact absolute Python
+  script; substrings, unknown argument shapes and
+  unreadable metadata never authorize killing a process or starting another.
+  Explicit adapted tool history and terminal output reject opaque or malformed
+  encrypted_function_args before dispatch or any call release; absent/null/[]
+  remain distinct and native/v1/null routing stays unchanged.
+- An explicitly reviewed legacy single-Desktop layout uses its own retained
+  journal, raw shortcut bytes, Windows identities, old-name absence and full
+  original chain. Historical audit claims do not grant ownership. Bound package
+  refresh preserves the single chooser; dated build upgrades and older pair
+  restoration require the independent single-layout restore first. Retain
+  originals, failures, pin helpers and unresolved runtime ownership. Unknown or
+  changed transactions never retry automatically.
+
 <!-- FEISHU_CODEX_OPERATOR_RULES_END -->
