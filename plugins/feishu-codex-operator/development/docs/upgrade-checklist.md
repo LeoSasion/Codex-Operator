@@ -207,3 +207,45 @@ if ($null -eq $operatorTestExitCode -or $operatorTestExitCode -ne 0) { throw 'te
 受审写入后核对已装源码、编译入口、当前包、登记/目录和恢复材料的新摘要，保留迁移前原件，再分别记录：准确入口打开、模型菜单身份、不同新输入的回复、真实工具参数/结果/文件、审批允许/拒绝和停止。官方主窗口与配置保持保护；完整历史和已消费失败输入保持不变。
 
 原生 model/list 诊断只能说明目录，HTTP 完成只能说明传输；合成协议测试、隔离 CLI、当前 Desktop 实机结果不得互相代替。关键门尚未确认时如实列出，保留原生直连与独立拓展隔离，不能据此启用全局路由。
+
+## 6. 已复现的升级回归检查点
+
+以下记录来自 2026-10-15 的具体复现，用于选择当前合同的检查项，不把历史字段政策、用户入口选择或模型能力推广成通用许可。通用开发经验继续维护在[原有经验文档](workspace-maintenance.md#升级质检后应保留的开发经验)。
+
+### Hook 进程与 Windows 夹具
+
+`CommandLine.Contains(expected_script)` 会把 `expected.py.backup` 或另一个脚本的普通参数误认成 Operator。解析真实 Windows argv，核对真正执行的完整绝对脚本路径，只支持当前 launcher 实际使用的明确参数形状。`-c`、`-m`、未知带值开关、相对路径、未知尾参数和不可读 metadata 保持不可验证；不凭进程名、PID 或子串杀进程、另起实例。
+
+隔离测试从当前源码 AST 提取函数，并按明确源码边界提取停止决策块，mock Process、CIM、Stop-Process 与等待，覆盖正常退出、PID 重用、未知身份、中文/空格路径、大小写、相似后缀和普通参数。PS5/7 的 JSON 数组枚举差异要分别验证；夹具失败和产品失败分开保留。相关模块为 `test_channel_process_identity`。
+
+### 既有协议类型的新字段
+
+当前 CLI 的既有 FunctionCall 类型新增 `encrypted_function_args` 也是 schema 变化。明确明文适配合同须在历史发送前与完整终态投影时检查该字段；absent、null、`[]` 原样保留，非空值及 false、0、空字符串、空 object 等非法形状拒绝。不能用 truthiness 漏过错误空值，不能删除、解密、修补或重试。
+
+覆盖 function、custom wrapper、client tool search、JSON 和 SSE；较早的合法调用不能在终态后项验证前放行。新增校验只用于明确的 adapted 合同，native/v1/null 保持透明。Schema 兼容不证明模型理解了当前请求。相关模块为 `test_responses_tools test_responses_events test_responses_router test_web_model_protocol`。
+
+### 旧回滚、单入口与公开分派
+
+准确 legacy 分派应委托已有的严格回滚 validator，不能先以普通 completed-only 护栏拒绝所有 pending。其他未知或不完整事务仍须拒绝。验证公开 status、restore、upgrade/uninstall 可达路径及材料篡改、原件缺失的拒绝，不只调用内部 validator。
+
+用户已要求移动或改名快捷方式时，不改写旧 ownership。独立单次布局登记绑定 raw SHA、当前 Windows file ID、COM target/args、旧名称缺失、保留实体和完整原件链；历史 audit 的 completed 只作材料。绑定包刷新保留当前布局，旧双入口恢复或日期构建升级先走独立布局恢复。保留固定 launcher、任务栏 helpers、旧失败与未决 runtime 归属；替换实体、后续编辑、未知事务或缺失材料不自动重试。
+
+`pwsh -File` 不能可靠传递多值 array。多材料公开参数使用有界 JSON array 单参，校验类型、长度、绝对路径和互斥，并实测多个 Unicode 文件路径。相关模块为 `test_mode_maintenance test_mode_pair_refresh test_desktop_pair_single test_desktop_single_cli`。
+
+### 发布规则、安装版本与测试原件
+
+根 AGENTS 可有私人补充；只比较唯一完整管理块的原始字节，拒绝缺失、重复、反序、内联 marker，保留 BOM 和换行边界检查。公共 mirror 的外围只允许已实现的 BOM/空白合同；audit 与独立 collector 均须拒绝私人附注，不把根全文复制入包。完整 build 也须验证拒绝，且不落地 ZIP/receipt、不改原件。相关模块为 `test_release_rules test_product_preview test_source_route_contract`。
+
+安装器从规范源码读取唯一明文版本常量，在任何 runtime 写入前核对清单，manifest 与成功输出共用该值。只统计“合法 literal”会漏过后续非字面重复赋值；还须拒绝重复或类型注解声明、不配对引号、转义和未知形状，严格校验 JSON 对象、schema 和版本字段类型。不 import 整个配置模块作为版本探针。真实安装入口的负例应证明拒绝发生在写入前，重复安装后实际 status 完整性仍通过；见 `test_install_upgrade`。
+
+负向 source-read 注入必须自检命中次数及变更前后 SHA。脚本块中的 `$PSScriptRoot` 可能属于测试 driver，不能拿它推断 canonical 模块路径。收紧合同后，应更新旧“合法样本”以满足新合同，保留原有凭据、allowlist、原件与完整字节断言。
+
+### 冻结范围、编码与共享端口
+
+绑定整棵源码、当前工具、私有 catalog、所选终端夹具与前后保护快照。运行中改源码则该轮只作诊断，保留失败后开新冻结轮；定向回归不沿用 full 标签。原始日志按 bytes/SHA 保留，解析副本兼容 CRLF、unittest、Node spec/TAP，并收集缩进 subtest skips。只有 pass 数或 exit 0、没有完整终态和总计，不算完整验收。
+
+带控制台子进程可能是 UTF-8，无控制台子进程可能是 ACP936。捕获 PowerShell JSON 时发端固定 `Console.OutputEncoding` UTF-8，收端严格 UTF-8，并验证中文与非 BMP 字符；不要使用 replace、改成 ASCII 路径或回退编码掩盖错误。测试子进程隔离控制台，见 `test_python_runtime`。
+
+临时目录不隔离固定端口；并行测试前确认端口及传递依赖，对共享端口组串行调度。保留端口占用的原失败，不降低产品独占预留门、不忽略 Win10048，也不重试业务请求。
+
+原生缓存的 `fetched_at`、`etag` 等元数据变化仍单列保护漂移；模型记录未变不能豁免失败。源码通过、安装副本一致、真实 Desktop、审批和模型执行分别陈述。源码与安装版本不同时，只沿项目已有的显式停机迁移路径维护，不直接复制 runtime 或改历史 manifest。
