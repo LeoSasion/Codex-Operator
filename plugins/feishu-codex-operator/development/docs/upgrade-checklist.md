@@ -1,6 +1,6 @@
 # Codex 升级后固定检查流程
 
-更新：2026-10-15。本页用于官方 Desktop/CLI 升级、Operator 源码更新或明确端点合同变化后的人工维护，复用已有检查命令，不新增后台监视、自动升级、自动重试或产品界面。先读[项目记忆](../../models/web/docs/native-web-experience.md)、[原生对话计划](../../models/web/docs/native-conversation-plan.md)及[安装与恢复](../../shared/docs/installation-and-removal.md)。旧版本的通过、失败和未确认记录均保留。
+更新：2026-10-16。本页用于官方 Desktop/CLI 升级、Operator 源码更新或明确端点合同变化后的人工维护，复用已有检查命令，不新增后台监视、自动升级、自动重试或产品界面。先读[项目记忆](../../models/web/docs/native-web-experience.md)、[原生对话计划](../../models/web/docs/native-conversation-plan.md)及[安装与恢复](../../shared/docs/installation-and-removal.md)。旧版本的通过、失败和未确认记录均保留。
 
 升级回归需检查既有协议类型的新增字段，不只搜索新增类型名。`encrypted_function_args` 的历史和完整终态都要校验；明确明文适配合同只保留 absent/null/[]，非空或错误类型须在任何工具放行前拒绝，native/v1/null 保持透明。Windows Hook 必须解析实际 argv 核对脚本绝对路径，路径子串不能证明进程归属；未知参数形状、不可读身份或 PID 重用须拒绝控制。
 
@@ -249,3 +249,11 @@ if ($null -eq $operatorTestExitCode -or $operatorTestExitCode -ne 0) { throw 'te
 临时目录不隔离固定端口；并行测试前确认端口及传递依赖，对共享端口组串行调度。保留端口占用的原失败，不降低产品独占预留门、不忽略 Win10048，也不重试业务请求。
 
 原生缓存的 `fetched_at`、`etag` 等元数据变化仍单列保护漂移；模型记录未变不能豁免失败。源码通过、安装副本一致、真实 Desktop、审批和模型执行分别陈述。源码与安装版本不同时，只沿项目已有的显式停机迁移路径维护，不直接复制 runtime 或改历史 manifest。
+
+## 7. 断线、安装与转换输出的边界回归
+
+2026-10-16 的维护延续既有合同，只修复已复现的问题。
+
+- **进程终态和流终态分别判断。** Feishu consumer 的进程退出后，stdout 队列仍可能有未入库消息，读线程也可能尚未交出尾部。当前代必须读到真实 EOF 后才关闭和重连，不能以 `is_ready=false` 或队列暂空替代。用实际运行循环覆盖缓冲消息、延迟尾部和顺序；健康判断仍保留实际进程就绪检查，不重放业务事件。见 `test_routing`。
+- **安装计划共用且写前完整核验。** 缺失的靠后源文件、无 Force 的靠后冲突、链接或错误目标形状，均应在创建安装 journal、Hook 或 runtime 前拒绝。预检、复制和 manifest 共用同一 runtime 计划，逐项复制仍重查。公开安装器的临时项目用例须比较完整文件列表及原字节，证明拒绝没有先写一部分内容；这不保证检查后的外部变化不会使后续步骤失败，也不授权重试失败事务。见 `test_install_upgrade`。
+- **转换后按实际输出计量。** 上游可以省略参数 delta/done，适配器重建的事件及终态快照可能更大。保留原上游计数，另按与发送端相同的 UTF-8 JSON 编码验证下游每项 16 MiB、整条流 64 MiB，计入真实 sequence number 和已发送文本；不计传输 framing，不提高限额。终态批次中任何事件越界都不得放出该批工具调用。用缩小限值、精确边界、Unicode 和已有前置文本复现，保留原始参数与身份及 native/v1/null 行为。见 `test_responses_events`。

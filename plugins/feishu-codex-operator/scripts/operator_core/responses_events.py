@@ -155,10 +155,21 @@ class ResponsesEventAdapter:
         self.ids = {}
         self.sequence = 0
         self.terminal = False
+        self.failed = False
         self.total = 0
+        self.output_total = 0
 
     def _emit(self, event):
         result = {**deepcopy(event), "sequence_number": self.sequence}
+        # A sparse upstream stream can expand when buffered tools are restored.
+        # Count the actual downstream JSON, including its generated sequence,
+        # independently of the unchanged upstream/event decoding bounds.
+        size = len(dumps(result).encode("utf-8"))
+        if size > MAX_EVENT_BYTES:
+            raise RouterError("external_event_too_large_no_retry")
+        if self.output_total + size > MAX_STREAM_BYTES:
+            raise RouterError("adapted_stream_too_large")
+        self.output_total += size
         self.sequence += 1
         return result
 
@@ -166,6 +177,10 @@ class ResponsesEventAdapter:
         try:
             return self._feed(event)
         except (RouterError, ValueError, TypeError, KeyError, UnicodeError, RecursionError) as exc:
+            # A rejected terminal batch may already have reserved local sequence
+            # and byte counts, but none of that batch has left feed(). Keep this
+            # adapter terminally invalid; a later snapshot cannot repair it.
+            self.failed = True
             raise UpstreamProtocolError("invalid_upstream_tool_stream_no_retry") from exc
 
     def _state(self, event):
@@ -254,7 +269,7 @@ class ResponsesEventAdapter:
             part.check(entry.get("refusal" if part.kind == "refusal" else "text"))
 
     def _feed(self, event):
-        if not isinstance(event, dict) or self.terminal:
+        if not isinstance(event, dict) or self.terminal or self.failed:
             raise RouterError("event_after_terminal_or_invalid_event")
         self.total += len(dumps(event).encode("utf-8"))
         if self.total > MAX_STREAM_BYTES:
@@ -394,7 +409,7 @@ class ResponsesEventAdapter:
         raise RouterError("unsupported_responses_event")
 
     def finish(self):
-        if not self.terminal:
+        if not self.terminal or self.failed:
             raise UpstreamProtocolError("truncated_upstream_tool_stream_no_retry")
 
 

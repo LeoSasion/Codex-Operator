@@ -174,6 +174,13 @@ def events_for(*items):
     return events
 
 
+def sparse_events_for(*items):
+    # Arguments may appear first in output_item.done, without delta/done events.
+    return [event for event in events_for(*items)
+            if not event["type"].startswith(("response.function_call_arguments.",
+                                              "response.custom_tool_call_input."))]
+
+
 def wire(events, newline=b"\n"):
     return b"".join(b"event: " + e["type"].encode() + newline +
                     b"data: " + dumps(e).encode() + newline + newline for e in events)
@@ -257,6 +264,111 @@ class SSEDecoderTests(unittest.TestCase):
 
 
 class EventAdapterTests(unittest.TestCase):
+    def test_sparse_tool_stream_checks_expanded_output_total_before_tool_release(self):
+        search = {"type": "tool_search", "execution": "client", "parameters": {}}
+        _, context = prepare({"tools": [EXEC, FUNCTION, search]})
+        arguments = dumps({"a": 17, "label": "中文😀\\n\r\n" * 100})
+        items = [
+            {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "add",
+             "status": "completed", "arguments": arguments},
+            call(context, "\r\n  text('中文😀\\n');  \r\n" * 100),
+            {"type": "function_call", "id": "fc_1", "call_id": "call_1",
+             "name": context.specs[("tool_search", None, "tool_search")].upstream_name,
+             "status": "completed", "arguments": dumps({"a": 17, "label": "x" * 1000})},
+        ]
+        mixed = deepcopy(items)
+        for index, item in enumerate(mixed):
+            item.update(id="fc_" + str(index), call_id="call_" + str(index))
+        for selected in [[item] for item in items] + [mixed]:
+            events = sparse_events_for(*selected)
+            original = deepcopy(events)
+            adapter = ResponsesEventAdapter(context)
+            expected = [output for event in events for output in adapter.feed(event)]
+            total = sum(len(dumps(event).encode("utf-8")) for event in expected)
+            self.assertLess(sum(len(dumps(event).encode("utf-8")) for event in events), total - 1)
+            for maximum, accepted in ((total - 1, False), (total, True)):
+                with self.subTest(kinds=[item["name"] for item in selected], maximum=maximum):
+                    adapter, delivered = ResponsesEventAdapter(context), []
+                    with patch("operator_core.responses_events.MAX_STREAM_BYTES", maximum):
+                        for event in events[:-1]:
+                            delivered.extend(adapter.feed(event))
+                        if accepted:
+                            delivered.extend(adapter.feed(events[-1]))
+                            adapter.finish()
+                            self.assertEqual(delivered, expected)
+                            self.assertEqual(adapter.output_total, total)
+                        else:
+                            with self.assertRaises(UpstreamProtocolError) as caught:
+                                adapter.feed(events[-1])
+                            self.assertEqual(protocol_reason(caught.exception), "adapted_stream_too_large")
+                            self.assertFalse(adapter.terminal)
+                            self.assertTrue(adapter.failed)
+                            self.assertEqual([event["type"] for event in delivered], ["response.created"])
+                            with self.assertRaises(UpstreamProtocolError):
+                                adapter.feed(events[-1])
+                            with self.assertRaises(UpstreamProtocolError):
+                                adapter.finish()
+            self.assertEqual(events, original)
+
+    def test_sparse_stream_event_bound_includes_the_actual_generated_sequence(self):
+        _, context = prepare({"tools": [FUNCTION]})
+        item = {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "add",
+                "status": "completed", "arguments": dumps({"a": 17, "label": "x" * 1000})}
+        events = sparse_events_for(item)
+        adapter = ResponsesEventAdapter(context)
+        expected = [output for event in events for output in adapter.feed(event)]
+        maximum = max(len(dumps(event).encode("utf-8")) for event in expected)
+        # Even the complete SSE wire record fits the smaller input bound.
+        data = [b"data:" + dumps(event).encode("utf-8") + b"\n\n" for event in events]
+        self.assertLessEqual(max(map(len, data)), maximum - 1)
+        decoder = SSEDecoder(maximum=maximum - 1)
+        self.assertEqual([event for chunk in data for event in decoder.feed(chunk)] + decoder.finish(), events)
+        for bound, accepted in ((maximum - 1, False), (maximum, True)):
+            with self.subTest(bound=bound), patch("operator_core.responses_events.MAX_EVENT_BYTES", bound):
+                adapter, delivered = ResponsesEventAdapter(context), []
+                for event in events[:-1]:
+                    delivered.extend(adapter.feed(event))
+                if accepted:
+                    delivered.extend(adapter.feed(events[-1]))
+                    adapter.finish()
+                    self.assertEqual(delivered, expected)
+                else:
+                    with self.assertRaises(UpstreamProtocolError) as caught:
+                        adapter.feed(events[-1])
+                    self.assertEqual(protocol_reason(caught.exception), "external_event_too_large_no_retry")
+                    self.assertEqual([event["type"] for event in delivered], ["response.created"])
+                    self.assertFalse(adapter.terminal)
+                    self.assertTrue(adapter.failed)
+
+    def test_earlier_text_still_consumes_the_expanded_terminal_batch_budget(self):
+        _, context = prepare({"tools": [FUNCTION]})
+        item = {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "add",
+                "status": "completed", "arguments": dumps({"a": 17, "label": "x" * 1000})}
+        tools, text = sparse_events_for(item), text_events("中文😀\r\n tail ")
+        for event in text[1:-1]:
+            event["output_index"] = 1
+        tools[-1]["response"]["output"].extend(text[-1]["response"]["output"])
+        events = tools[:-1] + text[1:-1] + tools[-1:]
+        adapter, prefix = ResponsesEventAdapter(context), []
+        for event in events[:-1]:
+            prefix.extend(adapter.feed(event))
+        batch = adapter.feed(events[-1])
+        size = lambda event: len(dumps(event).encode("utf-8"))
+        maximum = max(sum(map(size, events)), sum(map(size, batch)))
+        self.assertLess(maximum, sum(map(size, prefix + batch)))
+        self.assertTrue(any(event["sequence_number"] >= 10 for event in batch))
+        with patch("operator_core.responses_events.MAX_STREAM_BYTES", maximum):
+            adapter, delivered = ResponsesEventAdapter(context), []
+            for event in events[:-1]:
+                delivered.extend(adapter.feed(event))
+            with self.assertRaises(UpstreamProtocolError) as caught:
+                adapter.feed(events[-1])
+        self.assertEqual(protocol_reason(caught.exception), "adapted_stream_too_large")
+        self.assertEqual(delivered, prefix)
+        self.assertTrue(any(event["type"] == "response.output_text.delta" for event in delivered))
+        self.assertFalse(any(event.get("item", {}).get("type") == "function_call" for event in delivered))
+        self.assertFalse(any(event["type"] == "response.completed" for event in delivered))
+
     def test_content_part_types_follow_their_owning_output_item(self):
         _, context = prepare()
         for owner, wrong in (("reasoning_text", "output_text"), ("output_text", "reasoning_text")):
@@ -535,6 +647,46 @@ class EventAdapterTests(unittest.TestCase):
 
 
 class StreamTests(unittest.IsolatedAsyncioTestCase):
+    async def test_shared_stream_rejects_expanded_output_without_releasing_buffered_calls(self):
+        _, context = prepare({"tools": [EXEC, FUNCTION]})
+        items = [call(context, "\r\n text('中文😀\\n'); \r\n" * 100),
+                 {"type": "function_call", "id": "fc_2", "call_id": "call_2", "name": "add",
+                  "status": "completed", "arguments": dumps({"a": 17, "label": "x" * 1000})}]
+        events = sparse_events_for(*items)
+        adapter = ResponsesEventAdapter(context)
+        expected = [output for event in events for output in adapter.feed(event)]
+        total = sum(len(dumps(event).encode("utf-8")) for event in expected)
+        self.assertLess(sum(len(dumps(event).encode("utf-8")) for event in events), total - 1)
+        for maximum, accepted in ((total - 1, False), (total, True)):
+            with self.subTest(maximum=maximum), patch("operator_core.responses_events.MAX_STREAM_BYTES", maximum):
+                async def chunks():
+                    for event in events:
+                        yield wire([event], b"\r\n")
+                    yield b"data: [DONE]\r\n\r\n"
+                delivered = []
+                if accepted:
+                    delivered = [event async for event in restore_events(chunks(), context)]
+                    self.assertEqual(delivered, expected)
+                else:
+                    with self.assertRaises(UpstreamProtocolError) as caught:
+                        async for event in restore_events(chunks(), context):
+                            delivered.append(event)
+                    self.assertEqual(protocol_reason(caught.exception), "adapted_stream_too_large")
+                    self.assertEqual([event["type"] for event in delivered], ["response.created"])
+
+    def test_rejected_event_after_success_keeps_the_adapter_invalid(self):
+        _, context = prepare()
+        events = events_for(call(context))
+        adapter = ResponsesEventAdapter(context)
+        for event in events:
+            adapter.feed(event)
+        adapter.finish()
+        with self.assertRaises(UpstreamProtocolError):
+            adapter.feed(events[-1])
+        self.assertTrue(adapter.failed)
+        with self.assertRaises(UpstreamProtocolError):
+            adapter.finish()
+
     async def test_text_snapshots_survive_single_byte_utf8_wire_fragmentation(self):
         _, context = prepare()
         original = text_events("\n\n中文\r\n末行\t")

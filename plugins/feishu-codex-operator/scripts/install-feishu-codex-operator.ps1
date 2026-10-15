@@ -90,19 +90,41 @@ function Backup-File([string]$Path) {
     Copy-Item -LiteralPath $Path -Destination $destination
 }
 
-function Install-File([string]$From, [string]$To) {
+function Assert-OperatorInstallDestination([string]$Path) {
+    Assert-OperatorPlainPath $Path
+    if ((Test-Path -LiteralPath $Path) -and -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Installation target is not a file: $Path"
+    }
+    $parent = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))
+    while ($parent) {
+        if ((Test-Path -LiteralPath $parent) -and -not (Test-Path -LiteralPath $parent -PathType Container)) {
+            throw "Installation parent is not a directory: $parent"
+        }
+        $parent = [IO.Path]::GetDirectoryName($parent)
+    }
+}
+
+function Assert-OperatorInstallFile([string]$From, [string]$To) {
+    Assert-OperatorPlainPath $From
     if (-not (Test-Path -LiteralPath $From -PathType Leaf)) {
         throw "Source file is missing: $From"
     }
-    Assert-OperatorPlainPath $To
-    $parent = Split-Path -Parent $To
-    New-Item -ItemType Directory -Force -Path $parent | Out-Null
-    if (Test-Path -LiteralPath $To -PathType Leaf) {
+    Assert-OperatorInstallDestination $To
+    if (Test-Path -LiteralPath $To) {
         if (-not $Force -and
             (Get-FileHash -LiteralPath $From -Algorithm SHA256).Hash -cne
             (Get-FileHash -LiteralPath $To -Algorithm SHA256).Hash) {
             throw "Installed file differs; rerun with -Force after reviewing it: $To"
         }
+    }
+}
+
+function Install-File([string]$From, [string]$To) {
+    # Recheck the individual row even after the complete read-only preflight.
+    Assert-OperatorInstallFile $From $To
+    $parent = Split-Path -Parent $To
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    if (Test-Path -LiteralPath $To -PathType Leaf) {
         Backup-File $To
     }
     if ($To -in @($startHook,$stopHook)) {
@@ -319,76 +341,101 @@ function Update-Hooks {
     Set-OperatorManagedFile -ProjectRoot $project -Path $hooksConfig -Bytes ([Text.UTF8Encoding]::new($false).GetBytes($json))
 }
 
+[string[]]$runtimeFiles = @(
+    'operator_main.py',
+    'routing_cli.py',
+    'operator_core/__init__.py',
+    'operator_core/app_server_catalog.py',
+    'operator_core/app_server.py',
+    'operator_core/dispatch.py',
+    'operator_core/telemetry.py',
+    'operator_core/config.py',
+    'operator_core/final_callback.py',
+    'operator_core/user_tasks.py',
+    'operator_core/channel_models.py',
+    'operator_core/lark.py',
+    'operator_core/rate_limits.py',
+    'operator_core/responder_observer.py',
+    'operator_core/beeper_provider.py',
+    'operator_core/beeper_model_catalog.json',
+    'operator_core/model_registry.py',
+    'operator_core/web_model_catalog.py',
+    'operator_core/web_model_catalog.json',
+    'operator_core/responses_capabilities.py',
+    'operator_core/responses_tool_adapter.py',
+    'operator_core/responses_events.py',
+    'operator_core/web_model_protocol.py',
+    'operator_core/web_native_interruption.py',
+    'operator_core/web_mcp_transport.py',
+    'operator_core/web_responses_provider.py',
+    'operator_core/web_browser_driver.py',
+    'operator_core/web_browser_session.py',
+    'operator_core/web_connection.py',
+    'operator_core/web_openai_tunnel.py',
+    'operator_web_model.py',
+    'operator_web_service.py',
+    'operator_web_acceptance.py',
+    'operator_web_desktop.py',
+    'operator_web_entry.ps1',
+    'operator_native_models.py',
+    'operator_product.py',
+    'operator_python.psm1',
+    'codex-operator.ps1',
+    'web_browser_host.cjs',
+    'web_browser_page.cjs',
+    'web_browser_surface.cjs',
+    'licenses/codex-chatgpt-web-MIT.txt',
+    'licenses/webcodex-Apache-2.0.txt',
+    'operator_core/responses_metrics.py',
+    'operator_core/responses_profiles.py',
+    'operator_core/responses_verification.py',
+    'operator_core/responses_labels.py',
+    'operator_core/model_router.py',
+    'operator_core/native_search.py',
+    'operator_core/model_router_config.py',
+    'operator_core/lmstudio_discovery.py',
+    'operator_model_router.py',
+    'restore-codex-official-route.ps1',
+    'install-native-recovery-shortcut.ps1',
+    '恢复官方默认路由.cmd',
+    'operator_responses_probe.py',
+    'operator_responses_eval.py',
+    'operator_terminal_fixture.py',
+    'model-router-requirements.txt',
+    'operator_core/beeper_relay.py',
+    'operator_core/runtime.py',
+    'operator_core/state.py'
+)
+$runtimePlan = @()
+if (-not $HooksOnly) {
+    $runtimePlan = @(foreach ($relative in $runtimeFiles) {
+        $from = Join-Path (Join-Path $source 'scripts') $relative
+        # Source ownership follows Models/Web; installed license paths stay stable.
+        if ($relative -in @('licenses/codex-chatgpt-web-MIT.txt','licenses/webcodex-Apache-2.0.txt')) {
+            $from = Join-Path (Join-Path $source 'models/web/licenses') ([IO.Path]::GetFileName($relative))
+        }
+        [pscustomobject]@{ Relative = $relative; From = $from; To = (Join-Path $runtime $relative) }
+    })
+}
+$hookPlan = @(
+    [pscustomobject]@{ From = (Join-Path $source 'scripts/start-feishu-codex-operator.ps1'); To = $startHook },
+    [pscustomobject]@{ From = (Join-Path $source 'scripts/stop-feishu-codex-operator.ps1'); To = $stopHook }
+)
+$installationPlan = @($hookPlan) + @($runtimePlan)
+
+function Assert-OperatorInstallationPlan {
+    foreach ($row in $installationPlan) { Assert-OperatorInstallFile $row.From $row.To }
+    # Generated files also need ordinary destinations before the journal is opened.
+    $generated = @($manifestFile)
+    if (-not $SkipHooks) { $generated += $hooksConfig }
+    if (-not $HooksOnly -and -not $SkipRuntimeConfig) { $generated += $envFile }
+    foreach ($path in $generated) { Assert-OperatorInstallDestination $path }
+}
+
 function Write-RuntimeManifest {
-    [string[]]$files = @(
-        'operator_main.py',
-        'routing_cli.py',
-        'operator_core/__init__.py',
-        'operator_core/app_server_catalog.py',
-        'operator_core/app_server.py',
-        'operator_core/dispatch.py',
-        'operator_core/telemetry.py',
-        'operator_core/config.py',
-        'operator_core/final_callback.py',
-        'operator_core/user_tasks.py',
-        'operator_core/channel_models.py',
-        'operator_core/lark.py',
-        'operator_core/rate_limits.py',
-        'operator_core/responder_observer.py',
-        'operator_core/beeper_provider.py',
-        'operator_core/beeper_model_catalog.json',
-        'operator_core/model_registry.py',
-        'operator_core/web_model_catalog.py',
-        'operator_core/web_model_catalog.json',
-        'operator_core/responses_capabilities.py',
-        'operator_core/responses_tool_adapter.py',
-        'operator_core/responses_events.py',
-        'operator_core/web_model_protocol.py',
-        'operator_core/web_native_interruption.py',
-        'operator_core/web_mcp_transport.py',
-        'operator_core/web_responses_provider.py',
-        'operator_core/web_browser_driver.py',
-        'operator_core/web_browser_session.py',
-        'operator_core/web_connection.py',
-        'operator_core/web_openai_tunnel.py',
-        'operator_web_model.py',
-        'operator_web_service.py',
-        'operator_web_acceptance.py',
-        'operator_web_desktop.py',
-        'operator_web_entry.ps1',
-        'operator_native_models.py',
-        'operator_product.py',
-        'operator_python.psm1',
-        'codex-operator.ps1',
-        'web_browser_host.cjs',
-        'web_browser_page.cjs',
-        'web_browser_surface.cjs',
-        'licenses/codex-chatgpt-web-MIT.txt',
-        'licenses/webcodex-Apache-2.0.txt',
-        'operator_core/responses_metrics.py',
-        'operator_core/responses_profiles.py',
-        'operator_core/responses_verification.py',
-        'operator_core/responses_labels.py',
-        'operator_core/model_router.py',
-        'operator_core/native_search.py',
-        'operator_core/model_router_config.py',
-        'operator_core/lmstudio_discovery.py',
-        'operator_model_router.py',
-        'restore-codex-official-route.ps1',
-        'install-native-recovery-shortcut.ps1',
-        '恢复官方默认路由.cmd',
-        'operator_responses_probe.py',
-        'operator_responses_eval.py',
-        'operator_terminal_fixture.py',
-        'model-router-requirements.txt',
-        'operator_core/beeper_relay.py',
-        'operator_core/runtime.py',
-        'operator_core/state.py'
-    )
     $hashes = [ordered]@{}
-    foreach ($relative in $files) {
-        $target = Join-Path $runtime ($relative.Replace('/', '\'))
-        $hashes[$relative] = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+    foreach ($row in $runtimePlan) {
+        $hashes[$row.Relative] = (Get-FileHash -LiteralPath $row.To -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     $manifest = [ordered]@{
         schema_version = 1
@@ -410,6 +457,7 @@ function Write-RuntimeManifest {
 }
 
 Test-OperatorProcess
+Assert-OperatorInstallationPlan
 if (-not $SkipDesktopEntry -and -not $HooksOnly) {
     . (Join-Path $PSScriptRoot 'operator_desktop_setup.ps1') -ProjectRoot $project -Library
     Show-OperatorInstallationNotice
@@ -418,8 +466,7 @@ if (-not $SkipDesktopEntry -and -not $HooksOnly) {
 Start-OperatorInstallation -ProjectRoot $project -LinkPaths @(Get-OperatorDesktopPaths -IncludeLegacy)
 New-Item -ItemType Directory -Force -Path $runtime, $hooksRoot | Out-Null
 
-Install-File (Join-Path $source 'scripts\start-feishu-codex-operator.ps1') $startHook
-Install-File (Join-Path $source 'scripts\stop-feishu-codex-operator.ps1') $stopHook
+foreach ($row in $hookPlan) { Install-File $row.From $row.To }
 Update-Hooks
 
 if ($HooksOnly) {
@@ -431,82 +478,7 @@ if ($HooksOnly) {
     exit 0
 }
 
-[string[]]$runtimeFiles = @(
-    'operator_main.py',
-    'routing_cli.py',
-    'operator_core\__init__.py',
-    'operator_core\app_server_catalog.py',
-    'operator_core\app_server.py',
-    'operator_core\dispatch.py',
-    'operator_core\telemetry.py',
-    'operator_core\config.py',
-    'operator_core\final_callback.py',
-    'operator_core\user_tasks.py',
-    'operator_core\channel_models.py',
-    'operator_core\lark.py',
-    'operator_core\rate_limits.py',
-    'operator_core\responder_observer.py',
-    'operator_core\beeper_provider.py',
-    'operator_core\beeper_model_catalog.json',
-    'operator_core\model_registry.py',
-        'operator_core\web_model_catalog.py',
-        'operator_core\web_model_catalog.json',
-    'operator_core\responses_capabilities.py',
-    'operator_core\responses_tool_adapter.py',
-    'operator_core\responses_events.py',
-    'operator_core\web_model_protocol.py',
-    'operator_core\web_native_interruption.py',
-    'operator_core\web_mcp_transport.py',
-    'operator_core\web_responses_provider.py',
-    'operator_core\web_browser_driver.py',
-    'operator_core\web_browser_session.py',
-    'operator_core\web_connection.py',
-    'operator_core\web_openai_tunnel.py',
-    'operator_web_model.py',
-    'operator_web_service.py',
-    'operator_web_acceptance.py',
-    'operator_web_desktop.py',
-    'operator_web_entry.ps1',
-    'operator_native_models.py',
-        'operator_product.py',
-        'operator_python.psm1',
-        'codex-operator.ps1',
-    'web_browser_host.cjs',
-    'web_browser_page.cjs',
-    'web_browser_surface.cjs',
-    'licenses\codex-chatgpt-web-MIT.txt',
-    'licenses\webcodex-Apache-2.0.txt',
-    'operator_core\responses_metrics.py',
-    'operator_core\responses_profiles.py',
-    'operator_core\responses_verification.py',
-    'operator_core\responses_labels.py',
-    'operator_core\model_router.py',
-    'operator_core\native_search.py',
-    'operator_core\model_router_config.py',
-    'operator_core\lmstudio_discovery.py',
-    'operator_model_router.py',
-    'restore-codex-official-route.ps1',
-        'install-native-recovery-shortcut.ps1',
-    '恢复官方默认路由.cmd',
-    'operator_responses_probe.py',
-    'operator_responses_eval.py',
-    'operator_terminal_fixture.py',
-    'model-router-requirements.txt',
-    'operator_core\beeper_relay.py',
-    'operator_core\runtime.py',
-    'operator_core\state.py'
-)
-foreach ($relative in $runtimeFiles) {
-    Assert-OperatorPlainPath (Join-Path $runtime $relative)
-}
-foreach ($relative in $runtimeFiles) {
-    $from = Join-Path (Join-Path $source 'scripts') $relative
-    # Source ownership follows Models/Web; installed license paths stay stable.
-    if ($relative -in @('licenses\codex-chatgpt-web-MIT.txt','licenses\webcodex-Apache-2.0.txt')) {
-        $from = Join-Path (Join-Path $source 'models\web\licenses') ([IO.Path]::GetFileName($relative))
-    }
-    Install-File $from (Join-Path $runtime $relative)
-}
+foreach ($row in $runtimePlan) { Install-File $row.From $row.To }
 
 Ensure-Environment
 Set-MinimalBeeperThreadId

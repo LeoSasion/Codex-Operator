@@ -7,6 +7,24 @@ counts refer to their individual runs; the current source must be checked with
 the [test instructions](testing.md). A later source-only pass never changes an
 earlier live-task result or proves that installed services were updated.
 
+2026-10-16 maintenance candidate (source alpha141, package unchanged):
+
+- A stopped Feishu consumer now drains its current stdout generation through
+  actual EOF before reconnecting. Buffered events and delayed reader tails keep
+  their order; readiness remains a separate health observation. No business
+  event is replayed to recover a disconnected consumer.
+- The installer checks the complete shared copy plan before opening its write
+  journal. Missing late source files, conflicting destinations and invalid path
+  shapes are rejected before Hook/runtime changes. Each actual copy still
+  rechecks its row; this does not promise a transaction against outside edits.
+- Adapted SSE validates actual downstream JSON bytes, including generated
+  sequence numbers and repeated terminal data, against the existing event and
+  stream bounds. A failing terminal batch releases no tools; upstream bounds,
+  native/v1/null passthrough and zero retries remain unchanged.
+- Synthetic reproductions, frozen regression and protected-file observations
+  have separate private receipts. These are canonical source repairs, not an
+  installed-runtime update or current Desktop/model/approval acceptance.
+
 2026-10-15 upgrade-repair candidate (source alpha140, package unchanged):
 
 - The initial current-CLI regression remains failed: 1,822 Python cases had one

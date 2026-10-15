@@ -50,10 +50,90 @@ from operator_core.lark import (  # noqa: E402
     reply_to_message,
     resolve_session_metadata,
 )
-from operator_core.runtime import LifecycleLeases, parse_command  # noqa: E402
+from operator_core.runtime import LifecycleLeases, OperatorRuntime, parse_command  # noqa: E402
 
 
 class RoutingTests(unittest.TestCase):
+    def _drain_stopped_consumer(self, *, delayed_tail: bool) -> None:
+        class NoDelayStop(threading.Event):
+            def wait(self, timeout=None):
+                return self.is_set()
+
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
+            runtime = object.__new__(OperatorRuntime)
+            runtime.config = SimpleNamespace(
+                runtime_dir=Path(temporary), reconnect_max_seconds=1,
+            )
+            runtime.lark_cli = "synthetic-lark"
+            runtime.stop_event = NoDelayStop()
+            runtime.last_error = ""
+            runtime.lifecycle = SimpleNamespace(should_stop=lambda: False)
+            runtime.relay = SimpleNamespace(
+                start=lambda: None, maintenance=lambda: None,
+                connection_status=lambda: "beeper-relay",
+            )
+            runtime.rate_limits = SimpleNamespace(
+                prime=lambda: SimpleNamespace(status="unavailable"),
+            )
+            runtime.attachments = SimpleNamespace(maintenance=lambda: None)
+            runtime._reschedule_recoverable = lambda: None
+            runtime.write_health = lambda *args: None
+            runtime.shutdown = lambda: None
+
+            consumer = LarkEventConsumer("synthetic-lark", runtime.config)
+            consumer.process = SimpleNamespace(
+                poll=lambda: 0, stdin=None, wait=lambda **kwargs: 0,
+            )
+            consumer._ready_event.set()
+            runtime.consumer = consumer
+            admitted = []
+            runtime.intake = lambda event: admitted.append(event["event_id"])
+            old_output = consumer.output
+            messages = [json.dumps({"event_id": f"synthetic-{index}"})
+                        for index in range(2)]
+            reads = 0
+            original_get = consumer.get
+
+            def read(timeout):
+                nonlocal reads
+                reads += 1
+                if delayed_tail and reads == 1:
+                    self.assertTrue(old_output.empty())
+                    return original_get(0)
+                if delayed_tail and reads == 2:
+                    # The process has exited, but stdout's final reader pass
+                    # can still publish complete lines before its real EOF.
+                    for message in messages:
+                        old_output.put(message)
+                    old_output.put(None)
+                return original_get(0)
+
+            if not delayed_tail:
+                for message in messages:
+                    old_output.put(message)
+                old_output.put(None)
+            consumer.get = read
+            starts = []
+
+            def restart():
+                starts.append(tuple(admitted))
+                runtime.stop_event.set()
+
+            consumer.start = restart
+            with patch("operator_core.runtime.get_bot_open_id", return_value="synthetic-bot"):
+                self.assertEqual(0, runtime.run())
+
+            self.assertEqual(["synthetic-0", "synthetic-1"], admitted)
+            self.assertEqual([tuple(admitted)], starts)
+            self.assertIsNone(consumer.process)
+            self.assertTrue(old_output.empty())
+
+    def test_stopped_event_consumer_drains_buffered_events_before_restart(self) -> None:
+        self._drain_stopped_consumer(delayed_tail=False)
+
+    def test_stopped_event_consumer_waits_for_stdout_tail_before_restart(self) -> None:
+        self._drain_stopped_consumer(delayed_tail=True)
+
     def test_private_message_metadata_cannot_replace_the_admitted_sender(self) -> None:
         event = {
             "chat_type": "p2p", "chat_id": "synthetic-chat",

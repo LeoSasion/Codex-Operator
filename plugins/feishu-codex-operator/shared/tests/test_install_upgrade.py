@@ -17,6 +17,7 @@ import os
 import re
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -33,6 +34,145 @@ class InstallUpgradeTests(unittest.TestCase):
     @staticmethod
     def ps_quote(value: Path) -> str:
         return "'" + str(value).replace("'", "''") + "'"
+
+    @staticmethod
+    def project_snapshot(root: Path) -> dict:
+        """Include directories and links, without traversing linked destinations."""
+        result = {}
+        for directory, children, files in os.walk(root, followlinks=False):
+            current = Path(directory)
+            for name in list(children):
+                path = current / name
+                relative = path.relative_to(root).as_posix()
+                if path.is_symlink() or (
+                        getattr(path.lstat(), 'st_file_attributes', 0)
+                        & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                    result[relative] = ('link', str(path.readlink()))
+                    children.remove(name)
+                else:
+                    result[relative] = ('directory',)
+            for name in files:
+                path = current / name
+                result[path.relative_to(root).as_posix()] = (
+                    ('link', str(path.readlink())) if path.is_symlink()
+                    else ('file', path.read_bytes()))
+        return result
+
+    @staticmethod
+    def source_fixture(base: Path, *, licenses: bool = True) -> Path:
+        source = base / 'source'
+        shutil.copytree(ROOT / 'scripts', source / 'scripts',
+                        ignore=shutil.ignore_patterns('__pycache__', '.tmp'))
+        (source / 'assets').mkdir()
+        shutil.copyfile(ROOT / 'assets/release-inventory.json',
+                        source / 'assets/release-inventory.json')
+        (source / 'models/web').mkdir(parents=True)
+        if licenses:
+            shutil.copytree(ROOT / 'models/web/licenses', source / 'models/web/licenses')
+        return source
+
+    @staticmethod
+    def install_fixture(source: Path, project: Path, *options: str) -> subprocess.CompletedProcess:
+        return subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-File',
+            str(source / 'scripts/install-feishu-codex-operator.ps1'),
+            '-ProjectRoot', str(project), '-SkipHooks', '-SkipRuntimeConfig',
+            '-SkipDesktopEntry', *options], capture_output=True, timeout=60,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+
+    def test_install_plan_rejects_missing_late_source_before_any_project_write(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            source = self.source_fixture(base)
+            (source / 'scripts/operator_core/state.py').unlink()
+            project = base / 'project'
+            project.mkdir()
+            (project / 'AGENTS.md').write_bytes(b'original user rules\r\n')
+            before = self.project_snapshot(project)
+            result = self.install_fixture(source, project)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b'Source file is missing:', result.stderr)
+            self.assertEqual(self.project_snapshot(project), before)
+
+    def test_install_plan_rejects_late_conflict_before_copying_or_backing_up(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            source = self.source_fixture(base)
+            project = base / 'project'
+            runtime = project / '.codex/feishu-codex-operator-runtime'
+            (runtime / 'operator_core').mkdir(parents=True)
+            # An early matching file would otherwise be backed up, while the
+            # conflicting late file is not inspected until almost all copies.
+            shutil.copyfile(source / 'scripts/operator_main.py', runtime / 'operator_main.py')
+            (runtime / 'operator_core/state.py').write_bytes(b'owner reviewed local edit\r\n')
+            before = self.project_snapshot(project)
+            result = self.install_fixture(source, project)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b'Installed file differs;', result.stderr)
+            self.assertEqual(self.project_snapshot(project), before)
+
+    def test_install_plan_rejects_linked_late_source_before_any_project_write(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            source = self.source_fixture(base, licenses=False)
+            outside = base / 'outside'
+            shutil.copytree(ROOT / 'models/web/licenses', outside)
+            link = subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-Command',
+                f"New-Item -ItemType Junction -Path {self.ps_quote(source / 'models/web/licenses')} "
+                f"-Target {self.ps_quote(outside)} | Out-Null"], capture_output=True, timeout=20,
+                creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(link.returncode, 0, link.stderr)
+            project = base / 'project'
+            project.mkdir()
+            before = self.project_snapshot(project)
+            outside_before = self.project_snapshot(outside)
+            result = self.install_fixture(source, project)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b'Installation path contains a link or reparse point', result.stderr)
+            self.assertEqual(self.project_snapshot(project), before)
+            self.assertEqual(self.project_snapshot(outside), outside_before)
+
+    def test_hooks_only_does_not_require_runtime_copy_sources(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            source = base / 'source'
+            (source / 'scripts/operator_core').mkdir(parents=True)
+            (source / 'assets').mkdir()
+            for relative in ('scripts/install-feishu-codex-operator.ps1',
+                    'scripts/operator_installation.psm1', 'scripts/operator_core/config.py',
+                    'scripts/start-feishu-codex-operator.ps1',
+                    'scripts/stop-feishu-codex-operator.ps1', 'assets/release-inventory.json'):
+                shutil.copyfile(ROOT / relative, source / relative)
+            project = base / 'project'
+            project.mkdir()
+            result = self.install_fixture(source, project, '-HooksOnly')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(b'Lifecycle Hooks were refreshed', result.stdout)
+            for name in ('start-feishu-codex-operator.ps1', 'stop-feishu-codex-operator.ps1'):
+                self.assertEqual((project / '.codex/hooks' / name).read_bytes(),
+                                 (source / 'scripts' / name).read_bytes())
+            self.assertFalse((project / '.codex/feishu-codex-operator-runtime/operator_main.py').exists())
+
+    def test_install_plan_rejects_file_parent_or_directory_target_before_writes(self):
+        for damage in ('file_parent', 'directory_target', 'generated_directory'):
+            with self.subTest(damage=damage), tempfile.TemporaryDirectory() as temporary:
+                base = Path(temporary)
+                source = self.source_fixture(base)
+                project = base / 'project'
+                runtime = project / '.codex/feishu-codex-operator-runtime'
+                runtime.mkdir(parents=True)
+                if damage == 'file_parent':
+                    (runtime / 'operator_core').write_bytes(b'not a directory\r\n')
+                    expected = b'Installation parent is not a directory:'
+                else:
+                    target = runtime / ('operator_main.py' if damage == 'directory_target'
+                                        else 'runtime-manifest.json')
+                    target.mkdir()
+                    expected = b'Installation target is not a file:'
+                before = self.project_snapshot(project)
+                result = self.install_fixture(source, project)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
+                self.assertEqual(self.project_snapshot(project), before)
 
     def test_source_version_mismatch_or_duplicate_stops_before_runtime_writes(self):
         original = (ROOT / 'scripts/install-feishu-codex-operator.ps1').read_bytes()
@@ -163,6 +303,7 @@ Export-ModuleMember -Function Assert-OperatorPlainPath
                 capture_output=True, text=True, timeout=20,
             )
             self.assertEqual(link.returncode, 0, link.stdout + link.stderr)
+            before = self.project_snapshot(project)
             result = subprocess.run(
                 [PWSH, "-NoProfile", "-File",
                  str(ROOT / "scripts/install-feishu-codex-operator.ps1"),
@@ -173,6 +314,7 @@ Export-ModuleMember -Function Assert-OperatorPlainPath
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("Installation path contains a link or reparse point", result.stderr)
             self.assertEqual(list(outside.iterdir()), [])
+            self.assertEqual(self.project_snapshot(project), before)
 
     def test_installer_rejects_linked_runtime_subdirectory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -189,6 +331,7 @@ Export-ModuleMember -Function Assert-OperatorPlainPath
                 capture_output=True, text=True, timeout=20,
             )
             self.assertEqual(link.returncode, 0, link.stdout + link.stderr)
+            before = self.project_snapshot(project)
             result = subprocess.run(
                 [PWSH, "-NoProfile", "-File",
                  str(ROOT / "scripts/install-feishu-codex-operator.ps1"),
@@ -199,6 +342,7 @@ Export-ModuleMember -Function Assert-OperatorPlainPath
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("Installation path contains a link or reparse point", result.stderr)
             self.assertEqual(list(outside.iterdir()), [])
+            self.assertEqual(self.project_snapshot(project), before)
             self.assertFalse((runtime / "operator_main.py").exists())
 
     def test_repeated_upgrade_preserves_state_and_checks_code(self) -> None:

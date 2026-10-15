@@ -1897,7 +1897,11 @@ class OperatorRuntime:
                 if self.lifecycle.should_stop():
                     logger.info("no viable Codex lifecycle lease remains")
                     break
-                if not self.consumer.is_ready():
+                # A stopped child may still have valid stdout events buffered,
+                # or its reader may not have reached the trailing EOF yet.
+                # Drain that generation through get() before replacing its queue;
+                # the EOF branch below closes it and permits the next start.
+                if self.consumer.process is None:
                     try:
                         self.consumer.start()
                         reconnect_delay = 1
