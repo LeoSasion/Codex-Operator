@@ -217,12 +217,14 @@ Channels 首版只实现飞书，不声称其他 IM 已可用。先读 [快速�
 
 ## 开发与验证
 
+开发经验归入[现有经验文档](../../development/docs/workspace-maintenance.md)，升级专项读[固定检查流程与回归经验](../../development/docs/upgrade-checklist.md)。本 Skill 在此只维护经验导航，不因一次经验沉淀另建独立 skill 或重复工作流。
+
 精确服务已停止、无 pending callback 后，按 [测试维护](../../development/docs/testing.md) 选择受影响模块。
 跨层改动和发布/部署前运行全量；纯文档措辞改动执行发布审计，不重复启动 CLI 执行用例。
 测试和诊断不发真实消息；真实 E2E 按当前 AGENTS 授权核对目标与身份。
 
-同步源码、安装清单、MCP、测试、文档和规则镜像。根 `AGENTS.md` 与
-`assets/AGENTS.feishu-codex-operator.md` 保持 byte-identical。安装只能通过项目脚本；
+同步源码、安装清单、MCP、测试、文档和规则镜像。根 `AGENTS.md` 的唯一受管理块与
+`assets/AGENTS.feishu-codex-operator.md` 对应块保持 byte-identical；根的私人补充不进入公共镜像。安装只能通过项目脚本；
 不要手改 runtime/cache。除非用户要求，不提交、不推送、不发布。
 
 Web 模型目录维护先读 [版本与推理档位契约](../../models/web/docs/web-model-catalog.md)。网页档位以当前可见菜单为准；Pro 单列，“最新”须核对明确代际标签。普通与 Pro 请求共享串行执行和已消费任务记录，不能通过换模型重试。目录准备、CLI 执行、Desktop 菜单与路由分别验收，不为增加菜单项自动恢复全局路由。
