@@ -17,10 +17,17 @@ class PythonRuntimeTests(unittest.TestCase):
         env = {**os.environ, 'OPERATOR_TEST_MODULE': str(PLUGIN / 'scripts/operator_python.psm1'),
                'OPERATOR_TEST_PYTHON': sys.executable}
         result = subprocess.run([shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-Command',
-            "$ErrorActionPreference='Stop'; $module=Import-Module $env:OPERATOR_TEST_MODULE -Force -PassThru; " + body],
-            env=env, capture_output=True, text=True, encoding='utf-8', timeout=15)
+            "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); "
+            "$module=Import-Module $env:OPERATOR_TEST_MODULE -Force -PassThru; " + body],
+            env=env, capture_output=True, text=True, encoding='utf-8', timeout=15,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
+
+    def test_json_stdout_preserves_unicode_in_an_isolated_console(self):
+        value = self.run_ps(
+            "@{text='中文 用户 😀';code_page=[Console]::OutputEncoding.CodePage} | ConvertTo-Json -Compress")
+        self.assertEqual(value, dict(text='中文 用户 😀', code_page=65001))
 
     def test_real_interpreter_version_probe(self):
         value = self.run_ps("& $module { (Get-OperatorPythonVersion ([pscustomobject]@{Source=$env:OPERATOR_TEST_PYTHON;Prefix=@()})).ToString() } | ConvertTo-Json")

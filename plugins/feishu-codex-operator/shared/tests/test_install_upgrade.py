@@ -34,6 +34,51 @@ class InstallUpgradeTests(unittest.TestCase):
     def ps_quote(value: Path) -> str:
         return "'" + str(value).replace("'", "''") + "'"
 
+    def test_source_version_mismatch_or_duplicate_stops_before_runtime_writes(self):
+        original = (ROOT / 'scripts/install-feishu-codex-operator.ps1').read_bytes()
+        for config, inventory_version, schema, expected in (
+            ('OPERATOR_VERSION = "4.2.0-alpha.1"\n', '4.2.0-alpha.2', 1, 'operator_source_version_mismatch'),
+            ('OPERATOR_VERSION = "a"\nOPERATOR_VERSION = "b"\n', 'a', 1, 'operator_source_version_invalid'),
+            ('OPERATOR_VERSION = str(1)\n', '1', 1, 'operator_source_version_invalid'),
+            ('OPERATOR_VERSION = "4.2.0-alpha.1"\nOPERATOR_VERSION = str(2)\n', '4.2.0-alpha.1', 1, 'operator_source_version_invalid'),
+            ('OPERATOR_VERSION = "4.2.0-alpha.1"\nOPERATOR_VERSION: str = "4.2.0-alpha.2"\n', '4.2.0-alpha.1', 1, 'operator_source_version_invalid'),
+            ('OPERATOR_VERSION = "4.2.0-alpha.1\'\n', '4.2.0-alpha.1', 1, 'operator_source_version_invalid'),
+            ('OPERATOR_VERSION = "4.2.0-alpha.\\x31"\n', '4.2.0-alpha.\\x31', 1, 'operator_source_version_invalid'),
+            ('OPERATOR_VERSION = "4.2.0-alpha.1"\n', ['4.2.0-alpha.1'], 1, 'operator_source_version_mismatch'),
+            ('OPERATOR_VERSION = "4.2.0-alpha.1"\n', '4.2.0-alpha.1', True, 'operator_source_version_mismatch'),
+            ('OPERATOR_VERSION = "4.2.0-alpha.1"\n', '4.2.0-alpha.1', '1', 'operator_source_version_mismatch'),
+        ):
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as temporary:
+                base = Path(temporary)
+                source = base / 'source'
+                scripts = source / 'scripts'
+                (scripts / 'operator_core').mkdir(parents=True)
+                (source / 'assets').mkdir()
+                (scripts / 'install-feishu-codex-operator.ps1').write_bytes(original)
+                (scripts / 'operator_core/config.py').write_text(config, encoding='utf8')
+                (source / 'assets/release-inventory.json').write_text(json.dumps(
+                    {'schema_version': schema, 'source_version': inventory_version}), encoding='utf8')
+                # Import succeeds, but reaching a runtime path before version
+                # refusal is an observable fixture failure, not a stubbed pass.
+                (scripts / 'operator_installation.psm1').write_text('''
+function Assert-OperatorPlainPath($Path) {
+ if ($Path -like '*feishu-codex-operator-runtime*') {throw 'fixture_unexpected_runtime_boundary'}
+}
+Export-ModuleMember -Function Assert-OperatorPlainPath
+''', encoding='utf8')
+                project = base / 'project'
+                project.mkdir()
+                before = {str(p.relative_to(base)): p.read_bytes() for p in base.rglob('*') if p.is_file()}
+                result = subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-File',
+                    str(scripts / 'install-feishu-codex-operator.ps1'), '-ProjectRoot', str(project)],
+                    capture_output=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr.decode('utf8', errors='replace'))
+                self.assertNotIn(b'fixture_unexpected_runtime_boundary', result.stderr)
+                self.assertFalse((project / '.codex').exists())
+                self.assertEqual(before, {str(p.relative_to(base)): p.read_bytes()
+                                         for p in base.rglob('*') if p.is_file()})
+
     def test_managed_upgrade_stops_when_original_backup_is_missing_or_changed(self) -> None:
         for damage in ("missing", "changed"):
             with self.subTest(damage=damage), tempfile.TemporaryDirectory() as temporary:

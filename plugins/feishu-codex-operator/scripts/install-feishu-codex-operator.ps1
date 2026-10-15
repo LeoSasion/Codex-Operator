@@ -13,6 +13,25 @@ $ErrorActionPreference = 'Stop'
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 Import-Module (Join-Path $PSScriptRoot 'operator_installation.psm1') -Force -DisableNameChecking
 $source = Split-Path -Parent $PSScriptRoot
+function Get-OperatorInstallerSourceVersion([string]$SourceRoot) {
+    $versionPath = Join-Path $SourceRoot 'scripts/operator_core/config.py'
+    $inventoryPath = Join-Path $SourceRoot 'assets/release-inventory.json'
+    foreach ($path in @($versionPath, $inventoryPath)) { Assert-OperatorPlainPath $path }
+    $text = [IO.File]::ReadAllText($versionPath, [Text.UTF8Encoding]::new($false, $true))
+    $declarations = [regex]::Matches($text, '(?m)^[ \t]*OPERATOR_VERSION\b')
+    $versions = [regex]::Matches($text, '(?m)^OPERATOR_VERSION[ \t]*=[ \t]*(?<quote>["''])(?<version>[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\k<quote>[ \t]*\r?$')
+    if ($declarations.Count -ne 1 -or $versions.Count -ne 1) { throw 'operator_source_version_invalid' }
+    $value = $versions[0].Groups['version'].Value
+    $inventory = Get-Content -LiteralPath $inventoryPath -Raw -Encoding utf8 | ConvertFrom-Json -NoEnumerate -ErrorAction Stop
+    if ($inventory -isnot [PSCustomObject] -or
+        ($inventory.schema_version -isnot [int] -and $inventory.schema_version -isnot [long]) -or
+        $inventory.schema_version -ne 1 -or $inventory.source_version -isnot [string] -or
+        $inventory.source_version -cne $value) {
+        throw 'operator_source_version_mismatch'
+    }
+    return $value
+}
+$operatorSourceVersion = Get-OperatorInstallerSourceVersion $source
 $runtime = Join-Path $project '.codex\feishu-codex-operator-runtime'
 # Runtime files are copied outside the ownership journal, so reject a linked
 # destination before any install or upgrade writes can follow it.
@@ -373,7 +392,7 @@ function Write-RuntimeManifest {
     }
     $manifest = [ordered]@{
         schema_version = 1
-        operator_version = '4.2.0-alpha.139'
+        operator_version = $operatorSourceVersion
         public_entry = [ordered]@{
             path = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'codex-operator.ps1'))
             sha256 = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'codex-operator.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -502,6 +521,6 @@ if (Test-Path -LiteralPath $health -PathType Leaf) {
     Remove-Item -LiteralPath $health -Force
 }
 
-Write-Output "Installed Codex-Operator runtime 4.2.0-alpha.139 into $runtime"
+Write-Output "Installed Codex-Operator runtime $operatorSourceVersion into $runtime"
 Write-Output 'The Operator remains stopped. Configure the minimal Beeper UUID, register Final Callback routing, review Hooks in Desktop settings, then start it.'
 if (-not $SkipDesktopEntry) { Install-OperatorDesktopExperience -ProjectRoot $project | ConvertTo-Json }

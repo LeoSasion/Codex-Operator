@@ -65,6 +65,94 @@ function Get-ShortHash {
     }
 }
 
+function ConvertFrom-OperatorWindowsCommandLine {
+    param([Parameter(Mandatory = $true)][string]$CommandLine)
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine) -or
+        $CommandLine.Length -gt 32767 -or $CommandLine.IndexOf([char]0) -ge 0) {
+        throw 'Operator process command line is invalid.'
+    }
+    if (-not ('CodexOperator.ChannelCommandLineV1' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+namespace CodexOperator {
+    public static class ChannelCommandLineV1 {
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr CommandLineToArgvW(string commandLine, out int count);
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr LocalFree(IntPtr memory);
+        public static string[] Parse(string commandLine) {
+            int count;
+            var memory = CommandLineToArgvW(commandLine, out count);
+            if (memory == IntPtr.Zero) {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            try {
+                var arguments = new string[count];
+                for (int index = 0; index < count; index++) {
+                    arguments[index] = Marshal.PtrToStringUni(
+                        Marshal.ReadIntPtr(memory, index * IntPtr.Size));
+                }
+                return arguments;
+            } finally { LocalFree(memory); }
+        }
+    }
+}
+'@ -ErrorAction Stop
+    }
+    return [CodexOperator.ChannelCommandLineV1]::Parse($CommandLine)
+}
+
+function Test-OperatorPythonCommandLine {
+    param(
+        [Parameter(Mandatory = $true)][string]$CommandLine,
+        [Parameter(Mandatory = $true)][string]$OperatorScript
+    )
+
+    $unknown = [pscustomobject]@{
+        Verified = $false; IsOperator = $false; Reason = 'python_invocation_unverified'
+    }
+    try {
+        $arguments = @(ConvertFrom-OperatorWindowsCommandLine $CommandLine)
+        if ($arguments.Count -lt 2 -or [string]::IsNullOrWhiteSpace($arguments[0])) {
+            return $unknown
+        }
+        $scriptIndex = 1
+        # Admit only no-value interpreter switches. In particular, -c, -m,
+        # stdin, value-bearing/unknown switches and script arguments cannot
+        # identify this argument-free Operator entry point.
+        $safeSwitches = @('-B', '-E', '-I', '-s', '-S', '-u', '-b', '-bb', '-O', '-OO', '-q', '-P')
+        while ($scriptIndex -lt $arguments.Count -and $arguments[$scriptIndex].StartsWith('-')) {
+            if ($arguments[$scriptIndex] -ceq '--') {
+                $scriptIndex += 1
+                break
+            }
+            if ($arguments[$scriptIndex] -cnotin $safeSwitches) { return $unknown }
+            $scriptIndex += 1
+        }
+        if ($scriptIndex -ne $arguments.Count - 1) { return $unknown }
+        $scriptPath = $arguments[$scriptIndex].Replace('/', '\')
+        $expectedPath = $OperatorScript.Replace('/', '\')
+        # IsPathRooted also admits drive-relative C:foo and root-relative \foo.
+        # Neither is enough to establish the exact script's process identity.
+        $absolutePath = '^(?:[A-Za-z]:\\|\\\\[^\\/?]+\\[^\\/?]+\\)'
+        if ($scriptPath -notmatch $absolutePath -or $expectedPath -notmatch $absolutePath) {
+            return $unknown
+        }
+        $observed = [System.IO.Path]::GetFullPath($scriptPath)
+        $expected = [System.IO.Path]::GetFullPath($expectedPath)
+        $matches = $observed.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase)
+        return [pscustomobject]@{
+            Verified = $true; IsOperator = $matches
+            Reason = $(if ($matches) { 'exact_operator_script' } else { 'different_python_command' })
+        }
+    } catch {
+        return $unknown
+    }
+}
+
 function Get-OperatorProcessIdentity {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
@@ -99,13 +187,11 @@ function Get-OperatorProcessIdentity {
             Process = $process; ProcessName = $processName; Reason = 'command_line_unavailable'
         }
     }
-    $expected = [System.IO.Path]::GetFullPath($OperatorScript).Replace('/', '\')
-    $observed = $commandLine.Replace('/', '\')
-    $matches = $observed.IndexOf($expected, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+    $invocation = Test-OperatorPythonCommandLine -CommandLine $commandLine -OperatorScript $OperatorScript
     return [pscustomobject]@{
-        Exists = $true; Verified = $true; IsOperator = $matches
+        Exists = $true; Verified = $invocation.Verified; IsOperator = $invocation.IsOperator
         Process = $process; ProcessName = $processName
-        Reason = $(if ($matches) { 'exact_operator_script' } else { 'different_python_command' })
+        Reason = $invocation.Reason
     }
 }
 

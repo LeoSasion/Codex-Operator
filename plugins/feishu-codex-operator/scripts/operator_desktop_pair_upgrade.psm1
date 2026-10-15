@@ -115,7 +115,8 @@ function Assert-OperatorEntryMove($Move,[switch]$Reversed) {
 
 function Invoke-OperatorEntryExactTransaction {
     param([Parameter(Mandatory)][string]$TransactionRoot,[AllowEmptyCollection()][object[]]$Changes=@(),
-        [Parameter(Mandatory)][scriptblock]$Boundary,[AllowEmptyCollection()][object[]]$Moves=@())
+        [Parameter(Mandatory)][scriptblock]$Boundary,[AllowEmptyCollection()][object[]]$Moves=@(),
+        [Collections.IDictionary]$SingleEntryRestore)
     # Policy and mutex ownership belong to the caller. This primitive publishes
     # only its explicitly supplied exact byte changes; uncertainty is terminal.
     Assert-OperatorUpgradePath $TransactionRoot
@@ -127,9 +128,29 @@ function Invoke-OperatorEntryExactTransaction {
         @($allPaths|ForEach-Object {[IO.Path]::GetFullPath($_).ToLowerInvariant()}|Sort-Object -Unique).Count -ne $allPaths.Count) {
         throw 'entry_transaction_scope_invalid'
     }
+    $retainedMove=$null
+    if ($SingleEntryRestore) {
+        # The ordinary primitive permits only in-directory renames. The separate
+        # reviewed layout restore admits exactly its retained native entity,
+        # alongside the chooser's in-directory rename, on the same volume.
+        $review=$SingleEntryRestore;$desktop=Split-Path -Parent $review.selected
+        if ($review.contract -cne 'operator_legacy_single_entry_restore_v1' -or $Moves.Count -ne 2 -or
+            -not [IO.Path]::IsPathFullyQualified($review.project) -or
+            $review.selected -cne (Join-Path $desktop 'ChatGPT 自定义启动.lnk') -or
+            $review.native -cne (Join-Path $desktop 'ChatGPT 原生入口.lnk') -or
+            (Split-Path -Parent $review.dated) -cne $desktop -or
+            (Split-Path -Leaf $review.dated) -cnotmatch '^ChatGPT 拓展模型 [0-9]{2}-[0-9]{2} 入口\.lnk$' -or
+            -not [IO.Path]::GetFullPath($review.retained_native.path).StartsWith((Join-Path $review.project '.codex')+'\',[StringComparison]::OrdinalIgnoreCase) -or
+            $Moves[0].source -cne $review.selected -or $Moves[0].destination -cne $review.dated -or
+            $Moves[1].source -cne $review.retained_native.path -or $Moves[1].destination -cne $review.native -or
+            $Moves[1].sha256 -cne $review.retained_native.sha256 -or $Moves[1].identity -cne $review.retained_native.identity -or
+            $Moves[0].identity.Split(':')[0] -cne $Moves[1].identity.Split(':')[0]) {throw 'entry_transaction_move_scope_invalid'}
+        $retainedMove=$Moves[1]
+    }
     foreach ($move in $Moves) {
         if (-not [IO.Path]::IsPathFullyQualified($move.source) -or -not [IO.Path]::IsPathFullyQualified($move.destination) -or
-            [IO.Path]::GetFullPath((Split-Path -Parent $move.source)) -ine [IO.Path]::GetFullPath((Split-Path -Parent $move.destination)) -or
+            ([IO.Path]::GetFullPath((Split-Path -Parent $move.source)) -ine [IO.Path]::GetFullPath((Split-Path -Parent $move.destination)) -and
+                -not [object]::ReferenceEquals($move,$retainedMove)) -or
             $move.sha256 -cnotmatch '^[a-f0-9]{64}$' -or $move.identity -cnotmatch '^[a-f0-9]{8}:[a-f0-9]{16}$') {
             throw 'entry_transaction_move_scope_invalid'
         }

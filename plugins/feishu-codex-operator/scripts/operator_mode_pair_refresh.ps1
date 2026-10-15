@@ -135,7 +135,8 @@ function Get-BoundReview {
         $checks[$sourcePath]=$entry.source_bindings[$name]
     }
     foreach ($name in $old.build.Keys) {$checks[(Join-Path $bundle $name)]=$old.build[$name]}
-    foreach ($path in $old.links.Keys) {$checks[$path]=$old.links[$path].after}
+    $entryFiles=Get-OperatorDesktopLegacyPairCurrentFiles $project $old
+    foreach ($path in $entryFiles.Keys) {$checks[$path]=$entryFiles[$path]}
     foreach ($name in $old.files.Keys) {$checks[(Join-Path $pairRoot ('generations/'+$old.generation+'/'+$name))]=$old.files[$name]}
     $checks[(Join-Path $project '.codex/operator-entry-migration/journal.json')]=$old.origin.migration_sha256
     foreach ($name in @('operator_desktop_pair_upgrade.psm1','operator_desktop_pair_legacy.psm1','operator_mode_pair_refresh.ps1')) {
@@ -152,6 +153,12 @@ function Assert-BoundReview($Review) {
     }
     foreach ($path in $Review.plan.checks.Keys) {
         if ((Hash-BoundBytes (Read-BoundBytes $path)) -cne $Review.plan.checks[$path]) {throw 'mode_pair_preview_changed'}
+    }
+    # A byte-identical replacement is still a different shortcut entity.
+    # Revalidate the independent single-entry witness at the write boundary.
+    $entryFiles=Get-OperatorDesktopLegacyPairCurrentFiles $Review.plan.project $Review.old
+    foreach ($path in $entryFiles.Keys) {
+        if (-not $Review.plan.checks.Contains($path) -or $Review.plan.checks[$path] -cne $entryFiles[$path]) {throw 'mode_pair_entry_layout_changed'}
     }
 }
 

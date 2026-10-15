@@ -7,6 +7,37 @@ counts refer to their individual runs; the current source must be checked with
 the [test instructions](testing.md). A later source-only pass never changes an
 earlier live-task result or proves that installed services were updated.
 
+2026-10-15 upgrade-repair candidate (source alpha140, package unchanged):
+
+- The initial current-CLI regression remains failed: 1,822 Python cases had one
+  failure and one error, both in the release audit's whole-root rules comparison;
+  four conditional cases were skipped. All 157 Node cases passed. Only the native
+  model cache's fetched_at changed in the protected snapshot; model records were
+  unchanged, the writer is unknown, and no live cache was restored.
+- Hook process checks now parse the actual Windows argv instead of matching a
+  script-path substring. Opaque encrypted function arguments are rejected in both
+  adapted history and complete terminal output before tools can be released;
+  native/v1/null routes and absent/null/empty-array distinctions are preserved.
+- Public legacy pair dispatch delegates complete retained rollback validation
+  without weakening ordinary pending guards. A separate reviewed single-entry
+  journal preserves the owner's chooser layout and historical ownership; bound
+  package refresh and independent same-entity restoration have isolated fixtures.
+- Release rules compare exact managed bytes while keeping private root additions
+  outside the distributed mirror. Both audit and independent collector must reject
+  non-rule mirror surroundings. BOM, malformed markers and line-ending differences
+  are tested separately. No private root file is substituted into public output.
+- These are source repairs. Installed runtime, current official package binding,
+  real Desktop startup, approvals and model execution remain separate maintenance
+  and acceptance gates. Original failures, rollback records and legacy runtime
+  ownership remain retained; this entry does not claim they were repaired in place.
+- Integration regression also caught a duplicated installer version literal.
+  The installer now reads one plain source version constant, compares the release
+  inventory before runtime writes, and uses that value for its manifest and output.
+  Invalid/mixed declarations, escaped values and mismatched metadata fail closed.
+  Updated negative source-injection, public mirror and UTF-8 console fixtures keep
+  their strict assertions. Related shared-port fixtures are serialized; product
+  port reservation limits and rejection behavior remain unchanged.
+
 2026-10-04 bounded evaluator-cleanup delta:
 
 - The second frozen regression completed 1,766 Python tests without assertion failures,

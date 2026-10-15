@@ -64,6 +64,8 @@ Codex-Operator · Windows preview
   codex-operator.ps1 models mode-maintenance <focus-preview|focus-review|startup-preview|startup-review|service-stop|pair-prepare|pair-preview|pair-apply|retire-pair-preview|retire-pair> --root <isolated directory> [reviewed arguments]
   codex-operator.ps1 models desktop-pair preview|install|status|restore [-CodexHome <native home>]
   codex-operator.ps1 models desktop-pair prepare-build|preview-upgrade|upgrade [-CandidateDirectory <prepared build>] [-ExpectedPlanSha256 <preview digest>]
+  codex-operator.ps1 models desktop-pair single-entry-preview|single-entry-review -RetainedNativeShortcut <retained original> -EvidenceFilesJson <JSON absolute path array> [-ExpectedPlanSha256 <preview digest>]
+  codex-operator.ps1 models desktop-pair single-entry-preview-restore|single-entry-restore [-ExpectedPlanSha256 <preview digest>]
   codex-operator.ps1 models unified-retire preview|retire|status|archive-preview|archive --plan <saved plan> [reviewed arguments]
   codex-operator.ps1 models unified-failed preview|archive|status --plan <saved plan> [exact failed-handoff evidence]
   codex-operator.ps1 models unified-withdraw preview|withdraw|status --plan <unused prepared plan> [--expected-review-sha256 <digest>]
@@ -83,8 +85,10 @@ if ($Module -eq 'models' -and $Action -eq 'desktop-pair') {
         $ModuleArguments = @($ModuleArguments | Select-Object -Skip 1)
     }
     $pairActions = @{preview='preview-pair';install='install-pair';status='pair-status';restore='restore-pair';
-        'prepare-build'='prepare-pair-build';'preview-upgrade'='preview-pair-upgrade';upgrade='upgrade-pair'}
-    if (-not $pairActions.ContainsKey($pairAction)) { throw 'Use models desktop-pair preview, install, status, restore, prepare-build, preview-upgrade or upgrade.' }
+        'prepare-build'='prepare-pair-build';'preview-upgrade'='preview-pair-upgrade';upgrade='upgrade-pair';
+        'single-entry-preview'='single-entry-preview';'single-entry-review'='single-entry-review';
+        'single-entry-preview-restore'='single-entry-preview-restore';'single-entry-restore'='single-entry-restore'}
+    if (-not $pairActions.ContainsKey($pairAction)) { throw 'Use one documented models desktop-pair action; see help for reviewed single-entry maintenance.' }
     & (Join-Path $PSHOME 'pwsh.exe') -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'operator_desktop_setup.ps1') `
         -Action $pairActions[$pairAction] -ProjectRoot $ProjectRoot @ModuleArguments
     exit $LASTEXITCODE

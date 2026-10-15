@@ -70,10 +70,35 @@ if ([string]$inventory.source_version -cne [string]$Matches[1]) {
 
 $rootRules = Join-Path (Split-Path -Parent (Split-Path -Parent $pluginRoot)) 'AGENTS.md'
 $mirrorRules = Join-Path $pluginRoot 'assets\AGENTS.feishu-codex-operator.md'
-if (-not (Test-Path -LiteralPath $rootRules -PathType Leaf) -or
-    (Get-FileHash -LiteralPath $rootRules -Algorithm SHA256).Hash -cne
-    (Get-FileHash -LiteralPath $mirrorRules -Algorithm SHA256).Hash) {
-    throw 'Root AGENTS rules and plugin mirror are not byte-identical.'
+function Get-ReleaseManagedRulesBytes([string]$Path, [switch]$Mirror) {
+    $raw = [IO.File]::ReadAllBytes($Path)
+    $encoding = [Text.UTF8Encoding]::new($false, $true)
+    $text = $encoding.GetString($raw)
+    $start = '<!-- FEISHU_CODEX_OPERATOR_RULES_START -->'
+    $end = '<!-- FEISHU_CODEX_OPERATOR_RULES_END -->'
+    foreach ($marker in @($start, $end)) {
+        if ([regex]::Matches($text, [regex]::Escape($marker)).Count -ne 1 -or
+            [regex]::Matches($text, ('(?m)(?:^|\A\uFEFF)' + [regex]::Escape($marker) + '(?=\r?$)')).Count -ne 1) {
+            throw 'Managed Operator rules require one complete marker pair on separate lines.'
+        }
+    }
+    $first = $text.IndexOf($start, [StringComparison]::Ordinal)
+    $last = $text.IndexOf($end, [StringComparison]::Ordinal)
+    if ($last -le $first) { throw 'Managed Operator rule markers are reversed.' }
+    if ($Mirror -and ($text.Substring(0, $first) -cnotmatch '\A(?:\uFEFF)?\s*\z' -or
+            $text.Substring($last + $end.Length) -cnotmatch '\A\s*\z')) {
+        throw 'Public Operator rules mirror cannot contain private surrounding content.'
+    }
+    $offset = $encoding.GetByteCount($text.Substring(0, $first))
+    $length = $encoding.GetByteCount($text.Substring($first, $last + $end.Length - $first))
+    $block = [byte[]]::new($length)
+    [Array]::Copy($raw, $offset, $block, 0, $length)
+    return ,$block
+}
+$rootBlock = Get-ReleaseManagedRulesBytes $rootRules
+$mirrorBlock = Get-ReleaseManagedRulesBytes $mirrorRules -Mirror
+if ([Convert]::ToBase64String($rootBlock) -cne [Convert]::ToBase64String($mirrorBlock)) {
+    throw 'Managed root AGENTS rules and plugin mirror are not byte-identical.'
 }
 
 # Behavioral policy belongs in the unit suite, not source-wording regexes.
