@@ -1020,6 +1020,100 @@ class OpaqueFunctionArgumentsTests(unittest.TestCase):
                 self.assertEqual([event["type"] for event in delivered], ["response.created"])
 
 
+class OpaqueToolContentTests(unittest.TestCase):
+    """New opaque tool fields follow the existing encrypted-content boundary."""
+
+    # Use the same valid ordinary/custom/search projections and paired histories.
+    cases = OpaqueFunctionArgumentsTests.cases
+    invalid_content = ("PRIVATE_OPAQUE_CONTENT", {}, [], False, 0,
+                       {"opaque": "PRIVATE_OPAQUE_CONTENT"}, ["PRIVATE_OPAQUE_CONTENT"], True, 17)
+
+    def events(self, raw):
+        events = [{"type": "response.created", "response": {**raw, "status": "in_progress", "output": []}}]
+        for index, item in enumerate(raw["output"]):
+            key = "input" if item["type"] == "custom_tool_call" else "arguments"
+            events.extend([
+                {"type": "response.output_item.added", "output_index": index,
+                 "item": {**item, "status": "in_progress", key: ""}},
+                {"type": "response.output_item.done", "output_index": index, "item": item}])
+        return events
+
+    def test_terminal_opaque_content_rejects_complete_response(self):
+        from operator_core.responses_capabilities import protocol_reason, protocol_response_state
+        for kind, context, upstream, _, _ in self.cases():
+            valid = {"type": "function_call", "name": "add", "arguments": '{"a":23}',
+                     "id": "item_valid_fixture", "call_id": "call_valid_fixture", "status": "completed"}
+            for value in self.invalid_content:
+                with self.subTest(kind=kind, value_type=type(value).__name__):
+                    raw = response(valid, {**upstream, "encrypted_content": value})
+                    before = deepcopy(raw)
+                    with self.assertRaises(UpstreamProtocolError) as rejected:
+                        restore_response(raw, context)
+                    self.assertEqual(protocol_reason(rejected.exception), "opaque_upstream_context_not_supported")
+                    self.assertNotIn("PRIVATE_OPAQUE_CONTENT", dumps(protocol_response_state(rejected.exception)))
+                    self.assertEqual(raw, before)
+
+    def test_absent_null_and_empty_content_stay_distinct_in_terminal_output(self):
+        from operator_core.responses_events import ResponsesEventAdapter
+        for kind, context, upstream, _, _ in self.cases():
+            expected = restore_response(response(upstream), context)["output"][0]
+            for fields in ({}, {"encrypted_content": None}, {"encrypted_content": ""}):
+                with self.subTest(kind=kind, fields=fields):
+                    raw = response({**upstream, **fields})
+                    before = deepcopy(raw)
+                    self.assertEqual(restore_response(raw, context)["output"], [{**expected, **fields}])
+                    adapter, delivered = ResponsesEventAdapter(context), []
+                    for event in self.events(raw):
+                        delivered.extend(adapter.feed(event))
+                    self.assertEqual([event["type"] for event in delivered], ["response.created"])
+                    delivered.extend(adapter.feed({"type": "response.completed", "response": raw}))
+                    adapter.finish()
+                    self.assertEqual(delivered[-1]["response"]["output"], [{**expected, **fields}])
+                    self.assertEqual(raw, before)
+
+    def test_invalid_content_is_rejected_in_complete_paired_history(self):
+        for kind, _, _, payload, changes in self.cases():
+            for value in self.invalid_content:
+                with self.subTest(kind=kind, value_type=type(value).__name__):
+                    raw = deepcopy(payload)
+                    raw["input"][0]["encrypted_content"] = value
+                    before = deepcopy(raw)
+                    with self.assertRaisesRegex(RouterError, "^opaque_cross_provider_context_not_supported$"):
+                        prepare(raw, **changes)
+                    self.assertEqual(raw, before)
+
+    def test_absent_null_and_empty_content_stay_distinct_in_history(self):
+        for kind, _, _, payload, changes in self.cases():
+            expected, _ = prepare(payload, **changes)
+            for fields in ({}, {"encrypted_content": None}, {"encrypted_content": ""}):
+                with self.subTest(kind=kind, fields=fields):
+                    raw = deepcopy(payload)
+                    raw["input"][0].update(fields)
+                    before = deepcopy(raw)
+                    wire, _ = prepare(raw, **changes)
+                    self.assertEqual(wire["input"], [{**expected["input"][0], **fields}, *expected["input"][1:]])
+                    self.assertEqual(raw, before)
+
+    def test_sse_late_opaque_content_never_releases_an_earlier_valid_tool(self):
+        from operator_core.responses_capabilities import protocol_reason
+        from operator_core.responses_events import ResponsesEventAdapter
+        for kind, context, upstream, _, _ in self.cases():
+            valid = {"type": "function_call", "name": "add", "arguments": '{"a":23}',
+                     "id": "item_valid_fixture", "call_id": "call_valid_fixture", "status": "completed"}
+            for value in self.invalid_content:
+                with self.subTest(kind=kind, value_type=type(value).__name__):
+                    raw = response(valid, {**upstream, "encrypted_content": value})
+                    before = deepcopy(raw)
+                    adapter, delivered = ResponsesEventAdapter(context), []
+                    for event in self.events(raw):
+                        delivered.extend(adapter.feed(event))
+                    with self.assertRaises(UpstreamProtocolError) as rejected:
+                        delivered.extend(adapter.feed({"type": "response.completed", "response": raw}))
+                    self.assertEqual(protocol_reason(rejected.exception), "opaque_upstream_context_not_supported")
+                    self.assertEqual([event["type"] for event in delivered], ["response.created"])
+                    self.assertEqual(raw, before)
+
+
 class InputToolDefinitionTests(unittest.TestCase):
     """Codex 0.153.4 Responses Lite declarations use the ordinary tool codec."""
 

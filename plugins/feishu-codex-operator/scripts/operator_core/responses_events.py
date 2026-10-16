@@ -534,8 +534,15 @@ async def restore_events(chunks, context):
         async for chunk in chunks:
             with measure_current("response_adaptation"):
                 output = consume(decoder.feed(chunk))
+                if done:
+                    # Validate the entire received chunk, including an unfinished
+                    # tail, before releasing its buffered calls. A successful
+                    # explicit sentinel ends this response without another read.
+                    output.extend(consume(decoder.finish()))
             for event in output:
                 yield event
+            if done:
+                return
         with measure_current("response_adaptation"):
             output = consume(decoder.finish())
         for event in output:

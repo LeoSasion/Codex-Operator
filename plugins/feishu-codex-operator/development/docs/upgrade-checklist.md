@@ -1,8 +1,10 @@
 # Codex 升级后固定检查流程
 
-更新：2026-10-16。本页用于官方 Desktop/CLI 升级、Operator 源码更新或明确端点合同变化后的人工维护，复用已有检查命令，不新增后台监视、自动升级、自动重试或产品界面。先读[项目记忆](../../models/web/docs/native-web-experience.md)、[原生对话计划](../../models/web/docs/native-conversation-plan.md)及[安装与恢复](../../shared/docs/installation-and-removal.md)。旧版本的通过、失败和未确认记录均保留。
+更新：2026-10-17。本页用于官方 Desktop/CLI 升级、Operator 源码更新或明确端点合同变化后的人工维护，复用已有检查命令，不新增后台监视、自动升级、自动重试或产品界面。先读[项目记忆](../../models/web/docs/native-web-experience.md)、[原生对话计划](../../models/web/docs/native-conversation-plan.md)及[安装与恢复](../../shared/docs/installation-and-removal.md)。旧版本的通过、失败和未确认记录均保留。
 
 升级回归需检查既有协议类型的新增字段，不只搜索新增类型名。`encrypted_function_args` 的历史和完整终态都要校验；明确明文适配合同只保留 absent/null/[]，非空或错误类型须在任何工具放行前拒绝，native/v1/null 保持透明。Windows Hook 必须解析实际 argv 核对脚本绝对路径，路径子串不能证明进程归属；未知参数形状、不可读身份或 PID 重用须拒绝控制。
+
+CLI 0.163 的离线 schema 显示，函数、自定义和搜索调用等已有类型也允许 `encrypted_content`，应按同一不透明边界检查每个历史和终态 item，不能沿用仅消息/推理分支的检查。其 absent/null/空字符串按原合同完整保留；非空或错误类型拒绝。负向回归先放一个合法调用，再放末项不透明调用，分别确认 JSON 与 SSE 在完整终态校验拒绝时均未交付工具。离线 schema 生成只绑定当前可执行文件和新私有 home，不发送任务或模型请求。
 
 入口维护验证公开分派与私有 validator 两层，准确受审 legacy 回滚不应被普通 pending 护栏提前拦截。主人已要求的单入口改名使用独立登记链，详见[单入口布局](../../shared/docs/installation-and-removal.md#reviewed-single-desktop-entry)。冻结回归中修改源码须重开受影响验收；日志统计保留缩进 subtest skips 与 Node spec/TAP 区别。原生缓存仅 fetched_at 漂移也单独记录保护门失败，不推断写入者、不回滚活跃缓存。
 

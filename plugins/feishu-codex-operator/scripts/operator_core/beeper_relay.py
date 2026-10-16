@@ -136,7 +136,13 @@ def discover_codex_executable(configured: str = "") -> Path:
             "Desktop-bundled Codex CLI was not found",
             code="codex_cli_unavailable",
         )
-    valid.sort(key=lambda item: item.stat().st_mtime_ns, reverse=True)
+    try:
+        valid.sort(key=lambda item: item.stat().st_mtime_ns, reverse=True)
+    except OSError as exc:
+        raise RelayUnavailable(
+            "Desktop-bundled Codex CLI metadata is unavailable",
+            code="codex_cli_unavailable",
+        ) from exc
     return valid[0]
 
 

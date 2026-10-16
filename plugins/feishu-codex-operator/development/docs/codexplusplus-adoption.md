@@ -1,12 +1,32 @@
 # Codex++ 方案吸纳记录
 
-更新：2026-10-05。首轮研究只针对 Codex-Operator 现有功能的必要缺口，保留官方直连与拓展实例隔离、Desktop 任务所有权、完整历史、准确工具身份、零回放和恢复原件。新增功能或界面先与所有者商量；研究不扩大安装、发布或实机操作授权。
+更新：2026-10-17。研究只针对 Codex-Operator 现有功能的必要缺口，保留官方直连与拓展实例隔离、Desktop 任务所有权、完整历史、准确工具身份、零回放和恢复原件。新增功能或界面先与所有者商量；研究不扩大安装、发布或实机操作授权。2026-10-05 首轮固定来源与验收记录继续保留。
 
 ## 来源与采用方式
 
-准确项目为 [BigPizzaV3/CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus/tree/f55bb64663ba5024ab434017bb6212a0fd9f4bb3)，本轮固定提交 `f55bb64663ba5024ab434017bb6212a0fd9f4bb3`，提交日期 2026-10-03；不能用变化中的 main 替代这些依据。
+准确项目为 [BigPizzaV3/CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus/tree/f55bb64663ba5024ab434017bb6212a0fd9f4bb3)，首轮固定提交 `f55bb64663ba5024ab434017bb6212a0fd9f4bb3`，提交日期 2026-10-03；不能用变化中的 main 替代这些依据。
 
 该提交的 [LICENSE](https://github.com/BigPizzaV3/CodexPlusPlus/blob/f55bb64663ba5024ab434017bb6212a0fd9f4bb3/LICENSE) 为 AGPLv3。本轮采用设计和验证方法，修改由本项目独立编写，没有复制上游代码、测试代码或引入其运行依赖。未来代码复用须另行记录实际片段及适用许可；本次记录不是代码移植许可。
+
+## 2026-10-17 增量研究与采用范围
+
+本次查询 main 固定到 [`6105d57019083f8bbb2483399fa4bcdaadc92497`](https://github.com/BigPizzaV3/CodexPlusPlus/tree/6105d57019083f8bbb2483399fa4bcdaadc92497)，提交时间为 2026-10-16 15:22:02 UTC；相对首轮固定点的[比较结果](https://github.com/BigPizzaV3/CodexPlusPlus/compare/f55bb64663ba5024ab434017bb6212a0fd9f4bb3...6105d57019083f8bbb2483399fa4bcdaadc92497)为新增 273 个提交。查询时最新正式 [Release v1.9.0](https://github.com/BigPizzaV3/CodexPlusPlus/releases/tag/v1.9.0) 发布于 2026-10-14 17:39:36 UTC；Release 与此后 main 的源码证据分别保留。[当前固定点许可](https://github.com/BigPizzaV3/CodexPlusPlus/blob/6105d57019083f8bbb2483399fa4bcdaadc92497/LICENSE)仍为 AGPLv3；本次继续只吸纳机制和验证方法，独立编写修复，没有复制代码或引入依赖。
+
+| 上游机制及准确来源 | 本地必要缺口与实际采用 | 保留边界 |
+| --- | --- | --- |
+| [`2a9bb2d` 的 launcher.rs 与 `completed_exec_stream_does_not_wait_for_upstream_eof`](https://github.com/BigPizzaV3/CodexPlusPlus/blob/2a9bb2d22c3466a85848d58006d958c2440a0749/crates/codex-plus-core/src/launcher.rs)：上游发送完成后仍持有连接的回归 | [restore_events](../../scripts/operator_core/responses_events.py)在完整成功终态及显式 `[DONE]` 到达后结束迭代，避免继续等待上游 EOF；返回前校验已收到的整个 chunk 及未完成尾部，尾随事件或垃圾仍拒绝 | 未收到 `[DONE]` 继续保留 EOF 校验；不把参数完成当作响应完成，不采用上游协商重试、失败转移或历史重写 |
+| [`38efe6c` 的 connect/app_server.rs](https://github.com/BigPizzaV3/CodexPlusPlus/blob/38efe6c57cb7c6a9f03938b5893ec0d4bb9769a5/crates/codex-plus-core/src/connect/app_server.rs)：桌面升级会使旧 CLI 路径失效 | 以此检查方法复核 [discover_codex_executable](../../scripts/operator_core/beeper_relay.py)，补齐候选已解析后、排序读取 stat 时消失或访问失败的竞态，转换为固定 `codex_cli_unavailable` | 显式路径仍按原选择核验；不自动重新发现、换路径、重启或发送唤醒；失败不扩大为身份可信 |
+
+本地另有独立的 HTTP 头修复：[clean_headers / opaque_response_headers](../../scripts/operator_core/model_router.py)按 [RFC 9110 §7.6.1](https://www.rfc-editor.org/rfc/rfc9110.html#section-7.6.1)汇总每一条 `Connection` 的字段名，包括大小写变体，再过滤逐跳字段；禁止把其中声明的 `Content-Length` 重新加入。不将此项记为 Codex++ 移植；不改变正文、身份、工具执行、容量或重试合同。
+
+### 已有覆盖与未采用建议
+
+- [`d3e7f8e` 的目录 `base_instructions`](https://github.com/BigPizzaV3/CodexPlusPlus/commit/d3e7f8eea11ecfd55544eeaa6963b43bfb9b3c2f)和 [`bf2fbea` 的旧身份不静默改派](https://github.com/BigPizzaV3/CodexPlusPlus/commit/bf2fbea092b938ffa0761c5fabb6a3cf9525c3a4)在本地已有覆盖，本次未重复实现，也不引入聚合路由。
+- [`029c6a4` 的 update.rs](https://github.com/BigPizzaV3/CodexPlusPlus/blob/029c6a45263530b3628cdcb10d6265bec158eee8/crates/codex-plus-core/src/update.rs)区分下载、写入与启动，只在已知总字节时计算下载百分比。这是未来可讨论的状态表达方法；本次没有新增更新器、界面、日志内容或自动安装。
+- 次参考 Chat On Steroids 固定到 [`666a51858df614105507e13a4995424a95eed4ee`](https://github.com/totec448-spec/chat-on-steroids/tree/666a51858df614105507e13a4995424a95eed4ee)（[MIT](https://github.com/totec448-spec/chat-on-steroids/blob/666a51858df614105507e13a4995424a95eed4ee/LICENSE)）。[`b1a7719` 的空资源/提示目录](https://github.com/totec448-spec/chat-on-steroids/commit/b1a7719086696229a75ae0bcfe7793e46af5364a)针对其新连接握手失败；本机没有对应失败证据，故仅登记兼容候选，不新增协议版本、能力声明或目录处理。
+- codex-chatgpt-web 固定到 [`f137c2f84da5df214c1e228d74f5ff43e7641c48`](https://github.com/miuuyy/codex-chatgpt-web/commit/f137c2f84da5df214c1e228d74f5ff43e7641c48)（[MIT](https://github.com/miuuyy/codex-chatgpt-web/blob/f137c2f84da5df214c1e228d74f5ff43e7641c48/LICENSE)）。其回复归属和展开长消息后的再次核验适合作比较；本地已有完整原文、准确用户/回复及文档归属核验，不采用以 broker token 替代完整原文的路径，也不新增页面操作。
+
+定向复现、统一冻结回归、保护观察与实机验收分别保留，本节不推断已部署或实机通过。终态持有连接、同 chunk 尾随拒绝、无 sentinel 的原 EOF 合同、CLI stat 失败及多条 `Connection` 字段分别检查；候选范围见[发布验收记录](release-audit.md)，完整原始结果在私有回执保留。既有失败、完整历史与恢复原件不被研究或新成功改判。
 
 ## 首轮采用：三个必要落点
 
@@ -57,7 +77,7 @@
 
 本轮不采用 CDP/React 菜单注入、历史 provider 重写、聚合重试/轮换、Chat Completions 通路或独立管理界面。当前官方直连和拓展实例隔离继续保留；这些上游能力不是本项目已获准的新开发工作。
 
-## 本轮验证与部署边界
+## 首轮（2026-10-05）验证与部署边界
 
 三个必要修复及组合回归已写入 canonical 源码；运行前只读核对 Operator 已退出、无活动回调，测试只用纯内存或临时 loopback、私有合成编译，不发送真实模型请求。
 

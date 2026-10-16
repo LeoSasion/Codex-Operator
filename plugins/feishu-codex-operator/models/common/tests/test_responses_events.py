@@ -12,6 +12,7 @@ _prepare_test_imports(_OPERATOR_PLUGIN_ROOT)
 
 
 from copy import deepcopy
+import asyncio
 import unittest
 from unittest.mock import patch
 
@@ -647,6 +648,157 @@ class EventAdapterTests(unittest.TestCase):
 
 
 class StreamTests(unittest.IsolatedAsyncioTestCase):
+    async def test_done_finishes_without_another_read_from_held_open_upstream(self):
+        # Independent regression inspired by CodexPlusPlus commit
+        # 2a9bb2d22c3466a85848d58006d958c2440a0749: a complete sentinel
+        # ends an already validated response even if the transport stays open.
+        _, context = prepare()
+        data = wire(events_for(call(context))) + b"data: [DONE]\r\n\r\n"
+        reads, read_after_done = 0, False
+
+        async def chunks():
+            nonlocal reads, read_after_done
+            reads += 1
+            yield data
+            read_after_done = True
+            await asyncio.Event().wait()
+
+        source = chunks()
+        async def collect():
+            return [event async for event in restore_events(source, context)]
+        try:
+            delivered = await asyncio.wait_for(collect(), timeout=1)
+        finally:
+            await source.aclose()
+        self.assertEqual(reads, 1)
+        self.assertFalse(read_after_done)
+        self.assertEqual(delivered[-1]["response"]["output"][0]["input"], CODE)
+
+    async def test_fragmented_done_finishes_without_requesting_the_next_chunk(self):
+        _, context = prepare()
+        events = events_for(call(context))
+        for newline in (b"\n", b"\r\n"):
+            sentinel = b"data: [DONE]" + newline + newline
+            for split in range(1, len(sentinel)):
+                with self.subTest(newline=newline, split=split):
+                    reads = 0
+
+                    async def chunks():
+                        nonlocal reads
+                        for data in (wire(events, newline), sentinel[:split], sentinel[split:]):
+                            reads += 1
+                            yield data
+                        self.fail("explicit DONE requested another upstream chunk")
+
+                    source = chunks()
+                    try:
+                        delivered = [event async for event in restore_events(source, context)]
+                    finally:
+                        await source.aclose()
+                    self.assertEqual(reads, 3)
+                    self.assertEqual(delivered[-1]["response"]["output"][0]["input"], CODE)
+
+    async def test_done_validates_complete_and_partial_same_chunk_tails_before_call_release(self):
+        _, context = prepare()
+        events = events_for(call(context))
+        suffixes = [wire(events[-1:]), b"data: [DONE]\n\n",
+                    b'data: {"type":"response.failed"}\n\n',
+                    b"data: invalid-json\n\n", b"data: {",
+                    b'data: {"type":"error"}\n', b"\xff", b"data: [DONE]\r\r"]
+        for suffix in suffixes:
+            for separate_prefix in (False, True):
+                with self.subTest(suffix=suffix, separate_prefix=separate_prefix):
+                    async def chunks():
+                        if separate_prefix:
+                            yield wire(events[:-1])
+                        yield (wire(events[-1:] if separate_prefix else events)
+                               + b"data: [DONE]\n\n" + suffix)
+                        self.fail("rejected sentinel tail requested another upstream chunk")
+
+                    source, delivered = chunks(), []
+                    try:
+                        with self.assertRaises(UpstreamProtocolError):
+                            async for event in restore_events(source, context):
+                                delivered.append(event)
+                    finally:
+                        await source.aclose()
+                    self.assertEqual([event["type"] for event in delivered],
+                                     ["response.created"] if separate_prefix else [])
+
+    async def test_done_allows_transport_comments_and_checks_final_cr_without_another_read(self):
+        _, context = prepare()
+        original = text_events("\r\n 中文😀 \n")
+
+        async def chunks():
+            yield wire(original) + b"data: [DONE]\n\n: trailing transport comment\r"
+            self.fail("complete sentinel and transport comment requested another chunk")
+
+        source = chunks()
+        try:
+            delivered = [event async for event in restore_events(source, context)]
+        finally:
+            await source.aclose()
+        self.assertEqual([{key: value for key, value in event.items() if key != "sequence_number"}
+                          for event in delivered], original)
+
+    async def test_completed_without_done_still_waits_for_eof(self):
+        _, context = prepare()
+        waiting, release = asyncio.Event(), asyncio.Event()
+
+        async def chunks():
+            yield wire(events_for(call(context)))
+            waiting.set()
+            await release.wait()
+
+        source = chunks()
+
+        async def collect():
+            return [event async for event in restore_events(source, context)]
+
+        task = asyncio.create_task(collect())
+        try:
+            await asyncio.wait_for(waiting.wait(), timeout=1)
+            self.assertFalse(task.done())
+            release.set()
+            delivered = await asyncio.wait_for(task, timeout=1)
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            await source.aclose()
+        self.assertEqual(delivered[-1]["response"]["output"][0]["input"], CODE)
+
+    async def test_cancellation_before_success_and_done_does_not_release_calls(self):
+        _, context = prepare()
+        waiting = asyncio.Event()
+
+        async def chunks():
+            yield wire(events_for(call(context))[:-1])
+            waiting.set()
+            await asyncio.Event().wait()
+
+        source, delivered = chunks(), []
+
+        async def collect():
+            async for event in restore_events(source, context):
+                delivered.append(event)
+
+        task = asyncio.create_task(collect())
+        try:
+            await asyncio.wait_for(waiting.wait(), timeout=1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        finally:
+            if not task.done():
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            await source.aclose()
+        self.assertEqual([event["type"] for event in delivered], ["response.created"])
+
     async def test_shared_stream_rejects_expanded_output_without_releasing_buffered_calls(self):
         _, context = prepare({"tools": [EXEC, FUNCTION]})
         items = [call(context, "\r\n text('中文😀\\n'); \r\n" * 100),

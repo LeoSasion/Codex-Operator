@@ -1,5 +1,13 @@
 # 后台浏览器实现来源
 
+## 2026-10-17 增量对照与实际采用
+
+Codex++ 的本次固定点为 [`6105d57019083f8bbb2483399fa4bcdaadc92497`](https://github.com/BigPizzaV3/CodexPlusPlus/tree/6105d57019083f8bbb2483399fa4bcdaadc92497)（2026-10-16 15:22:02 UTC），相对下方首轮固定点新增 [273 个提交](https://github.com/BigPizzaV3/CodexPlusPlus/compare/f55bb64663ba5024ab434017bb6212a0fd9f4bb3...6105d57019083f8bbb2483399fa4bcdaadc92497)。查询时最新正式发布为 [v1.9.0](https://github.com/BigPizzaV3/CodexPlusPlus/releases/tag/v1.9.0)（2026-10-14 17:39:36 UTC）；[许可仍为 AGPLv3](https://github.com/BigPizzaV3/CodexPlusPlus/blob/6105d57019083f8bbb2483399fa4bcdaadc92497/LICENSE)。旧固定提交、许可和历次验证范围继续保留。
+
+本次实际吸纳两种检查方法：[`2a9bb2d` 的 launcher.rs](https://github.com/BigPizzaV3/CodexPlusPlus/blob/2a9bb2d22c3466a85848d58006d958c2440a0749/crates/codex-plus-core/src/launcher.rs)用保持连接的上游复现完成后仍等待 EOF；本地仅在已验证成功与显式 `[DONE]` 后退出，保留当前 chunk 尾随拒绝和没有 sentinel 时的 EOF 合同。[`38efe6c` 的 connect/app_server.rs](https://github.com/BigPizzaV3/CodexPlusPlus/blob/38efe6c57cb7c6a9f03938b5893ec0d4bb9769a5/crates/codex-plus-core/src/connect/app_server.rs)提示升级后的路径失效检查；本地仅补 CLI 排序 stat 竞态的固定失败，不采用自动重新发现或换路径。修复均独立编写，没有复制代码、引入依赖、协商重试或自动恢复。
+
+已有目录字段与身份拒绝不重复实现。下载/写入/启动阶段及字节进度仅留为讨论建议；Chat On Steroids 的空资源目录兼容和 codex-chatgpt-web 的回复归属更新也只按具体缺口比较，本次未新增协议、页面操作或界面。准确次参考提交、许可、采用落点、不适用行为及本地独立 RFC 9110 多 `Connection` 字段修复，统一见[增量吸纳记录](../../../development/docs/codexplusplus-adoption.md#2026-10-17-增量研究与采用范围)。定向复现、统一冻结回归、保护观察和实机验收各自留证；这些来源记录不推断运行中实例已更新或主窗口通过。
+
 ## 2026-10-05 当前参考策略与范围
 
 所有者明确今后重点参考 [BigPizzaV3/CodexPlusPlus（Codex++）](https://github.com/BigPizzaV3/CodexPlusPlus)，保留我们自身优势，只借鉴其解决方案补救已确认的必要缺点。新增功能或界面须先与所有者商量并取得同意；有价值的建议先提出，参考项目的功能不自动进入本项目范围。现有已授权修复继续进行。

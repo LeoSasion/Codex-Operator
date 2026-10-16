@@ -7,6 +7,31 @@ counts refer to their individual runs; the current source must be checked with
 the [test instructions](testing.md). A later source-only pass never changes an
 earlier live-task result or proves that installed services were updated.
 
+2026-10-17 reference-guided candidate (source alpha142, package unchanged):
+
+- Adapted SSE with a verified successful terminal and complete `[DONE]` no longer
+  waits for an upstream EOF. The entire received chunk and its partial tail are
+  checked before that batch is released; a completion without `[DONE]` retains
+  the existing EOF path. Budgets, cancellation and native/v1/null stay unchanged.
+- HTTP forwarding filters every case-insensitive `Connection` field's nominated
+  headers, preserving ordinary dictionary inputs and the existing body, valid
+  framing, credential and WebSocket handshake contracts.
+- A CLI candidate disappearing or becoming unreadable during metadata sorting
+  now yields the fixed pre-start `codex_cli_unavailable` result. Explicit paths,
+  ordering, no-fallback and no-replay behavior remain unchanged.
+- The current CLI schema also permits encrypted content on tool calls. Adapted
+  terminal validation rejects opaque content on every item before releasing any
+  call, matching the existing history boundary; absent, null and empty strings
+  retain their original representation. Native/v1/null remain passthrough.
+- Codex++ source is pinned separately from its release. The held-open-stream
+  regression and executable-discovery review method informed independently
+  written repairs; upstream retries and history rewriting were not adopted.
+  Existing coverage and proposals remain distinct in the adoption record.
+- Current source validation binds Windows package 26.1013.3656.0 and CLI
+  0.163.0-alpha.10.2. Frozen regression, protected-file observations and actual
+  Desktop/model/approval acceptance are separate evidence; this candidate does
+  not update installed outputs or turn older failures into passes.
+
 2026-10-16 maintenance candidate (source alpha141, package unchanged):
 
 - A stopped Feishu consumer now drains its current stdout generation through
