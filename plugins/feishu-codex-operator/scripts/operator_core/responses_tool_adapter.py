@@ -668,16 +668,15 @@ def prepare_request(payload, capabilities, reasoning_efforts):
 def restore_item(item, context):
     if not isinstance(item, dict):
         raise RouterError("invalid_response_item")
-    # Current Codex function calls may carry provider-encrypted argument state.
-    # It cannot cross an adapted route, including custom/search projections.
+    # Current Codex tools may carry provider-encrypted content or argument state.
+    # Neither can cross an adapted route, including custom/search projections.
     # Keep absent/null/empty fields verbatim instead of stripping or decrypting.
-    if item.get("encrypted_function_args") not in (None, []):
+    if (item.get("encrypted_function_args") not in (None, [])
+            or item.get("encrypted_content") not in (None, "")):
         raise RouterError("opaque_upstream_context_not_supported")
     entry = deepcopy(item)
     kind = item.get("type")
     if kind in {"message", "reasoning"}:
-        if item.get("encrypted_content") not in (None, ""):
-            raise RouterError("opaque_upstream_context_not_supported")
         if kind == "message":
             if item.get("role") != "assistant" or item.get("status", "completed") != "completed":
                 raise RouterError("invalid_output_message")

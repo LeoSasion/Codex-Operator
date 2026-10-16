@@ -120,6 +120,25 @@ class RegistryTests(unittest.TestCase):
 
 @unittest.skipIf(aiohttp is None, "optional router environment is required")
 class OpaqueResponseHeaderTests(unittest.TestCase):
+    def test_all_connection_fields_exclude_nominated_headers_without_mutation(self):
+        from operator_core.model_router import clean_headers, opaque_response_headers
+        pairs = [("Connection", " keep-alive, X-First "),
+                 ("connection", "x-SECOND, X-Third"),
+                 ("X-First", "first hop"), ("X-Second", "second hop"),
+                 ("X-Third", "third hop"), ("X-Proof", "retained")]
+        for headers in (dict(pairs), CIMultiDict(pairs)):
+            before = list(headers.items())
+            with self.subTest(mapping=type(headers).__name__):
+                self.assertEqual(clean_headers(headers), {"X-Proof": "retained"})
+                self.assertEqual(list(headers.items()), before)
+        headers = CIMultiDict([*pairs, ("Connection", " X-Fourth "),
+                              ("X-Fourth", "fourth hop"), ("Content-Length", "0009")])
+        before = list(headers.items())
+        self.assertEqual(clean_headers(headers), {"X-Proof": "retained"})
+        self.assertEqual(opaque_response_headers(headers), {
+            "X-Proof": "retained", "Content-Length": "0009"})
+        self.assertEqual(list(headers.items()), before)
+
     def test_unique_length_preserves_original_ascii_text_and_unrelated_headers(self):
         from operator_core.model_router import opaque_response_headers
         for length in ("0", "0009", "9" * 20):
@@ -181,6 +200,7 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
         self.handshakes = []
         self.redirect_ws = False
         self.response_headers = {}
+        self.response_header_items = []
         self.response_chunked = False
         self.response_split_release = None
         self.ws_headers = {}
@@ -230,9 +250,9 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
             if self.status == 302:
                 return web.Response(status=302, headers={"Location": self.base + "/leak"})
             if self.response_chunked or self.response_split_release is not None:
-                response = web.StreamResponse(status=self.status,
-                    headers={"Content-Type": "text/event-stream", "X-Proof": "preserved",
-                             **self.response_headers})
+                response = web.StreamResponse(status=self.status, headers=CIMultiDict([
+                    ("Content-Type", "text/event-stream"), ("X-Proof", "preserved"),
+                    *self.response_headers.items(), *self.response_header_items]))
                 if self.response_chunked:
                     response.enable_chunked_encoding()
                 await response.prepare(request)
@@ -243,9 +263,9 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
                 await response.write(self.stream_body[split:])
                 await response.write_eof()
                 return response
-            return web.Response(status=self.status, body=self.stream_body,
-                                headers={"Content-Type": "text/event-stream", "X-Proof": "preserved",
-                                         **self.response_headers})
+            return web.Response(status=self.status, body=self.stream_body, headers=CIMultiDict([
+                ("Content-Type", "text/event-stream"), ("X-Proof", "preserved"),
+                *self.response_headers.items(), *self.response_header_items]))
 
         app = web.Application(handler_args={"auto_decompress": False})
         app.router.add_route("*", "/{path:.*}", upstream)
@@ -268,6 +288,67 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
         self.env.stop()
         await self.client.close()
         await self.upstream.close()
+
+    async def test_native_http_filters_every_connection_field_in_both_directions(self):
+        from operator_core.model_router import opaque_response_headers
+        self.stream_body = gzip.compress(b'{"synthetic_result":"native wire bytes"}\n')
+        self.response_headers = {"Content-Encoding": "gzip"}
+        self.response_header_items = [
+            ("Connection", "keep-alive, X-Upstream-First"),
+            ("Connection", "X-Upstream-Second, x-UPSTREAM-Third"),
+            ("X-Upstream-First", "first hop"),
+            ("X-Upstream-Second", "second hop"),
+            ("X-Upstream-Third", "third hop")]
+        headers = CIMultiDict([*self.headers.items(),
+            ("Connection", "keep-alive, X-Client-First"),
+            ("Connection", "X-Client-Second, x-CLIENT-Third"),
+            ("X-Client-First", "first hop"), ("X-Client-Second", "second hop"),
+            ("X-Client-Third", "third hop"), ("Accept-Encoding", "gzip")])
+        before = list(headers.items())
+        incoming, outgoing = [], []
+        handle = self.router.handle
+
+        async def observe_request(request):
+            incoming.append((request.path, request.headers.getall("Connection", [])))
+            return await handle(request)
+
+        def observe_response(upstream_headers):
+            outgoing.append(upstream_headers.getall("Connection", []))
+            return opaque_response_headers(upstream_headers)
+
+        with patch.object(self.router, "handle", side_effect=observe_request), \
+                patch("operator_core.model_router.opaque_response_headers", side_effect=observe_response):
+            for endpoint, body in (
+                    ("responses", b'{ "model":"native-test", "input":[] }'),
+                    ("responses/compact", b'{ "model":"native-test", "input":[] }'),
+                    ("alpha/search", b'{ "opaque_search":"retain bytes" }')):
+                with self.subTest(endpoint=endpoint):
+                    response = await self.client.post(self.prefix + "/" + endpoint,
+                        headers=headers, data=body, auto_decompress=False)
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(await response.read(), self.stream_body)
+                    self.assertEqual(response.headers["Content-Encoding"], "gzip")
+                    self.assertEqual(response.headers.getall("Content-Length"), [str(len(self.stream_body))])
+                    self.assertNotIn("Transfer-Encoding", response.headers)
+                    self.assertEqual(response.headers["X-Proof"], "preserved")
+                    for name in ("X-Upstream-First", "X-Upstream-Second", "X-Upstream-Third"):
+                        self.assertNotIn(name, response.headers)
+                    received_body, forwarded = self.received[-1]
+                    self.assertEqual(received_body, body)
+                    self.assertEqual(forwarded["Authorization"], self.headers["Authorization"])
+                    self.assertEqual(forwarded["ChatGPT-Account-Id"], "native-account")
+                    self.assertEqual(forwarded["X-Test"], "preserve-native")
+                    self.assertEqual(forwarded["Accept-Encoding"], "gzip")
+                    for name in ("X-Client-First", "X-Client-Second", "X-Client-Third"):
+                        self.assertNotIn(name, forwarded)
+        self.assertEqual(list(headers.items()), before)
+        for endpoint in ("responses", "responses/compact", "alpha/search"):
+            self.assertIn((self.prefix + "/" + endpoint,
+                headers.getall("Connection")), incoming)
+        self.assertEqual(outgoing, [["keep-alive, X-Upstream-First",
+            "X-Upstream-Second, x-UPSTREAM-Third"]] * 3)
+        self.assertEqual(len(self.received), 3)
+        self.assertIsNone(self.router.last_failure)
 
     async def test_codex_backend_alias_preserves_native_and_auxiliary_routes(self):
         alias = self.router.codex_backend_prefix
@@ -891,6 +972,40 @@ class RouterTests(unittest.IsolatedAsyncioTestCase):
             message = await asyncio.wait_for(ws.receive(), 3)
             self.assertEqual(raw, message.data)
         self.assertEqual(raw.encode(), self.received[0][0])
+
+    async def test_native_websocket_filters_all_client_connection_nominations(self):
+        headers = CIMultiDict([*self.headers.items(),
+            ("Connection", "Upgrade, X-Client-First"),
+            ("Connection", "X-Client-Second, x-CLIENT-Third"),
+            ("X-Client-First", "first hop"), ("X-Client-Second", "second hop"),
+            ("X-Client-Third", "third hop")])
+        before = list(headers.items())
+        incoming = []
+        handle = self.router.handle
+
+        async def observe_request(request):
+            incoming.append(request.headers.getall("Connection", []))
+            return await handle(request)
+
+        raw = '{ "type":"response.create", "model":"native-test", "input":[] }'
+        with patch.object(self.router, "handle", side_effect=observe_request):
+            async with self.client.ws_connect(self.prefix + "/responses", headers=headers) as ws:
+                await ws.send_str(raw)
+                message = await asyncio.wait_for(ws.receive(), 3)
+                self.assertEqual(message.type, aiohttp.WSMsgType.TEXT)
+                self.assertEqual(message.data, raw)
+        self.assertEqual(list(headers.items()), before)
+        self.assertIn(headers.getall("Connection"), incoming)
+        self.assertEqual(len(self.received), 1)
+        body, forwarded = self.received[0]
+        self.assertEqual(body, raw.encode())
+        self.assertEqual(forwarded["Authorization"], self.headers["Authorization"])
+        self.assertEqual(forwarded["ChatGPT-Account-Id"], "native-account")
+        self.assertEqual(forwarded["X-Test"], "preserve-native")
+        self.assertEqual(forwarded["Connection"].lower(), "upgrade")
+        for name in ("X-Client-First", "X-Client-Second", "X-Client-Third"):
+            self.assertNotIn(name, forwarded)
+        self.assertIsNone(self.router.last_failure)
 
     async def test_native_websocket_redirect_is_not_followed(self):
         self.redirect_ws = True

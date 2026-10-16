@@ -42,6 +42,7 @@ from operator_core.beeper_relay import (  # noqa: E402
     RelayUnavailable,
     beeper_reasoning_effort,
     classify_queue_rejection,
+    discover_codex_executable,
     send_beeper_wake_up_signal,
 )
 from operator_core.beeper_provider import BEEPER_LOCAL_MODEL  # noqa: E402
@@ -114,6 +115,67 @@ def relay_code(prompt: str) -> str:
 
 def option_value(argv: list[str], option: str) -> str:
     return argv[argv.index(option) + 1]
+
+
+class CodexExecutableDiscoveryTests(unittest.TestCase):
+    @staticmethod
+    def _cli_candidates(base: Path) -> tuple[Path, Path]:
+        root = base / "OpenAI/Codex/bin"
+        older, newer = root / "older/codex.exe", root / "newer/codex.exe"
+        for path, timestamp in ((older, 10_000_000_000), (newer, 20_000_000_000)):
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b"synthetic CLI; never execute")
+            os.utime(path, ns=(timestamp, timestamp))
+        return older.resolve(), newer.resolve()
+
+    def test_cli_metadata_race_is_typed_without_another_discovery_attempt(self):
+        for configured in (False, True):
+            for error_type in (FileNotFoundError, PermissionError):
+                with self.subTest(configured=configured, error=error_type.__name__), tempfile.TemporaryDirectory() as temporary:
+                    base = Path(temporary)
+                    _, selected = self._cli_candidates(base)
+                    validated, metadata_failures = set(), []
+                    real_is_file, real_stat = Path.is_file, Path.stat
+
+                    def is_file(path, *args, **kwargs):
+                        value = real_is_file(path, *args, **kwargs)
+                        if value:
+                            validated.add(path)
+                        return value
+
+                    def stat(path, *args, **kwargs):
+                        if path == selected and path in validated:
+                            metadata_failures.append(path)
+                            raise error_type("synthetic CLI metadata race")
+                        return real_stat(path, *args, **kwargs)
+
+                    with patch.dict(os.environ, {"LOCALAPPDATA": str(base)}), \
+                            patch.object(Path, "is_file", is_file), patch.object(Path, "stat", stat):
+                        with self.assertRaises(RelayUnavailable) as caught:
+                            discover_codex_executable(str(selected) if configured else "")
+                    self.assertEqual(caught.exception.code, "codex_cli_unavailable")
+                    self.assertIsInstance(caught.exception.__cause__, error_type)
+                    self.assertFalse(caught.exception.may_have_started)
+                    self.assertEqual(metadata_failures, [selected])
+
+    def test_explicit_cli_is_preserved_and_missing_path_has_no_auto_fallback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            older, _ = self._cli_candidates(base)
+            with patch.dict(os.environ, {"LOCALAPPDATA": str(base)}), patch.object(Path, "glob") as scan:
+                self.assertEqual(discover_codex_executable(str(older)), older)
+                older.unlink()
+                with self.assertRaises(RelayUnavailable) as caught:
+                    discover_codex_executable(str(older))
+                self.assertEqual(caught.exception.code, "codex_cli_unavailable")
+                scan.assert_not_called()
+
+    def test_automatic_discovery_keeps_the_latest_valid_cli_selection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            _, newer = self._cli_candidates(base)
+            with patch.dict(os.environ, {"LOCALAPPDATA": str(base)}):
+                self.assertEqual(discover_codex_executable(), newer)
 
 
 class BeeperRelayClientTests(unittest.TestCase):

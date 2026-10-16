@@ -42,6 +42,7 @@ class AdaptedRouterTests(unittest.IsolatedAsyncioTestCase):
         self.scripted_items = None
         self.reasoning_tail = None
         self.cancelled, self.waiting = asyncio.Event(), asyncio.Event()
+        self.release_done = asyncio.Event()
         self.error_body = b'{"error":{"message":"synthetic failure"}}'
 
         async def upstream(request):
@@ -104,6 +105,14 @@ class AdaptedRouterTests(unittest.IsolatedAsyncioTestCase):
                                     headers={"Content-Encoding": "gzip"})
             output = web.StreamResponse(headers={"Content-Type": "text/event-stream", "ETag": "old"})
             await output.prepare(request)
+            if self.mode == "done_wait":
+                await output.write(wire(events, newline=b"\r\n") + b"data: [DONE]\r\n\r\n")
+                self.waiting.set()
+                try:
+                    await self.release_done.wait()
+                finally:
+                    self.cancelled.set()
+                return output
             # A short initial record ensures errors later in the stream are exercised.
             for event in events:
                 await output.write(wire([event], newline=b"\r\n"))
@@ -131,6 +140,7 @@ class AdaptedRouterTests(unittest.IsolatedAsyncioTestCase):
         self.env.start()
 
     async def asyncTearDown(self):
+        self.release_done.set()
         self.env.stop()
         await self.client.close()
         await self.upstream.close()
@@ -708,6 +718,57 @@ class AdaptedRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(http_events, ws_events)
         self.assertEqual(ws_events[-1]["response"]["output"][0]["input"], CODE)
         self.assertEqual(len(self.received), 2)
+
+    async def test_http_done_ends_downstream_without_upstream_eof(self):
+        self.mode = "done_wait"
+        result = None
+        try:
+            result = await self.client.post(self.endpoint, json={**self.payload, "stream": True})
+            await asyncio.wait_for(self.waiting.wait(), 2)
+            raw = await asyncio.wait_for(result.read(), 2)
+            released_before_completion = self.release_done.is_set()
+        finally:
+            self.release_done.set()
+            if result is not None:
+                result.close()
+        self.assertFalse(released_before_completion)
+        self.assertEqual(result.status, 200)
+        decoder = SSEDecoder()
+        events = decoder.feed(raw) + decoder.finish()
+        self.assertIs(events[-1], DONE)
+        completed = events[-2]
+        self.assertEqual(completed["type"], "response.completed")
+        self.assertEqual(completed["response"]["output"][0]["input"], CODE)
+        self.assertEqual(len(self.received), 1)
+        self.assertEqual(self.received[0][0]["input"], self.payload["input"])
+        self.assertIsNone(self.router.last_failure)
+
+    async def test_websocket_done_allows_different_new_input_while_upstream_held_open(self):
+        self.mode = "done_wait"
+        ws, completed, requested = None, [], []
+        try:
+            ws = await self.client.ws_connect(self.endpoint)
+            for text in ("Synthetic first input 中文😀.", "Different new second input 中文😀."):
+                requested.append(text)
+                await ws.send_json({**self.payload, "input": text, "type": "response.create"})
+                for _ in range(20):
+                    event = await ws.receive_json(timeout=2)
+                    if event["type"] == "response.completed":
+                        completed.append(event)
+                        break
+                else:
+                    self.fail("held-open upstream did not complete within its event bound")
+            released_before_completion = self.release_done.is_set()
+        finally:
+            self.release_done.set()
+            if ws is not None:
+                await ws.close()
+        self.assertFalse(released_before_completion)
+        self.assertEqual(len(completed), 2)
+        self.assertEqual([event["response"]["output"][0]["input"] for event in completed], [CODE, CODE])
+        self.assertEqual(len(self.received), 2)
+        self.assertEqual([body["input"] for body, _ in self.received], requested)
+        self.assertIsNone(self.router.last_failure)
 
     async def test_gzip_requests_are_decoded_for_adaptation_and_duplicates_are_refused(self):
         result = await self.client.post(self.endpoint, data=gzip.compress(dumps(self.payload).encode()),

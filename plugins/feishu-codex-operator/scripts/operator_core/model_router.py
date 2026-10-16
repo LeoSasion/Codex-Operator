@@ -46,7 +46,11 @@ def reject_opaque_context(payload):
 
 
 def clean_headers(headers) -> dict[str, str]:
-    excluded = HOP_HEADERS | {part.strip().lower() for part in headers.get("Connection", "").split(",")}
+    # A field may be split across multiple Connection lines. Read each one,
+    # including differently cased keys in an ordinary mapping, before forwarding.
+    excluded = HOP_HEADERS | {part.strip().lower()
+        for name, value in headers.items() if name.lower() == "connection"
+        for part in value.split(",")}
     return {k: v for k, v in headers.items() if k.lower() not in excluded}
 
 
