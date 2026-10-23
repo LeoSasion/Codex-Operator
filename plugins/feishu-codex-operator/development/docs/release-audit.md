@@ -7,6 +7,38 @@ counts refer to their individual runs; the current source must be checked with
 the [test instructions](testing.md). A later source-only pass never changes an
 earlier live-task result or proves that installed services were updated.
 
+2026-10-23 deployment/release maintenance (source alpha143, package preview.2):
+
+- The owner requested installed alpha138 to alpha143 synchronization and a new
+  release. Legacy runtime preview/apply now accept an explicit exact from/to
+  alpha-version pair within the same three-part release line, with forward-only
+  revision and identical file inventory. The selection is bound to the reviewed
+  digest; omitted, partial, stale or downgrade selections remain rejected.
+- The complete original runtime is retained, with the existing stopped-service,
+  empty-work, protected-integration and manifest-last checks. Restoration uses
+  retained originals and refuses later edits. This adds no first-install ownership,
+  data/configuration migration, automatic restart or business-request replay.
+- An explicit version review can bind a source-only Web profile refresh after
+  completed dead-instance recovery. The current profile must validate, the exact
+  previous profile must be retained, and settings/interpreter/other runtime
+  identities must remain equal. Original recovery evidence and process/listener
+  absence are rechecked. The ordinary same-version path retains its exact-profile
+  rule; neither path manufactures a clean stop.
+- A separate deployment receipt records installed runtime, official plugin cache,
+  saved Web profile, paired launcher, current package and post-deployment checks.
+  Source regression, runtime installation, request-free service health and actual
+  Desktop/model acceptance remain distinct; prior failures and limits are retained.
+- The first whole legacy-module run exceeded its administrative 180-second wrapper
+  deadline and remains incomplete. Six new version-review cases then passed in a
+  separate targeted run. Final frozen release regression uses the existing
+  3600-second administrative limit and retains both earlier observations.
+- A subsequent full diagnostic run overlapped the necessary source-refresh
+  maintenance repair; its source changed and a failed-archive fence case failed.
+  It is retained as a diagnostic run, never a final release pass. The first
+  source-refresh combination also rejected the refreshed profile in a redundant
+  original-file comparison; that path was corrected and its three targeted cases
+  then passed. A new source freeze is required for the complete release result.
+
 2026-10-23 reference-guided hardening (source alpha143, package unchanged):
 
 - Fixed-tunnel health observations are bound to the current interruption generation

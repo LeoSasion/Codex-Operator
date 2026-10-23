@@ -317,6 +317,27 @@ create first-install ownership for Hooks, rules, shortcuts or runtime data;
 ordinary uninstall remains blocked until its legacy ownership is separately
 resolved. Neither preview nor apply starts services or replays a message.
 
+An owner-requested forward alpha-code update may explicitly pass both
+`--from-version <exact installed version>` and `--to-version <exact source version>`
+to preview and apply. Both identities must match, the numeric alpha revision must
+advance within the same three-part release line, and the runtime file inventory
+must remain identical. The selection is part of the reviewed preview digest;
+omitted, partial, stale, downgrade or other release-line selections are rejected.
+All stopped-service, empty-work, complete-backup, unchanged-integration and
+manifest-last checks still apply. This path adds no database/configuration
+migration, first-install ownership, automatic restart or request replay. Explicit
+restore uses the retained original manifest and bytes, without version flags,
+and refuses later edits. Ordinary same-version maintenance keeps its prior scope.
+
+That explicit alpha-version review may also bind a completed dead-Web recovery
+after a stopped `configure` has refreshed only the saved source hashes. The exact
+prior profile must remain in configure history and in the recovery originals;
+settings, interpreter identities and all other runtime fields must match. The
+current profile must validate against current source. Recheck both profiles,
+the complete recovery history, all absent processes and the free listener before
+writes. This is separately labelled source-refresh evidence, not a clean stop.
+The ordinary same-version/dead-Web path still requires its exact original profile.
+
 Schema 2 recovery removes only its exact unchanged added files, restores its
 retained startup inventory and runtime originals, and preserves later edits.
 An incomplete restore write is terminal and is not retried; read-only preflight

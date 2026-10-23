@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import importlib.util
+import io
 import json
 import os
 from contextlib import closing
@@ -285,6 +286,101 @@ class LegacyRuntimeUpgradeTests(unittest.TestCase):
         with self.assertRaisesRegex(cutover.CutoverError,
                                     "cutover_runtime_inventory_mismatch"):
             self.preview()
+
+    def forward_alpha_source(self, version="4.2.0-alpha.143"):
+        write(self.plugin / "scripts/operator_core/config.py",
+              ("OPERATOR_VERSION = '" + version + "'\nlegacy=False\n").encode())
+        write(self.plugin / "assets/release-inventory.json",
+              json.dumps({"source_version": version}).encode())
+
+    def version_preview(self, selection):
+        return cutover.preview(self.project, self.plugin, process_check=self.processes,
+                               services_check=self.services, version_update=selection)
+
+    def test_cross_version_defaults_reject_and_explicit_pair_preserves_restore(self):
+        self.forward_alpha_source()
+        original = cutover.runtime_snapshot(self.runtime)
+        with self.assertRaisesRegex(cutover.CutoverError, "cross_version_requires_review"):
+            self.preview()
+        self.assertFalse((self.project / cutover.MAINTENANCE_RELATIVE).exists())
+        selected = ("4.2.0-alpha.138", "4.2.0-alpha.143")
+        plan = self.version_preview(selected)
+        self.assertEqual(cutover.runtime_snapshot(self.runtime), original)
+        self.assertEqual(plan["version_update"], {"contract": "reviewed_alpha_code_update_v1",
+            "from_version": selected[0], "to_version": selected[1]})
+        with self.assertRaisesRegex(cutover.CutoverError, "cross_version_requires_review"):
+            self.apply(plan["preview_sha256"])
+        self.assertFalse((self.project / cutover.MAINTENANCE_RELATIVE / plan["preview_sha256"]).exists())
+        result = self.apply(plan["preview_sha256"], version_update=selected)
+        self.assertEqual(result["status"], "applied")
+        self.assertEqual(cutover.read_json(self.runtime / "runtime-manifest.json")["operator_version"], selected[1])
+        self.assertFalse((self.project / ".codex/operator-installation/ownership.json").exists())
+        self.restore(plan["preview_sha256"])
+        self.assertEqual(cutover.runtime_snapshot(self.runtime), original)
+
+    def test_version_pair_must_match_exact_installed_and_source_versions(self):
+        self.forward_alpha_source()
+        original = cutover.runtime_snapshot(self.runtime)
+        for pair in ((None, "4.2.0-alpha.143"), ("4.2.0-alpha.138", None),
+                     ("4.2.0-alpha.137", "4.2.0-alpha.143"),
+                     ("4.2.0-alpha.138", "4.2.0-alpha.142")):
+            with self.subTest(pair=pair), self.assertRaisesRegex(cutover.CutoverError, "version_review_mismatch"):
+                self.version_preview(pair)
+        self.assertEqual(cutover.runtime_snapshot(self.runtime), original)
+        self.assertFalse((self.project / cutover.MAINTENANCE_RELATIVE).exists())
+
+    def test_version_update_rejects_downgrade_same_version_and_other_release_line(self):
+        for version in ("4.2.0-alpha.137", "4.2.0-alpha.138", "4.3.0-alpha.143", "4.2.0"):
+            with self.subTest(version=version):
+                self.forward_alpha_source(version)
+                with self.assertRaisesRegex(cutover.CutoverError, "version_review_not_forward_alpha"):
+                    self.version_preview(("4.2.0-alpha.138", version))
+        self.assertFalse((self.project / cutover.MAINTENANCE_RELATIVE).exists())
+
+    def test_version_update_rechecks_source_and_keeps_failed_transaction_terminal(self):
+        self.forward_alpha_source()
+        pair = ("4.2.0-alpha.138", "4.2.0-alpha.143")
+        plan = self.version_preview(pair)
+        original = cutover.runtime_snapshot(self.runtime)
+        def changed_after_backup(runtime, destination, snapshot):
+            backup(runtime, destination, snapshot)
+            write(self.plugin / "scripts/operator_main.py", b"changed after backup")
+        backup = cutover.backup_runtime
+        with mock.patch.object(cutover, "backup_runtime", changed_after_backup), \
+                self.assertRaisesRegex(cutover.CutoverError, "cutover_preview_changed"):
+            self.apply(plan["preview_sha256"], version_update=pair)
+        self.assertEqual(cutover.runtime_snapshot(self.runtime), original)
+        intent = self.project / cutover.MAINTENANCE_RELATIVE / plan["preview_sha256"] / "intent.json"
+        self.assertEqual(cutover.read_json(intent)["state"], "failed")
+        with self.assertRaisesRegex(cutover.CutoverError, "transaction_exists_no_retry"):
+            self.apply(plan["preview_sha256"], version_update=pair)
+
+    def test_version_update_restore_preserves_later_runtime_edit(self):
+        self.forward_alpha_source()
+        pair = ("4.2.0-alpha.138", "4.2.0-alpha.143")
+        plan = self.version_preview(pair)
+        self.apply(plan["preview_sha256"], version_update=pair)
+        edited = self.runtime / "operator_core/config.py"
+        edited.write_bytes(edited.read_bytes() + b"later_owner_edit=True\n")
+        before = cutover.runtime_snapshot(self.runtime)
+        with self.assertRaisesRegex(cutover.CutoverError, "restore_target_changed"):
+            self.restore(plan["preview_sha256"])
+        self.assertEqual(cutover.runtime_snapshot(self.runtime), before)
+
+    def test_public_version_flags_reach_reviewed_preview(self):
+        self.forward_alpha_source()
+        actual = cutover.preview
+        def isolated(project, plugin, **kwargs):
+            self.assertEqual(project, self.project)
+            return actual(project, self.plugin, process_check=self.processes,
+                          services_check=self.services, **kwargs)
+        argv = [str(SCRIPT), "preview", "--project-root", str(self.project),
+                "--from-version", "4.2.0-alpha.138", "--to-version", "4.2.0-alpha.143"]
+        output = io.StringIO()
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(cutover, "preview", isolated), \
+                mock.patch("sys.stdout", output):
+            self.assertEqual(cutover.main(), 0)
+        self.assertEqual(json.loads(output.getvalue())["version_update"]["to_version"], "4.2.0-alpha.143")
 
 
 @unittest.skipUnless(os.name == "nt", "Windows explicit dead-Web retirement evidence")
@@ -647,6 +743,73 @@ class LegacyRetiredWebCutoverTests(unittest.TestCase):
                     returncode=0, stdout=output)):
                 with self.assertRaisesRegex(cutover.CutoverError, "^" + expected + "$"):
                     cutover._retired_web_probe(sys.executable, PLUGIN, self.profile, self.receipt)
+
+    def refreshed_source_profile(self):
+        previous = self.manager.read_json(self.profile / "profile.json")
+        runtime = json.loads(json.dumps(previous["runtime"]))
+        key = next(iter(runtime["sources"]))
+        runtime["sources"][key] = "0" * 64
+        self.enterContext(mock.patch.object(self.manager, "runtime_identity", return_value=runtime))
+        self.manager.configure(self.profile, Path(previous["settings"]["path"]))
+        return next(path for path in (self.profile / "history").glob("profile-*.json")
+                    if path.read_bytes() == (self.receipt.parent / "0.original").read_bytes())
+
+    def test_forward_alpha_update_binds_retained_source_only_web_profile(self):
+        LegacyRuntimeUpgradeTests.forward_alpha_source(self)
+        retained = self.refreshed_source_profile()
+        old = retained.read_bytes()
+        with self.assertRaisesRegex(cutover.CutoverError, "cutover_web_recovery_changed"):
+            self.evidence()
+        pair = ("4.2.0-alpha.138", "4.2.0-alpha.143")
+        def services(project, plugin, *, web_recovery_receipt, source_refresh):
+            self.assertTrue(source_refresh)
+            return cutover.retired_web_evidence(self.profile, web_recovery_receipt, source_refresh=source_refresh)
+        plan = cutover.preview(self.project, self.plugin, process_check=self.processes,
+            services_check=services, web_recovery_receipt=self.receipt, version_update=pair)
+        self.assertEqual(plan["web_recovery"]["kind"], "explicit_dead_web_source_refresh_v1")
+        before = cutover.runtime_snapshot(self.runtime)
+        cutover.apply(self.project, self.plugin, plan["preview_sha256"], process_check=self.processes,
+            services_check=services, web_recovery_receipt=self.receipt, version_update=pair)
+        cutover.restore(self.project, self.plugin, plan["preview_sha256"], process_check=self.processes,
+            services_check=services)
+        self.assertEqual(cutover.runtime_snapshot(self.runtime), before)
+        self.assertEqual(retained.read_bytes(), old)
+        self.assertEqual(self.manager.read_status_json(self.state / "status.json")["state"], "ready")
+
+    def test_source_refresh_cannot_change_interpreter_or_other_runtime_identity(self):
+        self.refreshed_source_profile()
+        path = self.profile / "profile.json"
+        original = path.read_bytes()
+        current = json.loads(original)
+        for key, value in (("python_version", "another-version"), ("source_root", str(self.fixture)),
+                           ("python_sha256", "f" * 64)):
+            with self.subTest(key=key):
+                changed = json.loads(original)
+                changed["runtime"][key] = value
+                self.manager.service.write_json(path, changed)
+                with mock.patch.object(self.manager, "runtime_identity", return_value=changed["runtime"]), \
+                        self.assertRaisesRegex(cutover.CutoverError, "cutover_web_recovery_changed"):
+                    cutover.retired_web_evidence(self.profile, self.receipt, source_refresh=True)
+                path.write_bytes(original)
+        self.assertEqual(self.manager.read_json(path), current)
+
+    def test_source_refresh_requires_and_rechecks_exact_retained_profile(self):
+        retained = self.refreshed_source_profile()
+        raw = retained.read_bytes()
+        retained.unlink()
+        with self.assertRaisesRegex(cutover.CutoverError, "cutover_web_recovery_changed"):
+            cutover.retired_web_evidence(self.profile, self.receipt, source_refresh=True)
+        retained.write_bytes(raw)
+        read = cutover.regular_bytes
+        def edit_after_read(path, limit=cutover.MAX_MANIFEST_BYTES):
+            value = read(path, limit)
+            if path == retained:
+                retained.write_bytes(raw + b"\n")
+            return value
+        with mock.patch.object(cutover, "regular_bytes", edit_after_read), \
+                self.assertRaisesRegex(cutover.CutoverError, "cutover_web_recovery_changed"):
+            cutover.retired_web_evidence(self.profile, self.receipt, source_refresh=True)
+        self.assertEqual(retained.read_bytes(), raw + b"\n")
 
 
 class LegacyInventoryAdditionTests(unittest.TestCase):
