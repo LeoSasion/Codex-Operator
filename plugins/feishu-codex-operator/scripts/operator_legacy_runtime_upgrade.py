@@ -34,6 +34,7 @@ MAX_BACKUP_BYTES = 256 * 1024 * 1024
 MAX_BACKUP_FILES = 4096
 HASH_RE = re.compile(r"[a-f0-9]{64}\Z")
 VERSION_RE = re.compile(r"\bOPERATOR_VERSION\s*=\s*['\"]([^'\"]+)['\"]")
+ALPHA_VERSION_RE = re.compile(r"([0-9]+\.[0-9]+\.[0-9]+)-alpha\.([0-9]+)\Z")
 HOLD_ERROR = "producer_unavailable_no_retry"
 EXPECTED_FILES_RE = re.compile(r"\$expectedFiles\s*=\s*@\((.*?)\)", re.S)
 QUOTED_FILE_RE = re.compile(r"'([^'\r\n]+)'\s*,?\s*", re.S)
@@ -426,7 +427,7 @@ def _recovery_history(profile: Path) -> dict[str, str]:
     return result
 
 
-def retired_web_evidence(profile: Path, receipt: Path) -> dict[str, str]:
+def retired_web_evidence(profile: Path, receipt: Path, *, source_refresh: bool = False) -> dict[str, str]:
     """Read one explicitly selected completed dead-instance recovery under its Python."""
     import operator_web_service as manager
 
@@ -439,10 +440,32 @@ def retired_web_evidence(profile: Path, receipt: Path) -> dict[str, str]:
     require(value["outcome"] == "uncontrolled_exit_retired"
             and history.get(receipt.parent.name) == digest(receipt_raw),
             "cutover_web_recovery_receipt_invalid")
-    require(regular_bytes(profile / "profile.json", 65536) == originals[0],
-            "cutover_web_recovery_changed")
+    profile_raw = regular_bytes(profile / "profile.json", 65536)
+    original_config = json.loads(originals[0].decode("utf-8-sig"))
+    kind = "explicit_dead_web_recovery_v1"
+    if source_refresh and profile_raw != originals[0]:
+        # configure retains the prior profile before changing source hashes.
+        # Only that exact, source-only update is admitted during a version review.
+        require(config.get("settings") == original_config.get("settings")
+                and {k: v for k, v in config["runtime"].items() if k != "sources"}
+                == {k: v for k, v in original_config["runtime"].items() if k != "sources"},
+                "cutover_web_recovery_changed")
+        retained = []
+        for path in (profile / "history").glob("profile-*.json"):
+            require(len(retained) < 4096, "cutover_web_recovery_history_bound")
+            raw = regular_bytes(path, 65536)
+            if raw == originals[0]:
+                retained.append((path, raw))
+            else:
+                retained.append((path, None))
+        matching_profiles = [(path, raw) for path, raw in retained if raw is not None]
+        require(bool(matching_profiles), "cutover_web_recovery_changed")
+        kind = "explicit_dead_web_source_refresh_v1"
+    else:
+        require(profile_raw == originals[0], "cutover_web_recovery_changed")
+        matching_profiles = []
     for number, name in enumerate(value["files"]):
-        if number == 1 or name == value["marker"]:
+        if number in (0, 1) or name == value["marker"]:
             continue
         require(recovery_original_bytes(Path(name), status_snapshot=number == 4) == originals[number],
                 "cutover_web_recovery_changed")
@@ -450,7 +473,7 @@ def retired_web_evidence(profile: Path, receipt: Path) -> dict[str, str]:
     require(type(record.get("version")) is int and record["version"] == 1
             and record.get("attempt") == value["attempt"]
             and record.get("phase") in ("starting", "running", "uncertain")
-            and record.get("runtime") == config["runtime"]
+            and record.get("runtime") == original_config["runtime"]
             and {"worker", "instance", "session_sha256"} <= set(record),
             "cutover_web_recovery_receipt_invalid")
     state = manager.state_path(profile, record)
@@ -462,7 +485,7 @@ def retired_web_evidence(profile: Path, receipt: Path) -> dict[str, str]:
             and details.get("state") in ("ready", "preparing", "connection", "reconnecting",
                                         "assistance", "unavailable", "draining"),
             "cutover_web_recovery_receipt_invalid")
-    require(not manager.owned_process(record, config)
+    require(not manager.owned_process(record, original_config)
             and manager.process_identity(session["pid"]) is None,
             "cutover_web_recovery_process_not_dead")
     manager.recovery_dependencies_absent(config)
@@ -495,6 +518,7 @@ def retired_web_evidence(profile: Path, receipt: Path) -> dict[str, str]:
         except OSError as exc:
             raise CutoverError("cutover_web_recovery_port_not_free") from exc
         require(manager.load_profile(profile)[1] == config
+                and regular_bytes(profile / "profile.json", 65536) == profile_raw
                 and manager.current_record(profile) is None
                 and manager.fixed_connection_available(config)
                 and _recovery_history(profile) == history
@@ -502,33 +526,36 @@ def retired_web_evidence(profile: Path, receipt: Path) -> dict[str, str]:
                 "cutover_web_recovery_changed")
         manager.require_complete_preinit_recoveries(profile)
         for number, name in enumerate(value["files"]):
-            if number == 1 or name == value["marker"]:
+            if number in (0, 1) or name == value["marker"]:
                 continue
             require(recovery_original_bytes(Path(name), status_snapshot=number == 4) == originals[number],
                     "cutover_web_recovery_changed")
-        require(not manager.owned_process(record, config)
+        for path, raw in matching_profiles:
+            require(regular_bytes(path, 65536) == raw, "cutover_web_recovery_changed")
+        require(not manager.owned_process(record, original_config)
                 and manager.process_identity(session["pid"]) is None,
                 "cutover_web_recovery_process_not_dead")
         manager.recovery_dependencies_absent(config)
-    return {"kind": "explicit_dead_web_recovery_v1", "receipt": str(receipt),
-            "receipt_sha256": digest(receipt_raw), "profile_sha256": digest(originals[0]),
+    return {"kind": kind, "receipt": str(receipt),
+            "receipt_sha256": digest(receipt_raw), "profile_sha256": digest(profile_raw),
             "history_sha256": digest(canonical_json(history))}
 
 
-def _retired_web_child(profile: Path, receipt: Path) -> dict[str, Any]:
+def _retired_web_child(profile: Path, receipt: Path, source_refresh: bool = False) -> dict[str, Any]:
     try:
-        return {"status": "verified", "evidence": retired_web_evidence(profile, receipt)}
+        return {"status": "verified", "evidence": retired_web_evidence(profile, receipt, source_refresh=source_refresh)}
     except Exception as exc:
         return {"status": "blocked", "code": exc.code if isinstance(exc, CutoverError)
                 else "cutover_web_recovery_unavailable"}
 
 
-def _retired_web_probe(python: str, plugin: Path, profile: Path, receipt: Path) -> dict[str, str]:
+def _retired_web_probe(python: str, plugin: Path, profile: Path, receipt: Path, *, source_refresh: bool = False) -> dict[str, str]:
     command = [python, "-I", "-B", "-c",
         "import json,sys;from pathlib import Path;sys.path[:0]=sys.argv[1:3];"
         "import operator_legacy_runtime_upgrade as c;"
-        "print(json.dumps(c._retired_web_child(Path(sys.argv[3]),Path(sys.argv[4]))))",
-        str(Path(__file__).resolve().parent), str(plugin / "scripts"), str(profile), str(receipt)]
+        "print(json.dumps(c._retired_web_child(Path(sys.argv[3]),Path(sys.argv[4]),sys.argv[5]=='1')))",
+        str(Path(__file__).resolve().parent), str(plugin / "scripts"), str(profile), str(receipt),
+        "1" if source_refresh else "0"]
     try:
         child = subprocess.run(command, capture_output=True, timeout=10, check=False,
                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -546,7 +573,8 @@ def _retired_web_probe(python: str, plugin: Path, profile: Path, receipt: Path) 
     evidence = result.get("evidence")
     require(isinstance(evidence, dict) and set(evidence) == {
                 "kind", "receipt", "receipt_sha256", "profile_sha256", "history_sha256"}
-            and evidence.get("kind") == "explicit_dead_web_recovery_v1"
+            and evidence.get("kind") in ({"explicit_dead_web_recovery_v1", "explicit_dead_web_source_refresh_v1"}
+                if source_refresh else {"explicit_dead_web_recovery_v1"})
             and evidence.get("receipt") == str(receipt)
             and all(isinstance(evidence.get(key), str) and HASH_RE.fullmatch(evidence[key])
                     for key in ("receipt_sha256", "profile_sha256", "history_sha256")),
@@ -555,7 +583,8 @@ def _retired_web_probe(python: str, plugin: Path, profile: Path, receipt: Path) 
 
 
 def service_gate(project: Path, plugin: Path, *,
-                 web_recovery_receipt: Path | None = None) -> dict[str, str] | None:
+                 web_recovery_receipt: Path | None = None,
+                 source_refresh: bool = False) -> dict[str, str] | None:
     # A stale or uncertain service identity blocks migration until separately
     # reviewed recovery; HTTP timeout or zero requests is never a stopped proof.
     profile = project / ".codex/operator-web-service"
@@ -593,7 +622,8 @@ def service_gate(project: Path, plugin: Path, *,
         else:
             require(status.get("status") == "configured",
                     "cutover_web_recovery_requires_configured")
-            evidence = _retired_web_probe(python, plugin, profile, web_recovery_receipt)
+            evidence = _retired_web_probe(python, plugin, profile, web_recovery_receipt,
+                                          source_refresh=source_refresh)
     router = project / RUNTIME_RELATIVE / "model-router"
     if router.exists():
         plain_path(router)
@@ -612,9 +642,12 @@ def service_gate(project: Path, plugin: Path, *,
 
 
 def _service_evidence(project: Path, plugin: Path, check: Callable[..., Any],
-                      receipt: Path | None) -> dict[str, str] | None:
-    return check(project, plugin) if receipt is None else check(
-        project, plugin, web_recovery_receipt=receipt)
+                      receipt: Path | None, version_update: tuple[str, str] | None = None) -> dict[str, str] | None:
+    if receipt is None:
+        return check(project, plugin)
+    if version_update is None:
+        return check(project, plugin, web_recovery_receipt=receipt)
+    return check(project, plugin, web_recovery_receipt=receipt, source_refresh=True)
 
 
 def source_version(plugin: Path) -> str:
@@ -627,10 +660,28 @@ def source_version(plugin: Path) -> str:
     return match.group(1)
 
 
+def reviewed_version_update(installed: str, source: str,
+                            selection: tuple[str, str] | None) -> dict[str, str] | None:
+    """Explicit forward alpha-code maintenance; never infer migration consent."""
+    if selection is None:
+        require(installed == source, "cutover_cross_version_requires_review")
+        return None
+    require(isinstance(selection, tuple) and len(selection) == 2
+            and selection == (installed, source), "cutover_version_review_mismatch")
+    require(isinstance(installed, str) and isinstance(source, str),
+            "cutover_version_review_mismatch")
+    before, after = ALPHA_VERSION_RE.fullmatch(installed), ALPHA_VERSION_RE.fullmatch(source)
+    require(before is not None and after is not None and before[1] == after[1]
+            and int(after[2]) > int(before[2]), "cutover_version_review_not_forward_alpha")
+    return {"contract": "reviewed_alpha_code_update_v1", "from_version": installed,
+            "to_version": source}
+
+
 def preview(project: Path, plugin: Path, *,
             process_check: Callable[[Path, Path], None] = process_gate,
             services_check: Callable[..., Any] = service_gate,
-            web_recovery_receipt: Path | None = None) -> dict[str, Any]:
+            web_recovery_receipt: Path | None = None,
+            version_update: tuple[str, str] | None = None) -> dict[str, Any]:
     require(project.is_absolute() and plugin.is_absolute(), "cutover_absolute_path_required")
     plain_path(project)
     plain_path(plugin)
@@ -691,7 +742,7 @@ def preview(project: Path, plugin: Path, *,
             == old.get("stop_hook_sha256"), "cutover_hook_identity_mismatch")
     process_check(project, plugin)
     queue = queue_gate(runtime)
-    web_recovery = _service_evidence(project, plugin, services_check, web_recovery_receipt)
+    web_recovery = _service_evidence(project, plugin, services_check, web_recovery_receipt, version_update)
     snapshot = runtime_snapshot(runtime)
     new = {"schema_version": 1, "operator_version": source_version(plugin),
            "public_entry": {"path": str(plugin / "scripts/codex-operator.ps1"),
@@ -700,12 +751,14 @@ def preview(project: Path, plugin: Path, *,
            "code_files": {name: row["after"]["sha256"] for name, row in code.items()},
            "start_hook_sha256": hook_update["after"]["sha256"] if hook_update else old["start_hook_sha256"],
            "stop_hook_sha256": old["stop_hook_sha256"]}
-    require(new["operator_version"] == old["operator_version"],
-            "cutover_cross_version_requires_review")
+    reviewed = reviewed_version_update(old["operator_version"], new["operator_version"], version_update)
+    require(reviewed is None or not additions, "cutover_version_review_inventory_changed")
     plan = {"schema_version": 2 if hook_update else 1, "project": str(project), "plugin": str(plugin),
             "old_manifest_sha256": digest(old_raw), "new_manifest": new,
             "code": code, "runtime_snapshot": snapshot, "protected": hooks,
             "queue": queue, "legacy_ownership_unresolved": True}
+    if reviewed is not None:
+        plan["version_update"] = reviewed
     if hook_update:
         plan["startup_hook"] = hook_update
     if web_recovery_receipt is not None:
@@ -794,13 +847,15 @@ def apply(project: Path, plugin: Path, expected_digest: str, *,
           process_check: Callable[[Path, Path], None] = process_gate,
           services_check: Callable[..., Any] = service_gate,
           web_recovery_receipt: Path | None = None,
+          version_update: tuple[str, str] | None = None,
           writer: Callable[[Path, bytes], None] = atomic_bytes) -> dict[str, Any]:
     require(bool(HASH_RE.fullmatch(expected_digest)), "cutover_preview_required")
     maintenance = project / MAINTENANCE_RELATIVE
     transaction = maintenance / expected_digest
     require(not transaction.exists(), "cutover_transaction_exists_no_retry")
     plan = preview(project, plugin, process_check=process_check,
-                   services_check=services_check, web_recovery_receipt=web_recovery_receipt)
+                   services_check=services_check, web_recovery_receipt=web_recovery_receipt,
+                   version_update=version_update)
     require(plan["preview_sha256"] == expected_digest,
             "cutover_preview_changed")
     runtime = project / RUNTIME_RELATIVE
@@ -832,7 +887,8 @@ def apply(project: Path, plugin: Path, expected_digest: str, *,
         # The backup and original manifest are rechecked before the first write.
         require(preview(project, plugin, process_check=process_check,
                         services_check=services_check,
-                        web_recovery_receipt=web_recovery_receipt)["preview_sha256"] == expected_digest,
+                        web_recovery_receipt=web_recovery_receipt,
+                        version_update=version_update)["preview_sha256"] == expected_digest,
                 "cutover_preview_changed")
         intent["state"] = "prepared"
         save_json(transaction / "intent.json", intent)
@@ -843,7 +899,7 @@ def apply(project: Path, plugin: Path, expected_digest: str, *,
                 continue
             process_check(project, plugin)
             queue_gate(runtime)
-            require(_service_evidence(project, plugin, services_check, web_recovery_receipt)
+            require(_service_evidence(project, plugin, services_check, web_recovery_receipt, version_update)
                     == plan.get("web_recovery"), "cutover_web_recovery_changed")
             require(protected_snapshot(project) == plan["protected"],
                     "cutover_integration_changed")
@@ -857,7 +913,7 @@ def apply(project: Path, plugin: Path, expected_digest: str, *,
                     "cutover_file_changed_after_write")
         process_check(project, plugin)
         queue_gate(runtime)
-        require(_service_evidence(project, plugin, services_check, web_recovery_receipt)
+        require(_service_evidence(project, plugin, services_check, web_recovery_receipt, version_update)
                 == plan.get("web_recovery"), "cutover_web_recovery_changed")
         require(protected_snapshot(project) == plan["protected"],
                 "cutover_integration_changed")
@@ -875,7 +931,7 @@ def apply(project: Path, plugin: Path, expected_digest: str, *,
                 == plan["old_manifest_sha256"], "cutover_manifest_changed")
         process_check(project, plugin)
         queue_gate(runtime)
-        require(_service_evidence(project, plugin, services_check, web_recovery_receipt)
+        require(_service_evidence(project, plugin, services_check, web_recovery_receipt, version_update)
                 == plan.get("web_recovery"), "cutover_web_recovery_changed")
         writer(runtime / "runtime-manifest.json", manifest_raw)
         require(file_fingerprint(runtime / "runtime-manifest.json")["sha256"]
@@ -894,7 +950,7 @@ def apply(project: Path, plugin: Path, expected_digest: str, *,
                 "cutover_protected_data_changed")
         process_check(project, plugin)
         queue_gate(runtime)
-        require(_service_evidence(project, plugin, services_check, web_recovery_receipt)
+        require(_service_evidence(project, plugin, services_check, web_recovery_receipt, version_update)
                 == plan.get("web_recovery"), "cutover_web_recovery_changed")
         intent["state"] = "applied"
         save_json(transaction / "intent.json", intent)
@@ -933,6 +989,15 @@ def restore(project: Path, plugin: Path, preview_digest: str, *,
             "cutover_restore_identity_invalid")
     require(plan.get("project") == str(project) and plan.get("plugin") == str(plugin),
             "cutover_restore_identity_invalid")
+    version_update = None
+    if "version_update" in plan:
+        original_manifest = read_json(transaction / "originals/runtime-manifest.json")
+        selected = plan["version_update"]
+        require(isinstance(selected, dict) and selected == reviewed_version_update(
+            original_manifest.get("operator_version"), plan["new_manifest"]["operator_version"],
+            (selected.get("from_version"), selected.get("to_version"))),
+            "cutover_restore_identity_invalid")
+        version_update = (selected["from_version"], selected["to_version"])
     if plan["schema_version"] == 2:
         require(not intent.get("restore_attempted"), "cutover_restore_terminal_no_retry")
         added = {name for name, row in plan["code"].items() if row["before"] == ABSENT}
@@ -953,7 +1018,7 @@ def restore(project: Path, plugin: Path, preview_digest: str, *,
         require(web_recovery_receipt is None, "cutover_restore_identity_invalid")
     process_check(project, plugin)
     queue_gate(project / RUNTIME_RELATIVE)
-    require(_service_evidence(project, plugin, services_check, web_recovery_receipt) == recovery,
+    require(_service_evidence(project, plugin, services_check, web_recovery_receipt, version_update) == recovery,
             "cutover_web_recovery_changed")
     runtime = project / RUNTIME_RELATIVE
     originals = transaction / "originals"
@@ -988,7 +1053,7 @@ def restore(project: Path, plugin: Path, preview_digest: str, *,
                 continue
             process_check(project, plugin)
             queue_gate(runtime)
-            require(_service_evidence(project, plugin, services_check, web_recovery_receipt) == recovery,
+            require(_service_evidence(project, plugin, services_check, web_recovery_receipt, version_update) == recovery,
                     "cutover_web_recovery_changed")
             check_restore_integrations(project, plan)
             path = runtime / Path(*PurePosixPath(relative).parts)
@@ -1007,7 +1072,7 @@ def restore(project: Path, plugin: Path, preview_digest: str, *,
                     "cutover_restore_write_failed")
         process_check(project, plugin)
         queue_gate(runtime)
-        require(_service_evidence(project, plugin, services_check, web_recovery_receipt) == recovery,
+        require(_service_evidence(project, plugin, services_check, web_recovery_receipt, version_update) == recovery,
                 "cutover_web_recovery_changed")
         check_restore_integrations(project, plan)
         if plan["schema_version"] == 2:
@@ -1024,7 +1089,7 @@ def restore(project: Path, plugin: Path, preview_digest: str, *,
                 "cutover_restore_manifest_changed")
         process_check(project, plugin)
         queue_gate(runtime)
-        require(_service_evidence(project, plugin, services_check, web_recovery_receipt) == recovery,
+        require(_service_evidence(project, plugin, services_check, web_recovery_receipt, version_update) == recovery,
                 "cutover_web_recovery_changed")
         writer(manifest_path, checked_bytes(originals / "runtime-manifest.json",
             plan["runtime_snapshot"]["runtime-manifest.json"], "cutover_backup_changed"))
@@ -1033,7 +1098,7 @@ def restore(project: Path, plugin: Path, preview_digest: str, *,
                 "cutover_restore_write_failed")
         process_check(project, plugin)
         queue_gate(runtime)
-        require(_service_evidence(project, plugin, services_check, web_recovery_receipt) == recovery,
+        require(_service_evidence(project, plugin, services_check, web_recovery_receipt, version_update) == recovery,
                 "cutover_web_recovery_changed")
         intent["state"] = "restored"
         save_json(transaction / "intent.json", intent)
@@ -1054,14 +1119,20 @@ def main() -> int:
     parser.add_argument("--expected-preview-sha256", default="")
     parser.add_argument("--web-recovery-receipt", type=Path,
                         help="Exact completed dead-Web recovery receipt; no clean-stop claim.")
+    parser.add_argument("--from-version", help="Exact reviewed installed alpha version; preview/apply only.")
+    parser.add_argument("--to-version", help="Exact reviewed source alpha version; preview/apply only.")
     args = parser.parse_args()
     project = args.project_root
     plugin = Path(__file__).absolute().parent.parent
     try:
         require(os.name == "nt", "cutover_windows_only")
         require(project.is_absolute(), "cutover_absolute_path_required")
+        selected = (args.from_version, args.to_version) if (
+            args.from_version is not None or args.to_version is not None) else None
+        require(selected is None or args.action != "restore", "cutover_version_review_restore_uses_originals")
         if args.action == "preview":
-            value = preview(project, plugin, web_recovery_receipt=args.web_recovery_receipt)
+            value = preview(project, plugin, web_recovery_receipt=args.web_recovery_receipt,
+                            version_update=selected)
             result = {"status": "preview", "preview_sha256": value["preview_sha256"],
                       "code_files": len(value["code"]),
                       "changed_code_files": sum(row["before"] != row["after"]
@@ -1069,9 +1140,11 @@ def main() -> int:
                       "runtime_backup_files": len(value["runtime_snapshot"]),
                       "runtime_backup_bytes": sum(row["size"] for row in value["runtime_snapshot"].values()),
                       "queue": value["queue"], "legacy_ownership_unresolved": True}
+            if "version_update" in value:
+                result["version_update"] = value["version_update"]
         elif args.action == "apply":
             result = apply(project, plugin, args.expected_preview_sha256,
-                           web_recovery_receipt=args.web_recovery_receipt)
+                           web_recovery_receipt=args.web_recovery_receipt, version_update=selected)
         else:
             result = restore(project, plugin, args.expected_preview_sha256,
                              web_recovery_receipt=args.web_recovery_receipt)

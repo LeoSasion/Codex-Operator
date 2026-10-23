@@ -3,11 +3,11 @@
   "release_name": "feishu-codex-operator-plugin",
   "source_version": "4.2.0-alpha.143",
   "reviewed_document_sha256": {
-    "README.md": "60c5aa480418b6cf28839d97bcfaf236343f4810c0c3ecdd2eeb8093be2f22a6",
+    "README.md": "c941cedc8dba0f19446f67f29aa08f03b2c90fd23c821d28ea12c993098496c4",
     "models/web/docs/native-web-experience.md": "36657666df4fadae627861eb52c3f7263986df23a0b08ab518f7778143b9f77e",
     "models/web/docs/chatgpt-web-integration.md": "8c4dbb5b52d65436d38d253c2fba2b67a70c0d420fb3788723920d5b9902d3df",
-    "development/docs/release-audit.md": "fd804fb1849664f6818fa84bb0a1864672227a3bde4a5b806dfc4bc677c3599e",
-    "development/docs/testing.md": "b8b86011a8ddeb2f17de3566b4eb0189aa11c4297384f8139b9534f8f516cd69"
+    "development/docs/release-audit.md": "5ca8c859faca502dc9e1c907e0fc4cc5477a72f3eb8fddbf159ae56cd1579b8f",
+    "development/docs/testing.md": "211a2450c0172e0a2ad742500e2551f9a7a1ab413595cc8615818e0fce02fd8e"
   },
   "repository_files": [
     ".agents/plugins/marketplace.json",
