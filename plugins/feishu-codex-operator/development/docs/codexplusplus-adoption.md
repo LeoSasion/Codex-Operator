@@ -1,12 +1,37 @@
 # Codex++ 方案吸纳记录
 
-更新：2026-10-17。研究只针对 Codex-Operator 现有功能的必要缺口，保留官方直连与拓展实例隔离、Desktop 任务所有权、完整历史、准确工具身份、零回放和恢复原件。新增功能或界面先与所有者商量；研究不扩大安装、发布或实机操作授权。2026-10-05 首轮固定来源与验收记录继续保留。
+更新：2026-10-23。研究只针对 Codex-Operator 现有功能的必要缺口，保留官方直连与拓展实例隔离、Desktop 任务所有权、完整历史、准确工具身份、零回放和恢复原件。新增功能或界面先与所有者商量；研究不扩大安装、发布或实机操作授权。2026-10-05 首轮及 2026-10-17 的固定来源与验收记录继续保留。
 
 ## 来源与采用方式
 
 准确项目为 [BigPizzaV3/CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus/tree/f55bb64663ba5024ab434017bb6212a0fd9f4bb3)，首轮固定提交 `f55bb64663ba5024ab434017bb6212a0fd9f4bb3`，提交日期 2026-10-03；不能用变化中的 main 替代这些依据。
 
 该提交的 [LICENSE](https://github.com/BigPizzaV3/CodexPlusPlus/blob/f55bb64663ba5024ab434017bb6212a0fd9f4bb3/LICENSE) 为 AGPLv3。本轮采用设计和验证方法，修改由本项目独立编写，没有复制上游代码、测试代码或引入其运行依赖。未来代码复用须另行记录实际片段及适用许可；本次记录不是代码移植许可。
+
+## 2026-10-23 再次研究：候选与已有覆盖
+
+本轮从 52 份已跟踪 Markdown 梳理出 17 项外部仓库/问题来源，核对默认分支、正式发布、固定源码与既有本地实现。完整状态、许可和不可访问项见[来源复核表](../../models/web/docs/web-background-sources.md)。下述判断来自实际阅读的补丁和本地代码，不是上游功能或本机实测通过声明。本轮只更新研究记录，没有新增实现、测试、skill、运行依赖或界面，也没有运行上游产品、升级服务或发送模型请求。
+
+主参考 Codex++ 固定到 [`35c682058ba82083c75aecd04529d08780e33918`](https://github.com/BigPizzaV3/CodexPlusPlus/tree/35c682058ba82083c75aecd04529d08780e33918)，提交于 2026-10-23 08:12:15 UTC；相对上次 `6105d570` 的[完整比较](https://github.com/BigPizzaV3/CodexPlusPlus/compare/6105d57019083f8bbb2483399fa4bcdaadc92497...35c682058ba82083c75aecd04529d08780e33918)为新增 193 个提交。查询时最新正式版 [v1.11.2](https://github.com/BigPizzaV3/CodexPlusPlus/releases/tag/v1.11.2) 发布于同日 08:12:29 UTC，解引用后的 tag commit 与本次 main 相同；这次不能沿用 10/17 的“main 在正式发布之后”判断。[固定点许可](https://github.com/BigPizzaV3/CodexPlusPlus/blob/35c682058ba82083c75aecd04529d08780e33918/LICENSE)仍为 AGPLv3，本轮没有复制代码。
+
+| 优先级与准确来源 | 值得学习的方法 | 本地对照与下一步证据范围 |
+| --- | --- | --- |
+| 优先补验证：[Codex++ `23596ed`](https://github.com/BigPizzaV3/CodexPlusPlus/commit/23596ed9151a0a37ee258a90e24309c10128eca4) | 稳定锁、revision、不可变 catalog 与最后发布指针；真正启动两个进程验证一胜一冲突，并在发布失败后保留外部新修改 | [replace_file / target_lock](../../scripts/operator_native_models.py)已有原字节复核、flush/fsync、目标 claim 与失败终态；[并发测试](../../models/common/tests/test_native_models.py)目前主要以线程和注入构造交错。值得在一次性 home 补独立进程竞争、发布阶段退出及恢复保留后续编辑的组合验证。尚未确认锁或发布实现存在缺陷；不引入读/保存入口自动接管 pending。 |
+| 优先补组合用例：[CC Switch `91fc2fc`](https://github.com/farion1231/cc-switch/commit/91fc2fcbf7debb7227222b9b18fb41e4745c690a)与 [Codex++ `845a288`](https://github.com/BigPizzaV3/CodexPlusPlus/commit/845a2882252ad36facb09f4aa6449e56fa440b14) | 工具模式切换后，旧 exec 历史不能使当前模型调用未声明工具；把 namespace、声明变化、截断和晚到失败放入完整往返验证 | [历史适配](../../scripts/operator_core/responses_tool_adapter.py)已有严格配对、opaque/未知调用拒绝及终态工具门；[现有负例](../../models/common/tests/test_responses_tools.py)继续保留。候选是 code-mode exec → standard exec_command、准确旧结果与当前声明的组合拒绝，不是重写历史或触发上一个模型压缩；合成拒绝不证明 Desktop 同聊切换。 |
+| 补强目录/分页验证：[Chat On Steroids `772f670`](https://github.com/totec448-spec/chat-on-steroids/commit/772f670cbb672b15cde9375bbb291c0ca93c561c)、[WebCodex `f8ddfe8`](https://github.com/yyjeqhc/webcodex/commit/f8ddfe84f8a23c905937964b08661116d847d8a4)与 [a0cb170](https://github.com/yyjeqhc/webcodex/commit/a0cb170ea6ab48651e8a752938aa77e4d921c740) | 完整目录约束在各层一致，续页绑定同一资源/版本，准备 I/O 后再检查来源 | 本地 [IndexedWebRequest](../../scripts/operator_core/web_mcp_transport.py)从完整请求生成分页，使用固定请求快照及单次 key；[Web 启动](../../scripts/operator_web_startup.py)已有依赖 I/O 后复核。可补大目录与中途变化的组合场景；不照搬上游 64 工具上限、自动刷新或新 Skill store。 |
+| 待证实需求的诊断建议：[tunnel-client 固定源码](https://github.com/openai/tunnel-client/blob/0e4201e5e17dac104a091a16afc5609f6ef68420/pkg/mcpclient/protocol_observation.go) | 进程存活、启动就绪、同代次工具发现、完整连续分页与请求交付分别留证；只读 health 不发协议探测，旧 child/epoch 的观察必须失效 | 本地 [status / monitor](../../scripts/operator_core/web_openai_tunnel.py)已有 local_ready、poll_observed、准确子进程及固定诊断分类；不能把它们写成工具授权或执行成功。额外目录观察属于候选诊断需求，尚未获实施或升级授权；先验证代次过期、分页不完整和 status 零协议探测。v0.0.17 的发布不等于这些源码都在本周新增。 |
+| 官方兼容测试参考：[Codex `60adfa8`](https://github.com/openai/codex/commit/60adfa8513f77c27826f0c5b770e7a7d4eca538e) | 精确 `model_not_found` 终态在 HTTP、SSE 和 WebSocket 的分类及零重试测试 | 本地已有单次派发、错误/失败终态拒绝和原生透传，可把新原生错误形状加入下一次明确版本的兼容矩阵，不自行重分类原生失败。该提交在 10/23 的 main，晚于 0.164.0 正式发布；本机只读版本仍为 0.163.0-alpha.11.2，未据此认定已支持。 |
+
+另外两项可作为后续夹具来源：[Chat On Steroids `c31e892`](https://github.com/totec448-spec/chat-on-steroids/commit/c31e8923696c86ffb7b66316ea8cad2914f678c1)提示编辑器 style 展示节点可能污染原文判断；[CC Switch `2dfc848`](https://github.com/farion1231/cc-switch/commit/2dfc848f4d67cf6e2e8e0bad8b270f2a2531cf83)验证 Windows 监听 socket 不被子进程继承。前者不能授权清洗/重绑定用户原文，后者是 Rust/mio 的具体问题，不能推断 Python/aiohttp 有相同缺陷；本轮均没有确认对应本地故障。
+
+### 已有覆盖与不适用的更新
+
+- Codex++ [同名模型精确分组](https://github.com/BigPizzaV3/CodexPlusPlus/commit/83527acc6f6377f5a3c28c64c125ff68a7c3fa19)和 [rename 前 flush](https://github.com/BigPizzaV3/CodexPlusPlus/commit/a9e87e30e6795db5bf1e21893f962b9442f823af)的原则已覆盖；本地按准确注册/端点身份选路，同步写入已有 flush/fsync，不重复实现菜单注入或异步下载器。
+- codex-chatgpt-web 的[跨聊委托来源](https://github.com/miuuyy/codex-chatgpt-web/commit/c3f707179bdbcfb9987b9677d1eb8eeced3306d4)及[纯 agent 输入压缩](https://github.com/miuuyy/codex-chatgpt-web/commit/4ad190fefbe0dc3991d64d6dd76fefd703d33da6)可用于审查来源边界。本地显式 named-result codec 完整保留原对象、metadata 和 absent/null，不提取 XML 或推断真人意图；不移植角色提升、重建压缩或编排。这两项是 v6.1.13 之后的 main 源码。
+- Codex++ [缓冲输出后的自动重试](https://github.com/BigPizzaV3/CodexPlusPlus/commit/a966eff1c20896bd7c9bcd0df1f292cef862800b)、[按 Payload 启发式转换 encrypted_content](https://github.com/BigPizzaV3/CodexPlusPlus/commit/dbd6b30cf1174cd154ee47055ca738be9b6bd114)、[退出等待后强退并返回 0](https://github.com/BigPizzaV3/CodexPlusPlus/commit/64da04d60c3dc763bb576dea07a2a210e4b05e22)不适合本地零回放、准确身份和保留不确定失败的合同。缓冲不证明安全重试，强制退出不证明清理成功。
+- `ademisler/codex-desktop-custom-models` 的旧固定 SHA 当前不可读取，新仓库历史无法连续比较；其“恢复”是上游自述，不是本项目独立安全认证。`mingrath/chatgpt-sol-local-bridge` 当前公开入口不可访问，不能写成已删除或停更；旧来源、许可和已记录机制均保留，详见来源表。
+
+建议下一项先限定为真实跨进程发布竞争/中断验收，再做跨工具模式历史的组合负例。这些是待开展的验证范围，本次没有把任何候选写成已采用、已部署或当前 Desktop 验收通过。
 
 ## 2026-10-17 增量研究与采用范围
 

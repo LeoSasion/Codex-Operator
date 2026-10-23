@@ -1,5 +1,37 @@
 # 后台浏览器实现来源
 
+## 2026-10-23 全量来源复核
+
+从本仓库 52 份已跟踪 Markdown 的 GitHub 链接去重，除本项目自身外共 17 项外部来源。表中时间均为 UTC，固定链接保存查询时的默认分支提交；Release、main 源码、README 宣称及本机验收分别理解。`pushed_at` 不代替默认分支提交日期，旧固定点到当前的累计变化也不等于 10/17 以来新增。没有运行上游产品、复制代码、安装依赖或修改服务。
+
+| 来源 | 查询时固定提交 / 提交日期 UTC | 查询时最新正式 Release | 本次结论 / 当前许可 |
+| --- | --- | --- | --- |
+| Codex++ | [`35c6820`](https://github.com/BigPizzaV3/CodexPlusPlus/tree/35c682058ba82083c75aecd04529d08780e33918) / 10/23 08:12 | [v1.11.2](https://github.com/BigPizzaV3/CodexPlusPlus/releases/tag/v1.11.2)，10/23，tag commit 与本次 main 相同 | 相对 10/16 固定点新增 193 提交；主参考。AGPLv3。 |
+| Chat On Steroids | [`366404c`](https://github.com/totec448-spec/chat-on-steroids/tree/366404c1002038f055d61311f137d9701ff83b96) / 10/23 06:32 | [v2.1.45](https://github.com/totec448-spec/chat-on-steroids/releases/tag/v2.1.45)，10/22 | 相对旧点累计 630，10/17 UTC 起 602 提交；main 比该 Release 多 29。MIT。 |
+| CC Switch | [`d8983bb`](https://github.com/farion1231/cc-switch/tree/d8983bb10b82a1ccc15ae5f44ab070902623e990) / 10/23 12:13 | [v4.0.18](https://github.com/farion1231/cc-switch/releases/tag/v4.0.18)，10/21 | 10/17 UTC 起 178 提交；main 的 4.0.19 版本/说明提交不代表已发布。MIT。 |
+| codex-chatgpt-web | [`0901b9f`](https://github.com/miuuyy/codex-chatgpt-web/tree/0901b9fb1976b4a984c7e9b4082c2868767bbf7c) / 10/22 02:02 | [v6.1.13](https://github.com/miuuyy/codex-chatgpt-web/releases/tag/v6.1.13)，10/21 | 相对旧点累计 24，10/17 UTC 起 20 提交；main 比该 Release 多 12。MIT。 |
+| WebCodex | [`f2d610c`](https://github.com/yyjeqhc/webcodex/tree/f2d610c902d335b4cb71e03d10a63b2701a9e684) / 10/23 06:37 | [v0.4.6](https://github.com/yyjeqhc/webcodex/releases/tag/v0.4.6)，10/03 | 相对旧点累计 581，10/17 UTC 起 83 提交；本次分页/来源检查依据 main。Apache-2.0。 |
+| OpenAI tunnel-client | [`0e4201e`](https://github.com/openai/tunnel-client/tree/0e4201e5e17dac104a091a16afc5609f6ef68420) / 10/23 00:47 | [v0.0.17](https://github.com/openai/tunnel-client/releases/tag/v0.0.17)，10/21 | Release tag commit 为 `a248b7f725fc989c1eb26680cf4351ee33421f61`；main 在其后。部分观察机制源码早于 10/17。Apache-2.0。 |
+| 官方 Codex | [`b719a7f`](https://github.com/openai/codex/tree/b719a7fb7fe0c43a505f30a933b63d13e2a13e80) / 10/23 12:18 | [rust-v0.164.0](https://github.com/openai/codex/releases/tag/rust-v0.164.0)，10/23 | Release tag commit 为 `6aaac694803004a63c6f393d153c96d22521a6b9`；本机 CLI 只读观察为 0.163.0-alpha.11.2，不能继承新源码能力。Apache-2.0。 |
+| Lark CLI | [`017b19a`](https://github.com/larksuite/cli/tree/017b19a793ad71794a02887ede04757f3d82e10d) / 10/14 03:04 | [v1.0.98](https://github.com/larksuite/cli/releases/tag/v1.0.98)，10/13 | 相比旧文 1.0.96 有新发布，但 10/17 后默认分支未见新提交。DPoP、分发 manifest 与格式变化须分功能核验，不自动升级。MIT。 |
+| Better Codex App Custom Provider Support | [`4e19e47`](https://github.com/Keksuccino/Better-Codex-App-Custom-Provider-Support/tree/4e19e474330dc5266eb814e425410127aa7c1a4e) / 07/31 | 查询的公开 Release 列表为空 | 与旧固定点相同，没有新的 Windows/同聊菜单验收。Unlicense。 |
+| codex-desktop-custom-models | [`5b27b36`](https://github.com/ademisler/codex-desktop-custom-models/tree/5b27b3680446601099d5dd359e3c3a20008290ad) / 10/10 | 查询的公开 Release 列表为空 | 旧 SHA 不可读取，来源历史不连续；见下方，不计算旧到新增量。当前 MIT 不替代旧许可证据。 |
+| localmcp | [`e61f3b9`](https://github.com/daodao97/localmcp/tree/e61f3b9446fb0bba6de19ce0ac0cf48ece2f696d) / 09/20 | [v0.3.9](https://github.com/daodao97/localmcp/releases/tag/v0.3.9)，09/09 | 可访问，10/17 后默认分支未见新提交。MIT。 |
+| MCPX 候选仓库 | [`1b0ec44`](https://github.com/opentokenz/mcpx/tree/1b0ec4481f9e314b7e2e807b1d27accf61d2f48e) / 10/16 | [v0.9.19](https://github.com/opentokenz/mcpx/releases/tag/v0.9.19)，10/16 | 相对旧 v0.9.18 有 8 个累计提交，本周无默认分支新提交；历史截图身份仍未确认。Apache-2.0。 |
+| codex-chatgpt-bridge | [`c022afd`](https://github.com/Dalomeve/codex-chatgpt-bridge/tree/c022afddcc3dea588a14136df571263a2d36000f) / 06/27 | 查询的公开 Release 列表为空 | 与旧固定点相同，无期间默认分支新提交。MIT。 |
+| codexbridge | [`fbe4fc7`](https://github.com/naplesblue/codexbridge/tree/fbe4fc72c172155ad70757fd8826bd1501649ad9) / 06/23 | 查询的公开 Release 列表为空 | 与旧固定点相同，无期间默认分支新提交。MIT。 |
+| chatgpt-sol-local-bridge | [当前公开入口](https://github.com/mingrath/chatgpt-sol-local-bridge)与 API 均返回 404 | 当前未知 | 不可访问不等于停更或删除；历史固定点、MIT 记录及已采用机制保留，当前许可未验证。 |
+| codex-grok-bridge | [`5d6a289`](https://github.com/deximple/codex-grok-bridge/tree/5d6a289af4dac44776fb1f7cb14186c20c2d2064) / 10/06 | [v1.8.3](https://github.com/deximple/codex-grok-bridge/releases/tag/v1.8.3)，10/06 | 相对旧点累计 137 提交，本周无默认分支新提交；旧累计重试/改写历史不吸纳。MIT。 |
+| LM Studio bug tracker | [被引用的 issue #2012](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues/2012)仍 open，最后更新 06/13 | 问题追踪，不作实现或版本发布依据 | 无期间该 issue 新评论/状态更新；不能据 issue 或仓库 README 日期推断当前所有型号能力、LM Studio 停更或已修复。当前 API 未声明仓库许可，不推断代码复用权。 |
+
+本次最值得保留的是跨进程发布竞争与中断、跨工具模式历史负例、大目录/续页同源检查，以及按进程代次区分的被动状态证据。具体补丁、本地覆盖、候选范围和不适用行为统一记在[10/23 研究记录](../../../development/docs/codexplusplus-adoption.md)。尚未依据研究新增测试或实现，也没有新的运行时、服务或主窗口验收。
+
+源码与发布边界：Chat On Steroids 的 [Desktop bridge](https://github.com/totec448-spec/chat-on-steroids/blob/366404c1002038f055d61311f137d9701ff83b96/docs/codex-desktop-bridge.md)仍是 design draft / no production tool；不能当作已完成原生菜单或任务路由。codex-chatgpt-web 的跨聊来源/纯 agent 压缩修复在 v6.1.13 之后的 main；官方 Codex 的 `model_not_found` 终态分类也在 0.164.0 发布之后的 main。本项目不继承这些上游验收。
+
+来源连续性：`ademisler/codex-desktop-custom-models` 旧固定 `10a8954ea2d8fd57d6b8943dc3c035df2e18e1ab` 的 commit API 返回 422，compare 返回 404；当前仓库 ID 为 `1413140299`，建于 10/10。其[恢复文档](https://github.com/ademisler/codex-desktop-custom-models/blob/5b27b3680446601099d5dd359e3c3a20008290ad/docs/SECURITY_INCIDENT_RECOVERY_2026-10-10.md)自述重新建立历史并移除所称的恶意资源，这是上游自述，未经本项目独立安全认证。保留旧记录，不宣称连续升级、当前源码安全通过或已替换旧参考。
+
+Lark CLI [manifest 分发提交](https://github.com/larksuite/cli/commit/cff1bdadbf8c8ab6601330bfbfca8610f9292e84)把资源下载/校验与提交分开，保留安装锁、备份和失败回滚；可对照本地完整安装计划预检的方法，但不引入自动更新、鉴权迁移或 Skills 同步。该变更在 10/08，虽包含在较新 Release，本轮不把它称为本周新代码。
+
 ## 2026-10-17 增量对照与实际采用
 
 Codex++ 的本次固定点为 [`6105d57019083f8bbb2483399fa4bcdaadc92497`](https://github.com/BigPizzaV3/CodexPlusPlus/tree/6105d57019083f8bbb2483399fa4bcdaadc92497)（2026-10-16 15:22:02 UTC），相对下方首轮固定点新增 [273 个提交](https://github.com/BigPizzaV3/CodexPlusPlus/compare/f55bb64663ba5024ab434017bb6212a0fd9f4bb3...6105d57019083f8bbb2483399fa4bcdaadc92497)。查询时最新正式发布为 [v1.9.0](https://github.com/BigPizzaV3/CodexPlusPlus/releases/tag/v1.9.0)（2026-10-14 17:39:36 UTC）；[许可仍为 AGPLv3](https://github.com/BigPizzaV3/CodexPlusPlus/blob/6105d57019083f8bbb2483399fa4bcdaadc92497/LICENSE)。旧固定提交、许可和历次验证范围继续保留。
