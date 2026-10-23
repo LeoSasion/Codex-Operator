@@ -7,6 +7,37 @@ counts refer to their individual runs; the current source must be checked with
 the [test instructions](testing.md). A later source-only pass never changes an
 earlier live-task result or proves that installed services were updated.
 
+2026-10-23 reference-guided hardening (source alpha143, package unchanged):
+
+- Fixed-tunnel health observations are bound to the current interruption generation
+  and exact child. A response returning after a new disconnect, close, failure or
+  child exit cannot reopen admission or cancel the original recovery deadline.
+  Stale invalid observations cannot fail a newer generation; current invalid
+  observations retain their fixed terminal failure. Status uses one current
+  connected observation for local_ready while retaining historical poll_observed.
+- Independent-process transaction cases verify one publisher, retained uncertain
+  claims after abrupt exit at two publication stages, and preservation of outside
+  edits after restore preflight or temporary-file fsync. Existing transaction
+  implementation was retained. The initial venv-launcher PID fixture failures
+  remain separate from the corrected exact-process validation.
+- HTTP JSON, SSE and WebSocket integration cases verify that old code-mode history
+  cannot register current standard tools, mispaired results fail before dispatch,
+  and a valid first call followed by an invalid identity or failed terminal releases
+  no tools. Existing adapters, complete histories and zero retries are retained.
+- Current validation binds Windows package 26.1016.8622.0 and CLI
+  0.163.0-alpha.11.2. Reproductions, frozen full regression and protected-file
+  observations have separate private receipts. Only canonical source is changed;
+  installed outputs, actual model execution and Desktop acceptance remain separate.
+- Frozen regression covered all 101 Python modules: 1,897 tests, zero failures
+  or errors and four conditional skips (including subtests); all 157 Node tests
+  passed. Three skips required unavailable symlink privilege; the Bash fixture
+  was not selected. Frozen source and bound executable digests were unchanged.
+  Only native models_cache.json fetched_at changed among 55 protected objects;
+  model values and the other 54 objects were unchanged. The protection gate stays
+  failed, with no attributed writer or rollback. The installed alpha138 runtime's
+  63 files still match its own manifest. Result-only documentation updates after
+  this run receive a separate package audit, not a second full-regression claim.
+
 2026-10-17 reference-guided candidate (source alpha142, package unchanged):
 
 - Adapted SSE with a verified successful terminal and complete `[DONE]` no longer

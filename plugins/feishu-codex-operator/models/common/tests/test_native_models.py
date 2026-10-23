@@ -14,12 +14,73 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import tempfile
 from threading import Event
+import time
 import tomllib
 import unittest
 from unittest.mock import patch
 import operator_native_models as subject
+
+
+# Run the real transaction code in a fresh interpreter. Checkpoint injection
+# controls only scheduling or an abrupt fixture exit, never product decisions.
+TRANSACTION_CHILD = r'''
+import json
+import os
+from pathlib import Path
+import sys
+import time
+
+sys.path.insert(0, sys.argv[1])
+import operator_native_models as subject
+
+action, state, home, checkpoint, stage, outcome = sys.argv[2:]
+state, home, checkpoint = Path(state), Path(home), Path(checkpoint)
+replace = subject.replace_file
+fsync = subject.os.fsync
+active_kind = None
+
+def checkpoint_at(current):
+    if current != stage:
+        return
+    pending = checkpoint.with_suffix('.pending')
+    pending.write_text(json.dumps({'pid': os.getpid(), 'stage': current}), encoding='utf-8')
+    pending.replace(checkpoint)
+    if outcome == 'exit':
+        os._exit(77)
+    deadline = time.monotonic() + 30
+    while not checkpoint.with_suffix('.release').exists():
+        if time.monotonic() >= deadline:
+            raise RuntimeError('fixture checkpoint deadline')
+        time.sleep(0.01)
+
+def scheduled_replace(path, expected, replacement):
+    global active_kind
+    kind = ('catalog' if path == home / 'operator-native-fixture.catalog.json'
+        else 'profile' if path == home / 'operator-native-fixture.config.toml' else None)
+    if kind:
+        checkpoint_at('before_' + kind)
+    active_kind = kind
+    try:
+        result = replace(path, expected, replacement)
+    finally:
+        active_kind = None
+    if kind:
+        checkpoint_at('after_' + kind)
+    return result
+
+def scheduled_fsync(descriptor):
+    result = fsync(descriptor)
+    if active_kind:
+        checkpoint_at('synced_' + active_kind)
+    return result
+
+subject.replace_file = scheduled_replace
+subject.os.fsync = scheduled_fsync
+raise SystemExit(subject.main([action, '--state', str(state), '--home', str(home)]))
+'''
 
 
 def manifest():
@@ -51,6 +112,146 @@ class NativeModelsTests(unittest.TestCase):
 
     def target_lock_path(self):
         return self.home / '.operator-native-fixture.operation.lock'
+
+    def transaction_child(self, action, state=None, *, stage='', outcome='wait'):
+        checkpoint = self.root / ('checkpoint-' + str(time.monotonic_ns()))
+        # Windows venv executables can be redirectors with a different child PID.
+        # This stdlib-only fixture uses the running interpreter's explicit base
+        # executable so Popen owns the process that reaches the checkpoint.
+        executable = getattr(sys, '_base_executable', sys.executable)
+        process = subprocess.Popen([executable, '-X', 'utf8', '-E', '-s', '-B', '-c', TRANSACTION_CHILD,
+            str(ROOT / 'scripts'), action, str(state or self.state), str(self.home),
+            str(checkpoint), stage, outcome], cwd=self.root,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        def cleanup():
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=10)
+        self.addCleanup(cleanup)
+        self.assertNotEqual(process.pid, os.getpid())
+        return process, checkpoint
+
+    def wait_checkpoint(self, process, checkpoint, stage):
+        deadline = time.monotonic() + 10
+        while not checkpoint.exists():
+            if process.poll() is not None or time.monotonic() >= deadline:
+                self.fail('child exited or timed out before fixture checkpoint')
+            time.sleep(0.01)
+        saved = json.loads(checkpoint.read_text(encoding='utf-8'))
+        self.assertEqual(saved, {'pid': process.pid, 'stage': stage})
+
+    def finish_child(self, process, expected_code=0):
+        stdout, stderr = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, expected_code, (stdout, stderr))
+        self.assertEqual(stderr, b'')
+        return json.loads(stdout) if stdout else None
+
+    def test_independent_processes_allow_only_one_catalog_profile_publisher(self):
+        self.prepare()
+        other = self.root / 'registration-other'
+        subject.prepare(other, self.home, self.manifest)
+        original_config = self.config.read_bytes()
+        first, checkpoint = self.transaction_child('install', stage='before_catalog')
+        self.wait_checkpoint(first, checkpoint, 'before_catalog')
+        claim = self.target_lock_path().read_bytes()
+        second, _ = self.transaction_child('install', other)
+        self.assertNotEqual(first.pid, second.pid)
+        rejected = self.finish_child(second, 1)
+        self.assertEqual(rejected['code'], 'native_models_target_operation_in_progress')
+        self.assertEqual(self.target_lock_path().read_bytes(), claim)
+        self.assertFalse(self.profile.exists()); self.assertFalse(self.catalog.exists())
+        self.assertEqual(subject.decode((other / 'journal.json').read_bytes()), {'phase': 'prepared'})
+        checkpoint.with_suffix('.release').write_bytes(b'')
+        self.assertEqual(self.finish_child(first)['status'], 'installed')
+        self.assertEqual(self.profile.read_bytes(), (self.state / 'prepared.profile').read_bytes())
+        self.assertEqual(self.catalog.read_bytes(), (self.state / 'prepared.catalog').read_bytes())
+        self.assertFalse(self.target_lock_path().exists())
+        self.assertEqual(self.config.read_bytes(), original_config)
+        restored, _ = self.transaction_child('restore', other)
+        self.assertEqual(self.finish_child(restored, 1)['code'], 'native_models_target_changed')
+        self.assertEqual(subject.status(self.state, self.home)['status'], 'installed')
+
+    def assert_abrupt_publication_retains_claim(self, kind):
+        self.prepare()
+        other = self.root / 'registration-other'
+        subject.prepare(other, self.home, self.manifest)
+        original_config = self.config.read_bytes()
+        child, checkpoint = self.transaction_child('install', stage='after_' + kind, outcome='exit')
+        self.assertIsNone(self.finish_child(child, 77))
+        self.wait_checkpoint(child, checkpoint, 'after_' + kind)
+        self.assertEqual(subject.decode((self.state / 'journal.json').read_bytes()), {'phase': 'installing'})
+        self.assertEqual(self.catalog.read_bytes(), (self.state / 'prepared.catalog').read_bytes())
+        self.assertEqual(self.profile.exists(), kind == 'profile')
+        if kind == 'profile':
+            self.assertEqual(self.profile.read_bytes(), (self.state / 'prepared.profile').read_bytes())
+        retained = {path: path.read_bytes() for directory in (self.state, self.home)
+            for path in directory.iterdir() if path.is_file()}
+        self.assertIn(self.target_lock_path(), retained)
+        self.assertIn(self.state / 'operation.lock', retained)
+        for action, state, reason in (
+                ('install', self.state, 'operation_in_progress'),
+                ('restore', self.state, 'operation_in_progress'),
+                ('install', other, 'target_operation_in_progress'),
+                ('restore', other, 'target_operation_in_progress')):
+            with self.subTest(action=action, state=state.name):
+                contender, _ = self.transaction_child(action, state)
+                self.assertEqual(self.finish_child(contender, 1)['code'], 'native_models_' + reason)
+        self.assertEqual(subject.status(self.state, self.home)['status'], 'uncertain')
+        for path, raw in retained.items():
+            self.assertEqual(path.read_bytes(), raw)
+        self.assertEqual((self.state / 'original.profile').read_bytes(), b'')
+        self.assertEqual((self.state / 'original.catalog').read_bytes(), b'')
+        self.assertEqual(subject.decode((other / 'journal.json').read_bytes()), {'phase': 'prepared'})
+        self.assertEqual(self.config.read_bytes(), original_config)
+
+    def test_process_exit_after_catalog_keeps_partial_publication_terminal(self):
+        self.assert_abrupt_publication_retains_claim('catalog')
+
+    def test_process_exit_after_profile_does_not_claim_completed_install(self):
+        self.assert_abrupt_publication_retains_claim('profile')
+
+    def test_independent_restore_preserves_later_edit_and_retains_uncertainty(self):
+        self.prepare(); subject.install(self.state, self.home)
+        original_config, catalog = self.config.read_bytes(), self.catalog.read_bytes()
+        child, checkpoint = self.transaction_child('restore', stage='before_profile')
+        self.wait_checkpoint(child, checkpoint, 'before_profile')
+        claim = self.target_lock_path().read_bytes()
+        edited = self.profile.read_bytes() + b'# edit by another process after restore preflight\r\n'
+        self.profile.write_bytes(edited)
+        checkpoint.with_suffix('.release').write_bytes(b'')
+        self.assertEqual(self.finish_child(child, 1)['code'], 'native_models_target_changed')
+        self.assertEqual(self.profile.read_bytes(), edited)
+        self.assertEqual(self.catalog.read_bytes(), catalog)
+        self.assertEqual(self.config.read_bytes(), original_config)
+        self.assertEqual(self.target_lock_path().read_bytes(), claim)
+        self.assertEqual(subject.decode((self.state / 'journal.json').read_bytes()), {'phase': 'restoring'})
+        self.assertEqual(subject.status(self.state, self.home)['status'], 'uncertain')
+        retried, _ = self.transaction_child('restore')
+        self.assertEqual(self.finish_child(retried, 1)['code'], 'native_models_uncertain_transaction')
+        self.assertEqual(self.profile.read_bytes(), edited)
+        self.assertEqual(self.catalog.read_bytes(), catalog)
+        self.assertEqual(self.target_lock_path().read_bytes(), claim)
+
+    def test_independent_publication_rechecks_target_after_temporary_file_sync(self):
+        self.prepare()
+        original_config = self.config.read_bytes()
+        child, checkpoint = self.transaction_child('install', stage='synced_catalog')
+        self.wait_checkpoint(child, checkpoint, 'synced_catalog')
+        claim = self.target_lock_path().read_bytes()
+        self.assertFalse(self.catalog.exists()); self.assertFalse(self.profile.exists())
+        self.assertEqual(len(list(self.home.glob('.operator-native-*.pending'))), 1)
+        later = b'{"models":[],"owner":"independent later creation"}\r\n'
+        self.catalog.write_bytes(later)
+        checkpoint.with_suffix('.release').write_bytes(b'')
+        self.assertEqual(self.finish_child(child, 1)['code'], 'native_models_target_changed')
+        self.assertEqual(self.catalog.read_bytes(), later)
+        self.assertFalse(self.profile.exists())
+        self.assertEqual(list(self.home.glob('.operator-native-*.pending')), [])
+        self.assertEqual(self.target_lock_path().read_bytes(), claim)
+        self.assertEqual(subject.status(self.state, self.home)['status'], 'uncertain')
+        self.assertEqual((self.state / 'original.catalog').read_bytes(), b'')
+        self.assertEqual(self.config.read_bytes(), original_config)
 
     def test_local_preview_and_status_show_bound_identity_without_writing_targets(self):
         original_config = self.config.read_bytes()

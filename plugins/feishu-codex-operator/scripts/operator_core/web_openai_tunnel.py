@@ -121,6 +121,7 @@ class WebOpenAITunnel(WebMcpConnection):
         self.observed_at = 0
         self.last_poll = self.blocked_poll = 0
         self.start_time = 0
+        self._health_generation = 0
 
     def read_binding(self):
         if not self.binding_file.exists() and not self.binding_file.is_symlink():
@@ -140,8 +141,9 @@ class WebOpenAITunnel(WebMcpConnection):
             and self.child is not None and self.child.returncode is None)
 
     def status(self):
-        return {**super().status(), 'mode': 'openai_tunnel_v1',
-            'local_ready': self.observed_ready, 'poll_observed': self.last_poll > 0,
+        current = super().status()
+        return {**current, 'mode': 'openai_tunnel_v1',
+            'local_ready': current['connected'], 'poll_observed': self.last_poll > 0,
             'binding_persistent': self.connector is not None}
 
     def setup(self):
@@ -179,6 +181,7 @@ class WebOpenAITunnel(WebMcpConnection):
         if self.request_active():
             self.fail('web_fixed_tunnel_active_disconnect_no_retry')
             return False
+        self._health_generation += 1
         self.observed_ready = False
         self.blocked_poll = max(self.blocked_poll, self.last_poll)
         if not self.reconnecting:
@@ -222,25 +225,42 @@ class WebOpenAITunnel(WebMcpConnection):
         try:
             async with ClientSession(timeout=ClientTimeout(total=2), trust_env=False) as client:
                 while not self.closed and not self.failed.is_set():
+                    generation, child = self._health_generation, self.child
                     if self.health_url is None and self.health_file.exists():
                         value = regular_bytes(self.health_file, 128).decode('ascii').strip()
                         require(re.fullmatch(r'http://127\.0\.0\.1:[1-9][0-9]{0,4}', value),
                             'web_fixed_tunnel_health_url_invalid')
                         self.health_url = value
-                    good = False
+                    sample = None
+                    sample_error = None
                     if self.health_url is not None:
                         try:
                             status, body = await self.local_get(client, '/readyz', 4096)
                             metric_status, metrics = await self.local_get(client, '/metrics', 262144)
-                            stamp = poll_timestamp(metrics) if metric_status == 200 else 0
-                            now = time.time()
-                            good = (status == 200 and body == b'ready' and stamp > self.blocked_poll
-                                and max(self.start_time - 1, now - POLL_FRESH_SECONDS) <= stamp <= now + 2)
-                            if good:
-                                self.last_poll = stamp
+                            sample = status, body, metric_status, metrics
                         except (OSError, ClientError, asyncio.TimeoutError):
-                            good = False
+                            pass
+                        except ValueError as error:
+                            sample_error = error
+                    if self.closed or self.failed.is_set() or child is None or child.returncode is not None:
+                        return
+                    # A poll failure can arrive while these local reads await I/O.
+                    # Only a whole observation begun after that interruption may
+                    # reopen admission or cancel its original recovery deadline.
+                    if generation != self._health_generation or child is not self.child:
+                        await asyncio.sleep(HEALTH_INTERVAL)
+                        continue
+                    if sample_error is not None:
+                        raise sample_error
+                    good = False
+                    if sample is not None:
+                        status, body, metric_status, metrics = sample
+                        stamp = poll_timestamp(metrics) if metric_status == 200 else 0
+                        now = time.time()
+                        good = (status == 200 and body == b'ready' and stamp > self.blocked_poll
+                            and max(self.start_time - 1, now - POLL_FRESH_SECONDS) <= stamp <= now + 2)
                     if good:
+                        self.last_poll = stamp
                         self.observed_ready = True
                         self.observed_at = time.monotonic()
                         if self.reconnecting:

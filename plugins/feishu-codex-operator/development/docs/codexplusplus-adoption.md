@@ -8,6 +8,29 @@
 
 该提交的 [LICENSE](https://github.com/BigPizzaV3/CodexPlusPlus/blob/f55bb64663ba5024ab434017bb6212a0fd9f4bb3/LICENSE) 为 AGPLv3。本轮采用设计和验证方法，修改由本项目独立编写，没有复制上游代码、测试代码或引入其运行依赖。未来代码复用须另行记录实际片段及适用许可；本次记录不是代码移植许可。
 
+## 2026-10-23 授权后的实际采用
+
+所有者随后要求将有价值的逻辑用于优化项目。本次只修复已复现的隧道观察竞态，并将配置事务及工具历史的验证缺口补成隔离回归；下方同日研究阶段的候选和旧结论仍保留。沿用固定来源，只学习方法，由本项目独立编写，没有复制上游代码或新增运行依赖。
+
+### 隧道观察先核对生命周期，再影响接纳
+
+参考 [tunnel-client 的观察代次边界](https://github.com/openai/tunnel-client/blob/0e4201e5e17dac104a091a16afc5609f6ef68420/pkg/mcpclient/protocol_observation.go)，在 [WebOpenAITunnel.monitor](../../scripts/operator_core/web_openai_tunnel.py) 复现了具体缺陷：健康读取等待期间发生空闲断线，晚到的旧样本仍能重新开放接纳、增加恢复计数并取消原计时器；关闭或观察过期后，状态出口也可能保留旧的 `local_ready=true`。
+
+现在每次空闲中断都使在途健康观察失效。读取后先核对中断代次、准确 child 和终态，再处理成功或验证异常；旧观察既不能恢复连接，也不能用超界响应或异常指标终止新代次。当前代次的非法样本仍固定失败；下一个完整有效观察才可沿原合同恢复。`local_ready` 与同次状态中的当前 `connected` 一致，`poll_observed` 继续表示历史成功轮询事实。原恢复 deadline、一次启动、主动请求断线终态及无重放边界不变，没有新增探测或自动重启。
+
+[隧道回归](../../models/web/tests/test_web_openai_tunnel.py)控制真实异步交错，检查重复中断、关闭/失败/子进程退出、旧异常与当前异常的区别，以及只读状态不触发探测。独立审查另发现 `local_get` 的超界异常也必须经过同一代次检查，已纳入修复，不能仅把指标解析移到检查之后。
+
+### 两个已成立的保护，补成完整行为证据
+
+- [配置事务回归](../../models/common/tests/test_native_models.py)吸纳 [Codex++ `23596ed`](https://github.com/BigPizzaV3/CodexPlusPlus/commit/23596ed9151a0a37ee258a90e24309c10128eca4) 的独立进程竞争验证方法。两个实际解释器竞争同一目标，仅一个可发布；在 catalog 或 profile 发布后直接退出，仍保留原件、两层 claim 与不确定 journal，不能自动接管。恢复预检后出现的新编辑，以及临时文件 fsync 后新建的目标，均不能被覆盖。未发现需要修改现有 `target_lock` / `replace_file` 的缺陷。进程退出夹具不是断电耐久性证明。
+- [工具路由回归](../../models/common/tests/test_responses_router.py)吸纳 [CC Switch `91fc2fc`](https://github.com/farion1231/cc-switch/commit/91fc2fcbf7debb7227222b9b18fb41e4745c690a) 与 [Codex++ `845a288`](https://github.com/BigPizzaV3/CodexPlusPlus/commit/845a2882252ad36facb09f4aa6449e56fa440b14) 的跨模式、晚失败组合验证。先通过实际 loopback 获得准确旧调用，再跨 JSON/SSE/WebSocket 验证：切到仅声明 `exec_command` 的 standard 模式后，旧 `exec` 历史不能把 `exec` 重新登记为当前工具；错误结果身份在派发前拒绝；合法首调用之后出现错类型、namespace、旧 call_id 或失败终态时无工具交付且仅一次派发。完整历史、文本分段及元数据保留；无需修改现有转换器，也不引入压缩、角色提升或历史改写。
+
+新事务夹具最初误把 Windows venv 重定向启动器的 PID 当成实际解释器 PID；失败记录保留。夹具改用当前已绑定环境的 base interpreter，并检查实际 `os.getpid()`，确保退出与清理控制准确进程。原失败不是生产事务失败，后续通过也不改判原测试运行。
+
+源码版本为 `4.2.0-alpha.143`，插件包版本未变。定向复现、冻结回归、保护文件观察分别留私有回执，范围见[发布验收记录](release-audit.md)。这些是源码与隔离测试证据，没有部署已装 runtime、升级 tunnel-client、发送真实模型请求或补成 Desktop 实机验收。
+
+完整冻结回归覆盖 101 个 Python 模块，共 1,897 项、零失败/错误、4 项条件跳过（含子场景）；157 项 Node 全部通过。三个跳过来自符号链接权限，一个是本轮未选定的 Bash 夹具。源码和绑定解释器/CLI 摘要未变。55 个保护对象仅原生模型缓存 `fetched_at` 变化，模型数据及其余 54 个对象未变；保护门仍记失败，写入者未确认且未回滚。运行后只补充本段验证结果和表述，另行通过发布审计，不把文档补充说成重新跑了一次完整回归。
+
 ## 2026-10-23 再次研究：候选与已有覆盖
 
 本轮从 52 份已跟踪 Markdown 梳理出 17 项外部仓库/问题来源，核对默认分支、正式发布、固定源码与既有本地实现。完整状态、许可和不可访问项见[来源复核表](../../models/web/docs/web-background-sources.md)。下述判断来自实际阅读的补丁和本地代码，不是上游功能或本机实测通过声明。本轮只更新研究记录，没有新增实现、测试、skill、运行依赖或界面，也没有运行上游产品、升级服务或发送模型请求。
