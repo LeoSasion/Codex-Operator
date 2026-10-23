@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "release_name": "feishu-codex-operator-plugin",
-  "source_version": "4.2.0-alpha.142",
+  "source_version": "4.2.0-alpha.143",
   "reviewed_document_sha256": {
     "README.md": "60c5aa480418b6cf28839d97bcfaf236343f4810c0c3ecdd2eeb8093be2f22a6",
     "models/web/docs/native-web-experience.md": "36657666df4fadae627861eb52c3f7263986df23a0b08ab518f7778143b9f77e",
     "models/web/docs/chatgpt-web-integration.md": "8c4dbb5b52d65436d38d253c2fba2b67a70c0d420fb3788723920d5b9902d3df",
-    "development/docs/release-audit.md": "1c6c0ddf01a88378896d9505744ef8aaa0c8f137b54ade7f13752a368c2cf8df",
-    "development/docs/testing.md": "10007bfdec6c784ed8caae63f9a143c84a7bcec4bdbec35e1f07f93e74ef8b35"
+    "development/docs/release-audit.md": "fd804fb1849664f6818fa84bb0a1864672227a3bde4a5b806dfc4bc677c3599e",
+    "development/docs/testing.md": "b8b86011a8ddeb2f17de3566b4eb0189aa11c4297384f8139b9534f8f516cd69"
   },
   "repository_files": [
     ".agents/plugins/marketplace.json",

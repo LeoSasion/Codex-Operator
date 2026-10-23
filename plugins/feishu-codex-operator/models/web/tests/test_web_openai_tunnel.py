@@ -18,8 +18,9 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from aiohttp import ClientSession
 
@@ -322,6 +323,193 @@ class FixedTunnelTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 403)
         self.assertEqual(self.endpoint.requests, 0)
         await connection.close()
+
+
+class FixedTunnelObservationTests(unittest.IsolatedAsyncioTestCase):
+    """Control health-response timing without starting a child or opening a socket."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='fixed-observation-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.count = 0
+
+    def connection(self):
+        self.count += 1
+        profile = self.root / ('profile-' + str(self.count))
+        settings = save_profile(profile, Path(sys.executable), 'tunnel_' + 'a' * 32, 'sk-' + 'x' * 24)
+        state = self.root / ('state-' + str(self.count))
+        state.mkdir()
+        connection = WebOpenAITunnel(settings, WebMcpEndpoint(), state)
+        child = Mock(returncode=None)
+        child.terminate.side_effect = lambda: setattr(child, 'returncode', -15)
+        child.wait = AsyncMock(return_value=0)
+        connection.child = child
+        connection.health_url = 'http://127.0.0.1:12345'
+        connection.start_time = time.time() - 20
+        connection.last_poll = int(time.time()) - 2
+        connection.observed_ready = True
+        connection.observed_at = time.monotonic()
+        self.addAsyncCleanup(connection.close)
+        return connection
+
+    async def sample(self, connection, during_read=None, metrics=None):
+        entered, release, inspected = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        stamp = connection.last_poll + 1
+        calls = []
+        read_health = connection.local_get
+
+        async def local_get(client, path, bound):
+            calls.append((path, bound))
+            if path == '/readyz':
+                return 200, b'ready'
+            self.assertEqual(path, '/metrics')
+            raw = metrics if metrics is not None else (
+                'commands_poll_last_successful_timestamp_seconds ' + str(stamp) + '\n').encode()
+            entered.set()
+            await release.wait()
+            # Exercise the actual bounded read validator with a passive response.
+            response = Mock(status=200)
+            response.content.read = AsyncMock(return_value=raw)
+            request = AsyncMock()
+            request.__aenter__.return_value = response
+            passive_client = Mock()
+            passive_client.get.return_value = request
+            return await read_health(passive_client, path, bound)
+
+        async def checkpoint(_):
+            inspected.set()
+            await asyncio.Future()
+
+        with patch.object(connection, 'local_get', local_get), \
+                patch('operator_core.web_openai_tunnel.asyncio.sleep', checkpoint):
+            task = asyncio.create_task(connection.monitor())
+            completed = asyncio.create_task(inspected.wait())
+            try:
+                await asyncio.wait_for(entered.wait(), 2)
+                if during_read is not None:
+                    await during_read()
+                release.set()
+                done, _ = await asyncio.wait((task, completed), timeout=2,
+                    return_when=asyncio.FIRST_COMPLETED)
+                self.assertTrue(done, 'health sample did not finish')
+                if task in done:
+                    task.result()
+            finally:
+                task.cancel()
+                completed.cancel()
+                await asyncio.gather(task, completed, return_exceptions=True)
+        self.assertEqual(calls, [('/readyz', 4096), ('/metrics', 262144)])
+        self.assertEqual(connection.endpoint.requests, 0)
+
+    async def test_interrupted_sample_cannot_resume_admission_until_fresh_observation(self):
+        for already_reconnecting in (False, True):
+            with self.subTest(already_reconnecting=already_reconnecting):
+                connection = self.connection()
+                child = connection.child
+                previous = connection.last_poll
+                if already_reconnecting:
+                    connection.pause_idle_connection()
+                timers = []
+
+                async def interrupt():
+                    self.assertTrue(connection.pause_idle_connection())
+                    timers.append(connection._reconnect_timer)
+
+                await self.sample(connection, interrupt)
+                self.assertFalse(connection.connected)
+                self.assertFalse(connection.observed_ready)
+                self.assertTrue(connection.reconnecting)
+                self.assertFalse(connection.announced.is_set())
+                self.assertEqual(connection.recoveries, 0)
+                self.assertEqual(connection.last_poll, previous)
+                self.assertIs(connection._reconnect_timer, timers[0])
+                self.assertFalse(timers[0].cancelled())
+                await self.sample(connection)
+                self.assertTrue(connection.connected)
+                self.assertFalse(connection.reconnecting)
+                self.assertEqual(connection.recoveries, 1)
+                self.assertIs(connection.child, child)
+                self.assertTrue(timers[0].cancelled())
+                child.terminate.assert_not_called()
+
+    async def test_stale_invalid_sample_cannot_fail_a_new_observation_generation(self):
+        for invalid in (b'commands_poll_last_successful_timestamp_seconds 1e999\n',
+                        b'x' * (262144 + 1)):
+            with self.subTest(oversized=len(invalid) > 262144):
+                connection = self.connection()
+                previous = connection.last_poll
+
+                async def interrupt():
+                    connection.pause_idle_connection()
+
+                await self.sample(connection, interrupt, metrics=invalid)
+                self.assertFalse(connection.failed.is_set())
+                self.assertFalse(connection.connected)
+                self.assertTrue(connection.reconnecting)
+                self.assertEqual(connection.last_poll, previous)
+                connection.child.terminate.assert_not_called()
+                await self.sample(connection, metrics=invalid)
+                self.assertEqual(connection.failure, 'web_fixed_tunnel_health_rejected_no_retry')
+                self.assertFalse(connection.connected)
+                connection.child.terminate.assert_called_once()
+
+    async def test_terminal_state_during_health_read_cannot_publish_readiness(self):
+        for change in ('failure', 'closed', 'child_exit'):
+            with self.subTest(change=change):
+                connection = self.connection()
+                connection.observed_ready = False
+                previous = connection.last_poll
+
+                async def terminate():
+                    if change == 'failure':
+                        connection.fail('web_fixed_tunnel_authorization_required')
+                    elif change == 'closed':
+                        await connection.close()
+                    else:
+                        connection.child.returncode = 3
+
+                await self.sample(connection, terminate)
+                self.assertFalse(connection.connected)
+                self.assertFalse(connection.observed_ready)
+                self.assertEqual(connection.last_poll, previous)
+                self.assertEqual(connection.recoveries, 0)
+                if change == 'failure':
+                    self.assertEqual(connection.failure, 'web_fixed_tunnel_authorization_required')
+                else:
+                    self.assertFalse(connection.announced.is_set())
+
+    async def test_status_expires_readiness_without_erasing_saved_poll_or_probing(self):
+        for change in ('expired', 'failure', 'closed', 'child_exit'):
+            with self.subTest(change=change):
+                connection = self.connection()
+                if change == 'expired':
+                    connection.observed_at -= 60
+                elif change == 'failure':
+                    connection.fail('web_fixed_tunnel_authorization_required')
+                elif change == 'closed':
+                    await connection.close()
+                else:
+                    connection.child.returncode = 3
+                with patch.object(connection, 'local_get') as get, \
+                        patch('operator_core.web_openai_tunnel.ClientSession') as client:
+                    status = connection.status()
+                    self.assertEqual(status, connection.status())
+                    self.assertFalse(status['connected'])
+                    self.assertFalse(status['local_ready'])
+                    self.assertTrue(status['poll_observed'])
+                    self.assertEqual(connection.endpoint.requests, 0)
+                    get.assert_not_called()
+                    client.assert_not_called()
+
+    async def test_status_uses_one_readiness_result_at_freshness_boundary(self):
+        connection = self.connection()
+        fresh = connection.observed_at
+        with patch('operator_core.web_openai_tunnel.time.monotonic',
+                side_effect=[fresh, fresh, fresh, fresh + 60]):
+            status = connection.status()
+        self.assertTrue(status['connected'])
+        self.assertEqual(status['local_ready'], status['connected'])
 
 
 class FixedSetupTests(unittest.TestCase):

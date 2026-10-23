@@ -41,6 +41,7 @@ class AdaptedRouterTests(unittest.IsolatedAsyncioTestCase):
         self.received, self.mode = [], "normal"
         self.scripted_items = None
         self.reasoning_tail = None
+        self.tool_tail = None
         self.cancelled, self.waiting = asyncio.Event(), asyncio.Event()
         self.release_done = asyncio.Event()
         self.error_body = b'{"error":{"message":"synthetic failure"}}'
@@ -62,6 +63,11 @@ class AdaptedRouterTests(unittest.IsolatedAsyncioTestCase):
             if self.mode == "bad_arguments":
                 item["arguments"] = '{"input":null}'
             result = response(*([] if self.mode == "missing_required" else [item]))
+            if self.tool_tail is not None:
+                result["output"].append(deepcopy(self.tool_tail))
+            if self.mode == "late_failed":
+                result.update(status="failed", error={"code": "model_not_found",
+                    "message": "Synthetic late terminal failure."})
             if self.mode == "input_part_tail":
                 result["output"].append({"id": "msg_invalid", "type": "message", "role": "assistant",
                     "status": "completed", "content": [{"type": "input_text", "text": "synthetic input-only part"}]})
@@ -87,7 +93,10 @@ class AdaptedRouterTests(unittest.IsolatedAsyncioTestCase):
                                     headers={"ETag": '"upstream-bytes"', "Content-MD5": "old",
                                              "X-Fixture": "retained"})
             events = (text_events(item["content"][0]["text"], part_type=item["content"][0]["type"])
-                      if item["type"] in {"message", "reasoning"} else events_for(item))
+                      if item["type"] in {"message", "reasoning"} else events_for(
+                          item, *([] if self.tool_tail is None else [self.tool_tail])))
+            if self.mode == "late_failed":
+                events[-1] = {"type": "response.failed", "response": result}
             if self.reasoning_tail is not None:
                 tail = deepcopy(self.reasoning_tail)
                 added = {**tail, "status": "in_progress", "summary": []}
@@ -698,6 +707,170 @@ class AdaptedRouterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((forwarded["tools"], forwarded["tool_choice"]), ([], "none"))
             self.assertEqual(forwarded["input"][0], history[0])
             self.assertEqual(json.loads(forwarded["input"][1]["output"]), history[1]["output"])
+
+    async def test_code_mode_history_cannot_register_tools_after_standard_mode_switch(self):
+        caps = {**CAPABILITIES, "custom_tools": {"exec": "wrap", "functions.exec": "wrap"}}
+        route = self.router.registry.routes[ROUTE["slug"]]
+        self.router.registry.routes[ROUTE["slug"]] = replace(route,
+            responses=ResponsesCapabilities.parse(caps))
+        old_body = {**self.payload, "tools": [
+            {"type": "namespace", "name": "functions", "tools": [EXEC]}]}
+        _, old_context = prepare(old_body, **caps)
+        old_raw = {"type": "function_call", "id": "fc_old_exec", "call_id": "old_exec_call",
+            "name": old_context.specs[("custom", "functions", "exec")].upstream_name,
+            "arguments": dumps({"input": CODE}), "status": "completed"}
+        self.scripted_items = [old_raw]
+        initial = await self.client.post(self.endpoint, json=old_body)
+        self.assertEqual(initial.status, 200)
+        old_call = (await initial.json())["output"][0]
+        self.assertEqual(old_call, {"type": "custom_tool_call", "id": "fc_old_exec",
+            "call_id": "old_exec_call", "namespace": "functions", "name": "exec",
+            "input": CODE, "status": "completed"})
+        parts = [{"type": "input_text", "text": "  synthetic first\r\n", "keep": None},
+                 {"type": "input_text", "text": "second\\part 😀"}]
+        old_output = {"type": "custom_tool_call_output", "call_id": "old_exec_call",
+            "namespace": "functions", "name": "exec", "output": parts}
+        standard = {"type": "function", "name": "exec_command",
+            "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}}
+        caps.update(codex_tool_mode="standard", text_tool_outputs="json_string",
+                    history_custom_tools={"functions.exec": "codex_exec_v1"})
+        self.router.registry.routes[ROUTE["slug"]] = replace(route,
+            responses=ResponsesCapabilities.parse(caps))
+        cases = [
+            ([standard], "functions", "history_registered_custom_not_advertised"),
+            ([{**standard, "name": "exec"}], "functions", "history_tool_kind_mismatch"),
+            ([EXEC], "other", "history_tool_namespace_mismatch"),
+        ]
+        # This extra registration cannot override an exact namespace mismatch.
+        caps["custom_tools"]["other.exec"] = "wrap"
+        self.router.registry.routes[ROUTE["slug"]] = replace(route,
+            responses=ResponsesCapabilities.parse(caps))
+        for tools, namespace, code in cases:
+            for transport in ("json", "sse", "ws"):
+                with self.subTest(namespace=namespace, name=tools[0]["name"], transport=transport):
+                    body = {**self.payload, "tools": [
+                        {"type": "namespace", "name": namespace, "tools": tools}],
+                        "input": [old_call, old_output]}
+                    original = deepcopy(body)
+                    before = len(self.received)
+                    if transport == "ws":
+                        ws = await self.client.ws_connect(self.endpoint)
+                        await ws.send_json({**body, "type": "response.create"})
+                        self.assertEqual((await ws.receive(timeout=2)).type, aiohttp.WSMsgType.CLOSE)
+                        await ws.close()
+                    else:
+                        reply = await self.client.post(self.endpoint,
+                            json={**body, "stream": transport == "sse"})
+                        self.assertEqual(reply.status, 400)
+                        error = await reply.json()
+                        self.assertEqual(error["error"]["message"], "undeclared_tool_call")
+                        self.assertEqual(error["error"]["code"], code)
+                        self.assertNotIn(CODE, dumps(error))
+                    self.assertEqual(body, original)
+                    self.assertEqual(len(self.received), before)
+        self.assertEqual(len(self.received), 1)
+        self.assertEqual(self.scripted_items, [])
+
+    async def test_standard_history_and_late_terminal_identity_failures_release_no_tools(self):
+        standard = {"type": "function", "name": "exec_command",
+            "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}}
+        caps = {**CAPABILITIES, "codex_tool_mode": "standard", "custom_tools": {},
+                "text_tool_outputs": "json_string"}
+        route = self.router.registry.routes[ROUTE["slug"]]
+        self.router.registry.routes[ROUTE["slug"]] = replace(route,
+            responses=ResponsesCapabilities.parse(caps))
+        body = {**self.payload, "tools": [
+            {"type": "namespace", "name": "functions", "tools": [standard]}]}
+        _, context = prepare(body, **caps)
+        alias = context.specs[("function", "functions", "exec_command")].upstream_name
+        arguments = '{ "cmd": "synthetic\\n中文😀", "keep": [null, false] }'
+        first_raw = {"type": "function_call", "id": "fc_standard_past", "call_id": "standard_past",
+            "name": alias, "arguments": arguments, "status": "completed"}
+        self.scripted_items = [first_raw]
+        initial = await self.client.post(self.endpoint, json=body)
+        self.assertEqual(initial.status, 200)
+        past = (await initial.json())["output"][0]
+        self.assertEqual(past, {**first_raw, "name": "exec_command", "namespace": "functions"})
+        result = {"type": "function_call_output", "call_id": "standard_past", "name": "exec_command",
+            "namespace": "functions", "output": [
+                {"type": "input_text", "text": "  first\r\n", "metadata": [None, False]},
+                {"type": "input_text", "text": "second\\part😀"}]}
+        body["input"] = [past, result]
+        original = deepcopy(body)
+        # Wrong result identities must fail before another upstream request.
+        for wrong in ({"name": "exec"}, {"namespace": "other"}, {"type": "custom_tool_call_output"}):
+            for transport in ("json", "sse", "ws"):
+                with self.subTest(result_identity=wrong, transport=transport):
+                    rejected = {**body, "input": [past, {**result, **wrong}]}
+                    before = len(self.received)
+                    if transport == "ws":
+                        ws = await self.client.ws_connect(self.endpoint)
+                        await ws.send_json({**rejected, "type": "response.create"})
+                        self.assertEqual((await ws.receive(timeout=2)).type, aiohttp.WSMsgType.CLOSE)
+                        await ws.close()
+                    else:
+                        reply = await self.client.post(self.endpoint,
+                            json={**rejected, "stream": transport == "sse"})
+                        self.assertEqual(reply.status, 400)
+                    self.assertEqual(len(self.received), before)
+        fresh = {**first_raw, "id": "fc_standard_new", "call_id": "standard_new"}
+        _, old_context = prepare({"tools": [
+            {"type": "namespace", "name": "functions", "tools": [EXEC]}]},
+            custom_tools={"exec": "wrap", "functions.exec": "wrap"})
+        old_alias = old_context.specs[("custom", "functions", "exec")].upstream_name
+        tail = {**fresh, "id": "fc_tail", "call_id": "tail_call"}
+        failures = [
+            ("old_exec_alias", {**tail, "name": old_alias, "arguments": dumps({"input": CODE})},
+             "unknown_or_mismatched_upstream_tool"),
+            ("wrong_kind", {key: value for key, value in
+                {**tail, "type": "custom_tool_call", "input": CODE}.items() if key != "arguments"},
+             "unknown_or_mismatched_upstream_tool"),
+            ("unexpected_namespace", {**tail, "namespace": "functions"}, "unsupported_upstream_output_item"),
+            ("reused_history_call", {**tail, "call_id": "standard_past"}, "duplicate_output_call_id"),
+            ("late_failed", None, "unsuccessful_or_invalid_response"),
+        ]
+        for transport in ("json", "sse", "ws"):
+            for failure, invalid_tail, reason in failures:
+                with self.subTest(transport=transport, failure=failure):
+                    self.mode = "late_failed" if failure == "late_failed" else "normal"
+                    self.tool_tail = invalid_tail
+                    self.scripted_items = [fresh]
+                    before = len(self.received)
+                    received = bytearray()
+                    if transport == "ws":
+                        ws = await self.client.ws_connect(self.endpoint)
+                        await ws.send_json({**body, "type": "response.create"})
+                        while True:
+                            message = await ws.receive(timeout=2)
+                            if message.type == aiohttp.WSMsgType.TEXT:
+                                received.extend(message.data.encode())
+                            else:
+                                self.assertEqual(message.type, aiohttp.WSMsgType.CLOSE)
+                                break
+                        await ws.close()
+                    else:
+                        reply = await self.client.post(self.endpoint,
+                            json={**body, "stream": transport == "sse"})
+                        if transport == "json":
+                            self.assertEqual(reply.status, 502)
+                        try:
+                            async for chunk in reply.content.iter_any():
+                                received.extend(chunk)
+                        except aiohttp.ClientPayloadError:
+                            self.assertEqual(transport, "sse")
+                    self.assertEqual(len(self.received), before + 1)
+                    self.assertEqual(self.router.last_failure["protocol_reason"],
+                        "upstream_unsuccessful_terminal" if failure == "late_failed" and transport != "json" else reason)
+                    self.assertEqual(self.scripted_items, [])
+                    sent = self.received[-1][0]
+                    self.assertEqual(sent["input"][0], first_raw)
+                    self.assertEqual(json.loads(sent["input"][1]["output"]), result["output"])
+                    self.assertEqual(sent["input"][1]["name"], alias)
+                    self.assertNotIn(b"function_call", received)
+                    self.assertNotIn(b"custom_tool_call", received)
+                    self.assertNotIn(b"response.completed", received)
+                    self.assertNotIn(CODE.encode(), received)
+                    self.assertEqual(body, original)
 
     async def test_http_sse_and_websocket_restore_same_events(self):
         result = await self.client.post(self.endpoint, json={**self.payload, "stream": True})
