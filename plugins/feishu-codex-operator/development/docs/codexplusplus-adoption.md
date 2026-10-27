@@ -1,12 +1,28 @@
 # Codex++ 方案吸纳记录
 
-更新：2026-10-23。研究只针对 Codex-Operator 现有功能的必要缺口，保留官方直连与拓展实例隔离、Desktop 任务所有权、完整历史、准确工具身份、零回放和恢复原件。新增功能或界面先与所有者商量；研究不扩大安装、发布或实机操作授权。2026-10-05 首轮及 2026-10-17 的固定来源与验收记录继续保留。
+更新：2026-10-28。研究只针对 Codex-Operator 现有功能的必要缺口，保留官方直连与拓展实例隔离、Desktop 任务所有权、完整历史、准确工具身份、零回放和恢复原件。新增功能或界面先与所有者商量；研究不扩大安装、发布或实机操作授权。2026-10-05 首轮及 2026-10-17 的固定来源与验收记录继续保留。
 
 ## 来源与采用方式
 
 准确项目为 [BigPizzaV3/CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus/tree/f55bb64663ba5024ab434017bb6212a0fd9f4bb3)，首轮固定提交 `f55bb64663ba5024ab434017bb6212a0fd9f4bb3`，提交日期 2026-10-03；不能用变化中的 main 替代这些依据。
 
 该提交的 [LICENSE](https://github.com/BigPizzaV3/CodexPlusPlus/blob/f55bb64663ba5024ab434017bb6212a0fd9f4bb3/LICENSE) 为 AGPLv3。本轮采用设计和验证方法，修改由本项目独立编写，没有复制上游代码、测试代码或引入其运行依赖。未来代码复用须另行记录实际片段及适用许可；本次记录不是代码移植许可。
+
+## 2026-10-28 授权后的分层诊断与取消验收
+
+所有者要求先补 Web 分层诊断和等待期限验证，再验收新版 Codex 取消，发现问题即修复并写回现有开发文档。本次 alpha144 修复已复现的诊断与隔离评估缺口；工具等待和原生取消实现经验证后保持，没有新增界面、依赖、固定生产等待上限或自动恢复。
+
+- 借鉴 [codex-chatgpt-web `a738f04`](https://github.com/miuuyy/codex-chatgpt-web/commit/a738f0485c6a8dcfd948d57ba94830d1540fe4e6) 分开本地代理与目录健康的检查方法，独立实现固定隧道 readyz/poll 保存观察和 manager 分层输出。初轮三项回归先复现缺少分层健康字段及 bound stopped 丢失诊断；旧实机失败回执和原 error_result 另确认未绑定终态也不保留失败阶段，随后补其边界回归。现在只保留固定枚举、布尔和有界计数，陈旧代次不能影响接纳，目录仍明确未观察。未绑定终态仍抛出原 uncertain-launch 错误；快照不建立当前 worker、登录或连接事实。仅从既有观察投影，没有新增探测或模型请求。
+- [codex-chatgpt-web `53b6050`](https://github.com/miuuyy/codex-chatgpt-web/commit/53b60503b4324e2b3f0a3cbf5445af2014afc290) 的 60 秒 command-poll 限制提供验证方向，不作为本机合同。本机准确保存的 tunnel-client v0.0.12 逐命令响应期限由[服务端字段转换](https://github.com/openai/tunnel-client/blob/v0.0.12/pkg/controlplane/internal/command_parser.go)并由 [processor](https://github.com/openai/tunnel-client/blob/v0.0.12/pkg/dispatcher/internal/processor.go)执行；空 poll 的 10 秒加 5 秒余量不是工具执行期限。本地以真实 TCP 提前断连验证 900 秒回合中的一个已交付调用，保留参数和回合 deadline，取消 pending future、拒绝晚结果与重复派发。该边界通过，没有据此改短原生参数或写入未经证实的 60 秒上限。
+- 对照官方 [Codex PR #56132](https://github.com/openai/codex/pull/56132) 的取消传播及写入顺序，在实际 CLI 0.165.0-alpha.1.2 上分别验证原生 MCP tool timeout 和 turn/interrupt。私有 App Server 用 never/read-only、新 home、合成模型及只读 stdio MCP；核对准确 RPC ID 类型、请求先于取消、原生 interrupted 终态和同一 MCP 进程上的不同新回合完成。真实模型请求为零。公开 tag `rust-v0.165.0-alpha.1.2` 的提交为 `720fec862a608ae1e5878d1eecb04fb93192e93c`，包含该 PR 的 merge commit；源码祖先关系只是辅助证据，实际二进制行为另有原始配对记录。
+
+来源方法由本项目独立实现，没有复制外部代码或测试。codex-chatgpt-web 为已记录 MIT 来源，官方 tunnel-client/Codex 为 Apache-2.0 来源；先前 Codex++ AGPLv3 及采用记录保留。定向四模块 168 项通过，随后完整当前 CLI 模块 5 项通过；全量冻结结果另记发布审计，不把模块相加当作整仓回归。
+
+首轮冻结全量完成 1914 项 Python（13 个失败断言、4 项跳过）和 157 项 Node（通过）。失败均发生在旧评估器接纳本地请求之前，另以私有有界 stderr 确认回环 502。补充子进程专用 NO_PROXY 并保留继承的代理/排除项后，原取消、多轮及选定 PowerShell 失败用例通过；诊断固定码同时补齐实际 quick-tunnel 退出原因，未知或杜撰名称仍脱敏。首轮原生 desktop 字段及缓存抓取时间的字节漂移不归因于已知主体，原件与失败保护门保留，路由和模型记录相同也不改判通过。这些局部跟进结果不替代最终整仓或实机验收。
+
+最后七个受影响模块通过 244 项（未选 Bash 一项跳过）；CLI/Node/选定 PowerShell 指纹不变。后续缓存新增一条目录记录并保留原十条，再次观察到抓取时间变化，没有合成夹具标识，仍不推断归因或回滚。最初全量、后续模块、原生配置保护及 Desktop/Web 各自保留结果，两个保护门均未通过。
+
+原沙箱包装器未启动测试子进程的未完成记录、旧代码的三项诊断失败、loopback 未到达的两次 502、观察器路径拼接错误及一次启动前语法错误均保留。原生取消的新长路径夹具又在 Windows SQLite 初始化阶段失败，未进入取消；缩短 home 并保留用例映射后通过。EOF 立即关闭未回复 RPC 的等待，不把启动失败记录成取消超时。这些夹具修复不改变产品代理、权限、历史或安装。真实 Desktop Stop 按钮和 ChatGPT Web 仍为独立验收，alpha143 本机安装及 preview.2 附件未更新。
 
 ## 2026-10-23 授权后的实际采用
 

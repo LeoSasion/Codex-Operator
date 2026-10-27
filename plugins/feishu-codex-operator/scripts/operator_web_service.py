@@ -24,6 +24,7 @@ from urllib.error import HTTPError
 import operator_web_model as service
 from operator_core.web_browser_driver import child_environment, private_directory
 from operator_core.web_mcp_transport import require, WebBrowserNetworkError
+from operator_core.responses_capabilities import RouterError
 
 
 LOCK_BYTES = b'operator-web-service-lock-v1\n'
@@ -461,7 +462,67 @@ def safe_guidance(details, health):
     return '当前请求仍在处理中。' if health['active'] else summaries[details['state']]
 
 
-def safe_diagnostics(details, health):
+def safe_diagnostic_layers(details, health, *, scope):
+    """Project saved, bounded observations without probing or granting readiness."""
+    def label(value, choices):
+        return value if isinstance(value, str) and value in choices else 'unknown'
+
+    def count(value):
+        return type(value) is int and 0 <= value <= 9007199254740991
+
+    connection = details.get('connection')
+    connection = connection if isinstance(connection, dict) else {}
+    fixed_codes = {'web_fixed_tunnel_idle_timeout_no_retry',
+        'web_fixed_tunnel_authorization_required', 'web_fixed_tunnel_active_disconnect_no_retry',
+        'web_fixed_tunnel_active_error_no_retry', 'web_fixed_tunnel_health_rejected_no_retry',
+        'web_fixed_tunnel_output_rejected_no_retry', 'web_tunnel_exited_no_retry',
+        'web_tunnel_connection_failed_no_retry', 'web_tunnel_output_rejected_no_retry',
+        'web_tunnel_idle_reconnect_timeout_no_retry'}
+    tunnel = {'scope': 'saved_connection_snapshot',
+        'mode': label(connection.get('mode'), ('openai_tunnel_v1', 'quick_tunnel_v1'))}
+    for key in ('process_running', 'connected', 'local_ready', 'poll_observed', 'connector_bound'):
+        if type(connection.get(key)) is bool:
+            tunnel[key] = connection[key]
+    failure = connection.get('failure')
+    if isinstance(failure, str):
+        tunnel['failure'] = failure if failure in fixed_codes else 'other_connection_failure'
+    sample = connection.get('health_observation')
+    if isinstance(sample, dict) and sample.get('scope') == 'local_health_only':
+        observed = {key: label(sample.get(key), choices) for key, choices in (
+            ('state', ('not_observed', 'current', 'stale')),
+            ('readyz', ('unknown', 'ready', 'not_ready')),
+            ('poll', ('unknown', 'unavailable', 'missing', 'blocked', 'stale', 'future', 'fresh')))}
+        if count(sample.get('samples')):
+            observed['samples'] = sample['samples']
+        tunnel['health_observation'] = observed
+    browser = details.get('browser')
+    browser = browser if isinstance(browser, dict) else {}
+    page = {'scope': 'saved_browser_snapshot',
+        'readiness': label(browser.get('readiness'), ('unavailable', 'assistance_required',
+        'preparing', 'busy', 'not_started', 'starting', 'ready'))}
+    for key in ('process_running', 'active'):
+        if type(browser.get(key)) is bool:
+            page[key] = browser[key]
+    for key in ('process_launches', 'attempts', 'dispatches', 'completed'):
+        if count(browser.get(key)):
+            page[key] = browser[key]
+    mcp = details.get('mcp')
+    mcp = mcp if isinstance(mcp, dict) else {}
+    methods = mcp.get('methods')
+    methods = methods if isinstance(methods, dict) else {}
+    endpoint = {'scope': 'saved_local_endpoint_only'}
+    for key, method in (('initialize_requests', 'initialize'), ('tool_list_requests', 'tools/list'),
+            ('tool_call_requests', 'tools/call')):
+        if count(methods.get(method)):
+            endpoint[key] = methods[method]
+    return {'scope': scope,
+        'local_service': {'state': 'reachable' if isinstance(health, dict) and health.get('ready') is True
+            else 'not_observed'},
+        'connection': tunnel, 'browser': page, 'mcp': endpoint,
+        'model_catalog': {'state': 'not_observed'}}
+
+
+def safe_diagnostics(details, health=None, *, scope=None):
     """Separate bounded local observations; never infer a cloud rejection cause.
 
     Browser events are from the saved status snapshot, transport counts from
@@ -494,7 +555,7 @@ def safe_diagnostics(details, health):
                     else:
                         network.update(state='other_error')
     transport = {'scope': 'local_transport_only', 'state': 'unknown'}
-    observed = health.get('transport')
+    observed = health.get('transport') if isinstance(health, dict) else None
     if isinstance(observed, dict) and observed.get('scope') == 'transport_only':
         active, last = observed.get('active_turn'), observed.get('last_turn')
         turn = active if active is not None else last
@@ -509,7 +570,17 @@ def safe_diagnostics(details, health):
             if type(turn.get('public_final_returned')) is bool:
                 transport['public_final_returned'] = turn['public_final_returned']
     return {'network': network, 'tools': transport,
+        'layers': safe_diagnostic_layers(details, health,
+            scope=scope or ('saved_status_and_live_health' if health is not None else 'saved_terminal_snapshot')),
         'summary': '网页传输与本机工具接收分别记录；HTTP 200 不代表工具已投递，配对结果不代表执行成功。'}
+
+
+class UnboundTerminalObservation(RouterError):
+    """A diagnostic snapshot cannot bind a worker or relax launch uncertainty."""
+
+    def __init__(self, details):
+        super().__init__('web_manager_uncertain_launch_no_retry')
+        self.diagnostics = safe_diagnostics(details, scope='saved_unbound_terminal_snapshot')
 
 
 def observe(profile, config, record):
@@ -526,12 +597,26 @@ def observe(profile, config, record):
     # to recover an active/unknown launch.
     alive = owned_process(record, config, stopped_snapshot=stopped_snapshot)
     if not alive:
+        if not {'instance', 'session_sha256'} <= set(record):
+            # The parent is absent, but an unbound session is not worker ownership
+            # evidence. Keep the same terminal error; attach only a labelled saved
+            # snapshot when its instance agrees. No health probe or recovery occurs.
+            try:
+                session, session_hash = session_snapshot(state, record)
+                details = read_status_json(state / 'status.json')
+                valid = (details.get('instance') == session['instance'] and details.get('state') == 'stopped'
+                    and session_snapshot(state, record)[1] == session_hash)
+            except Exception:
+                valid = False
+            if valid:
+                raise UnboundTerminalObservation(details)
         require('instance' in record and 'session_sha256' in record, 'web_manager_uncertain_launch_no_retry')
         session, _ = session_snapshot(state, record)
         details = read_status_json(state / 'status.json')
         require(details.get('instance') == session['instance'] and details.get('state') == 'stopped',
             'web_manager_uncertain_stop_no_retry')
-        return {'status': 'stopped', 'summary': '后台已正常停止，固定连接和登录配置仍保留；可从此入口再次启动。'}, None
+        return {'status': 'stopped', 'summary': '所属后台已停止，固定连接和登录配置仍保留；请核对保留的终态诊断。',
+            'diagnostics': safe_diagnostics(details)}, None
     if not (state / 'session.json').exists():
         return {'status': 'starting', 'summary': '后台正在准备现有连接；可查看状态，未重复启动或打开辅助窗口。'}, None
     session, session_hash = session_snapshot(state, record)
@@ -1117,7 +1202,10 @@ def error_result(error):
         summary = '保存的 Python 未通过服务依赖导入检查；本次未启动后台，也未写入启动记录。'
     else:
         summary = '当前后台状态尚未核实，请检查现有实例；系统未自动重启、清除连接记录或重做请求。'
-    return {'status': 'unavailable', 'code': code, 'summary': summary}
+    result = {'status': 'unavailable', 'code': code, 'summary': summary}
+    if isinstance(error, UnboundTerminalObservation):
+        result['diagnostics'] = error.diagnostics
+    return result
 
 
 def main():

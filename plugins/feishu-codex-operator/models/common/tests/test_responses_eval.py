@@ -147,6 +147,19 @@ class EvalFixtureTests(unittest.TestCase):
         for name in ("UNRELATED_API_KEY", "ACCESS_TOKEN", "GLM_API_KEY"):
             self.assertNotIn(name, environment)
 
+    def test_cli_loopback_bypass_is_child_only_and_preserves_existing_proxy_settings(self):
+        with patch.dict(os.environ, {"HTTP_PROXY":"http://proxy.invalid:8080",
+                "HTTPS_PROXY":"http://proxy.invalid:8080", "NO_PROXY":"fixture.invalid",
+                "no_proxy":"fixture.invalid"}):
+            original = dict(os.environ)
+            environment = isolated_environment(Path("synthetic-home"))
+            self.assertEqual(dict(os.environ), original)
+            for key in ('HTTP_PROXY', 'HTTPS_PROXY'):
+                self.assertEqual(environment[key], original[key])
+        for key in ('NO_PROXY', 'no_proxy'):
+            self.assertTrue({'127.0.0.1', 'localhost', '::1', 'fixture.invalid'}
+                <= set(environment[key].split(',')))
+
     def test_stop_fixtures_refuse_recovery_and_preserve_source(self):
         for case in STOP_CASES:
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:

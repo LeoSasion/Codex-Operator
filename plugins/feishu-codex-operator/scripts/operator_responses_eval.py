@@ -699,6 +699,12 @@ def isolated_environment(home, *, terminal_shell=None):
         ("CODEX_", "OPENAI_", "CHATGPT_", "DEEPSEEK_", "GLM_")) and not any(
             word in k.upper() for word in ("TOKEN", "SECRET", "PASSWORD", "API_KEY"))}
     environment["CODEX_HOME"] = str(home)
+    # This child reaches only the disposable router on loopback. Preserve the
+    # inherited proxy and bypass settings, adding the exact local exclusions
+    # without changing the parent environment or the upstream provider route.
+    inherited_bypass = environment.get("no_proxy", environment.get("NO_PROXY", ""))
+    loopback_bypass = "127.0.0.1,localhost,::1" + ("," + inherited_bypass if inherited_bypass else "")
+    environment.update(NO_PROXY=loopback_bypass, no_proxy=loopback_bypass)
     if terminal_shell is not None:
         # Some current CLI shell resolution uses basename/PATH even for an
         # absolute tool argument. Scope the requested directory to this child;

@@ -1,8 +1,38 @@
 # Native experience and project memory
 
-Current guidance as of 2026-10-06. Codex-Operator has two areas: Channels and Models; Models contains API, Local and Web Providers. The Windows preview prioritizes setup and actual task execution. Native Codex owns the conversation, context, permissions, tools and final answer; Operator supplies the transport and its local lifecycle.
+Current guidance as of 2026-10-28. Codex-Operator has two areas: Channels and Models; Models contains API, Local and Web Providers. The Windows preview prioritizes setup and actual task execution. Native Codex owns the conversation, context, permissions, tools and final answer; Operator supplies the transport and its local lifecycle.
 
 ## Read first
+
+2026-10-28 diagnostic/acceptance follow-up: alpha144 source records bounded fixed-tunnel
+readiness and poll observations independently, fenced by the existing process/generation
+checks. Saved stopped diagnostics remain available; an unbound terminal snapshot retains
+the uncertain-launch error and is never worker ownership or current readiness evidence.
+Status does not add probes. Model-catalog state remains separately unobserved. The pinned
+tunnel-client v0.0.12 receives a per-command response deadline from the server; it is not
+the empty-poll or whole-turn deadline and does not establish a universal 60-second cap.
+Actual loopback expiry closes the released call without changing its arguments, resetting
+the turn deadline, accepting a late result or replaying input.
+
+The current Windows package 26.1023.6123.0 contains CLI 0.165.0-alpha.1.2. Isolated actual
+App Server cases observe timeout cancellation and turn/interrupt, exact typed MCP request
+identity, interrupted terminal state and a different completed continuation on the same
+MCP process. All inference/tools are synthetic loopback fixtures under never/read-only;
+there is no real model request, native Desktop restart or real-chat mutation. This does
+not attest to a clicked Desktop Stop, live ChatGPT Web, upstream inference/billing cessation
+or all models. Retain the earlier fixture/reachability/startup failures separately. Source
+work is not installed alpha143 or published preview.2 renewal; see the release audit.
+
+The first frozen full regression retained 13 failed assertions in the old evaluator,
+before any local router admission. Bounded private stderr confirmed loopback 502;
+child-only NO_PROXY now adds local exclusions while preserving inherited proxy settings.
+The original failed run and native desktop/cache timestamp byte drift remain separate
+from the repaired affected-module follow-up. Routing/model settings and model records
+matched during the first read-only drift review; a later catalog added one row while
+retaining the original ten, followed by another fetched_at change. Attribution remains
+unproven, both protection gates stay failed, and no later settings are restored.
+The seven affected modules passed 244 tests with one unselected Bash skip; this is
+separate from full-regression and live acceptance. See the development/test lessons.
 
 2026-10-06 Desktop startup flicker: after another computer reboot, the owner reports
 that the startup flicker has disappeared. See the [concise incident record](native-conversation-plan.md)

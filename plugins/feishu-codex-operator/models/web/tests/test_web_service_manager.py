@@ -661,6 +661,32 @@ class WebServiceManagerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'pointer_invalid'):manager.start(self.profile)
         self.spawn_mock.assert_not_called()
 
+    def test_stopped_status_retains_sanitized_layers_without_live_health(self):
+        self.configured();manager.start(self.profile)
+        self.assertEqual(manager.control(self.profile, 'stop')['status'], 'stop_requested')
+        self.children[0].wait(timeout=5)
+        path = self.state() / 'status.json'
+        details = manager.read_json(path)
+        details.update(connection={'mode':'openai_tunnel_v1', 'process_running':False,
+            'connected':False, 'failure':'web_fixed_tunnel_idle_timeout_no_retry',
+            'health_observation':{'scope':'local_health_only', 'state':'stale',
+                'readyz':'not_ready', 'poll':'missing', 'samples':3}, 'private':'PRIVATE'},
+            browser={'active':False, 'readiness':'preparing'})
+        manager.service.write_json(path, details)
+        before = self.snapshot()
+        with patch.object(manager, 'build_opener') as probe:
+            report = manager.status(self.profile)
+            probe.assert_not_called()
+        self.assertEqual(report['status'], 'stopped')
+        layers = report['diagnostics']['layers']
+        self.assertEqual(layers['scope'], 'saved_terminal_snapshot')
+        self.assertEqual(layers['connection']['failure'], 'web_fixed_tunnel_idle_timeout_no_retry')
+        self.assertEqual(layers['connection']['health_observation']['poll'], 'missing')
+        self.assertEqual(layers['browser']['readiness'], 'preparing')
+        self.assertEqual(layers['model_catalog']['state'], 'not_observed')
+        self.assertNotIn('PRIVATE', json.dumps(report))
+        self.assertEqual(self.snapshot(), before)
+
     def test_health_redirect_is_rejected_without_following_or_launching_again(self):
         (self.root/'variant').write_text('redirect')
         self.configured()
@@ -1060,6 +1086,59 @@ class WebServiceRecoveryTests(unittest.TestCase):
         receipt = manager.read_json(next((self.profile/'history').glob('recovery-*/receipt.json')))
         self.assertEqual(receipt['outcome'], 'unbound_request_free_stopped_snapshot_retired')
         self.assertFalse(receipt['launched']); self.assertFalse(receipt['replayed'])
+
+    def test_unbound_terminal_diagnostics_do_not_create_ownership_or_probe_health(self):
+        self.unbind_stopped_fixture()
+        path = self.state / 'status.json'
+        details = manager.read_json(path)
+        details.update(connection={'mode':'openai_tunnel_v1', 'connected':False,
+            'failure':'web_fixed_tunnel_idle_timeout_no_retry', 'private':'PRIVATE'},
+            browser={'active':False, 'readiness':'not_started', 'process_launches':0})
+        manager.service.write_json(path, details)
+        before = self.snapshot()
+        with patch.object(manager, 'build_opener') as probe, patch.object(manager, 'spawn_child') as spawn:
+            with self.assertRaisesRegex(ValueError, '^web_manager_uncertain_launch_no_retry$') as raised:
+                manager.status(self.profile)
+            report = manager.error_result(raised.exception)
+            probe.assert_not_called();spawn.assert_not_called()
+        self.assertEqual(report['status'], 'unavailable')
+        self.assertEqual(report['code'], 'web_manager_uncertain_launch_no_retry')
+        layers = report['diagnostics']['layers']
+        self.assertEqual(layers['scope'], 'saved_unbound_terminal_snapshot')
+        self.assertEqual(layers['connection']['failure'], 'web_fixed_tunnel_idle_timeout_no_retry')
+        self.assertEqual(layers['local_service']['state'], 'not_observed')
+        self.assertEqual(layers['browser']['process_launches'], 0)
+        self.assertNotIn('PRIVATE', json.dumps(report))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_layered_diagnostics_preserve_actual_fixed_connection_failure_codes(self):
+        fixed = ('web_fixed_tunnel_idle_timeout_no_retry',
+            'web_fixed_tunnel_authorization_required', 'web_fixed_tunnel_active_disconnect_no_retry',
+            'web_fixed_tunnel_active_error_no_retry', 'web_fixed_tunnel_health_rejected_no_retry',
+            'web_fixed_tunnel_output_rejected_no_retry', 'web_tunnel_exited_no_retry',
+            'web_tunnel_connection_failed_no_retry', 'web_tunnel_output_rejected_no_retry',
+            'web_tunnel_idle_reconnect_timeout_no_retry')
+        for code in (*fixed, 'web_tunnel_child_exited_no_retry', 'PRIVATE unknown failure'):
+            with self.subTest(code=code):
+                report = manager.safe_diagnostics({'connection':{'failure':code}})
+                self.assertEqual(report['layers']['connection']['failure'],
+                    code if code in fixed else 'other_connection_failure')
+
+    def test_layered_diagnostics_reject_malformed_values_and_unknown_text(self):
+        private = 'PRIVATE endpoint token message and false diagnosis'
+        for bad in (True, -1, 9007199254740992, private, [], {}):
+            with self.subTest(bad=bad):
+                details = {'connection':{'mode':bad, 'failure':private,
+                    'health_observation':{'scope':'local_health_only', 'state':bad,
+                        'readyz':bad, 'poll':bad, 'samples':bad}},
+                    'browser':{'readiness':bad, 'process_launches':bad},
+                    'mcp':{'methods':{'initialize':bad, 'tools/list':bad}}}
+                report = manager.safe_diagnostics(details)
+                self.assertNotIn(private, json.dumps(report))
+                self.assertEqual(report['layers']['browser']['readiness'], 'unknown')
+                self.assertNotIn('samples', report['layers']['connection']['health_observation'])
+                self.assertNotIn('initialize_requests', report['layers']['mcp'])
+                self.assertEqual(report['layers']['model_catalog']['state'], 'not_observed')
 
     def test_unbound_launch_with_requests_live_worker_or_marker_cannot_be_retired(self):
         self.unbind_stopped_fixture()

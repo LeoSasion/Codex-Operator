@@ -16,7 +16,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from aiohttp import ClientSession, web
+from aiohttp import ClientSession, ClientTimeout, web
 from test_web_model_protocol import make, message, FUNCTION
 from operator_core.responses_capabilities import RouterError
 from operator_core.responses_tool_adapter import dumps
@@ -2319,6 +2319,51 @@ class WebMcpTurnTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await endpoint.stop()
             if task is not None: await asyncio.gather(task, return_exceptions=True)
+
+    async def test_peer_deadline_closes_released_call_without_extending_or_replaying_turn(self):
+        endpoint = WebMcpEndpoint()
+        url = await endpoint.start()
+        turn = endpoint.turn = WebMcpTurn(protocol(), timeout=900)
+        turn.begin(turn.key)
+        original_deadline = turn.deadline
+        pending = None
+        try:
+            async with ClientSession() as client:
+                async with client.post(url, json={'jsonrpc':'2.0', 'id':0, 'method':'initialize',
+                        'params':{'protocolVersion':'2025-11-25'}}) as response:
+                    session = response.headers['Mcp-Session-Id']
+                # An external per-command budget may expire long before our
+                # whole-turn deadline. A real TCP disconnect must close exactly
+                # this released call, retaining its partial delivery evidence.
+                pending = asyncio.create_task(client.post(url,
+                    headers={'Mcp-Session-Id':session}, timeout=ClientTimeout(total=.15),
+                    json={'jsonrpc':'2.0', 'id':'bounded-wait', 'method':'tools/call',
+                        'params':{'name':'operator_call', 'arguments':{'turn_key':turn.key,
+                            'name':'inspect', 'arguments':{'value':'unchanged 中文\r\n'}}}}))
+                native, _ = await asyncio.wait_for(turn.next_response(), 2)
+                self.assertEqual(json.loads(native['output'][0]['arguments']),
+                    {'value':'unchanged 中文\r\n'})
+                with self.assertRaises(asyncio.TimeoutError):
+                    await pending
+                async def closed():
+                    while not turn.closed:
+                        await asyncio.sleep(.01)
+                await asyncio.wait_for(closed(), 2)
+                self.assertEqual(turn.deadline, original_deadline)
+                self.assertEqual(turn.calls, 1)
+                self.assertTrue(turn.pending['released'])
+                self.assertTrue(turn.pending['future'].cancelled())
+                with self.assertRaisesRegex(RouterError, '^web_mcp_turn_closed$'):
+                    turn.accept_result(protocol())
+                with self.assertRaisesRegex(RouterError, '^web_mcp_turn_closed$'):
+                    await turn.invoke(turn.key, 'bounded-wait', 'inspect', {'value':'not replayed'}, session_id=session)
+                self.assertEqual(turn.calls, 1)
+                self.assertTrue(any(event['event']=='cancelled' for event in endpoint.diagnostics()['events']))
+        finally:
+            turn.close()
+            await endpoint.stop()
+            if pending is not None:
+                await asyncio.gather(pending, return_exceptions=True)
 
     async def test_close_wakes_native_waiter_without_releasing_output(self):
         turn = WebMcpTurn(protocol())
