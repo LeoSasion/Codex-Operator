@@ -1,6 +1,26 @@
 # Web model catalog
 
-The public ChatGPT picker observed on 2026-09-23 offers GPT-5.6 Sol and Latest,
+## 2026-10-28: explicitly named GPT-6 Medium
+
+The managed account's current picker shows a checked **6** model option and a
+separate GPT-5.6 Sol option. Its ordinary slider position 1 announces **6 Medium,
+item 2 of 5**. The owner selected GPT-6 Medium for new acceptance and excluded Pro
+and 5.6 inference. The catalog adds `gpt-6-sol` (displayed as **Web GPT-6**) with
+**medium only** and the exact observed `6` picker label. The existing Pro entry
+also accepts this explicit generation label. Earlier entries and defaults remain.
+Other ordinary GPT-6 efforts have not been accepted and stay unavailable.
+
+One new isolated CLI 0.165.0-alpha.1.2 coding case passed with this exact
+model/effort: three identity-paired tool calls read the synthetic source, applied
+the exact change and actually ran five passing tests; the final marker matched.
+The browser selected and checked the model radio, explicit generation and effort
+before its one dispatch. The service returned ready/idle with one completed page.
+This is dated picker and tool-execution evidence, not an independent upstream
+attestation, model-capacity claim, Desktop menu or manual Stop acceptance.
+
+## Earlier catalog and retained evidence
+
+The public ChatGPT picker observed on 2026-09-23 offered GPT-5.6 Sol and Latest,
 each with five slider positions: Instant, Medium, High, Extra high and Pro.
 The response-level "Switch model" menu identified a reply sent with Latest/High
 as **GPT-5.6 Sol**. It identified Latest/Pro as **6 Pro**. The Pro header alone
@@ -13,10 +33,12 @@ is marked for retirement on October 14 and is not added to this catalog.
 | Web GPT-5.6 Pro | max (fixed) | GPT-5.6 Sol, position 4, 5.6 Pro |
 | Web GPT-6 Pro | max (fixed) | Latest, position 4, 6 Pro |
 
-The earlier unverified `Web GPT-6 Sol` preview entry has been removed: it
+The earlier unverified `Web GPT-6 Sol` preview entry was removed: it
 would label a GPT-5.6 Sol reply as GPT-6. Native official GPT-6 models are
-unchanged. A Web GPT-6 ordinary entry requires its own observed selection
-and response-level model identity before it can be published.
+unchanged. That old Latest selection is not reused as evidence for the new
+explicitly named `6` option; the dated October observation and new execution
+above provide separate evidence. Neither observation proves the identity of
+an unannounced future Latest generation.
 
 Pro is a separate model entry. Its sole native `max` value is a local selector
 representation for the Web Pro position; it does not assert equivalence with
@@ -42,7 +64,7 @@ ledger. Changing the selected model cannot enable parallel dispatch or replay.
 
 The catalog now records `context_window: {"status": "unverified"}` separately
 for every published Web model. No account-specific ChatGPT Web context limit has
-been verified for these three entries. The existing `16000` in the internal
+been verified for these entries. The existing `16000` in the internal
 route is a provisional compatibility value while a record is unverified; it is
 **not** the capacity of GPT-5.6 Sol, GPT-5.6 Pro or GPT-6 Pro. An API model card,
 an App Server fallback window or a successful small prompt cannot fill this

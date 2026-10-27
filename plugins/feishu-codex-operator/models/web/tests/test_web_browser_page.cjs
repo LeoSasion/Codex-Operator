@@ -2445,7 +2445,7 @@ test('public picker verifies every generation and effort before returning select
       count++;
     }
   }
-  assert.equal(count, 6);
+  assert.equal(count, 7);
 });
 
 test('public picker waits for the Pro header after the slider moves', async () => {

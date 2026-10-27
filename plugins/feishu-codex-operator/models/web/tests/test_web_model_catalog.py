@@ -28,6 +28,18 @@ def payload(route, effort, identity):
 
 
 class WebModelCatalogTests(unittest.IsolatedAsyncioTestCase):
+    def test_observed_gpt6_ordinary_selection_is_medium_only_and_distinct_from_pro(self):
+        route = text_route(model='gpt-6-sol')
+        self.assertEqual(route.reasoning_efforts, ('medium',))
+        self.assertEqual(MODELS[route.model]['picker_labels'], ['6'])
+        selected = browser_selection(WebModelProtocol(route, payload(route, 'medium', 'gpt6-medium')))
+        self.assertEqual(selected, {'model': 'gpt-6-sol', 'effort': 'medium'})
+        self.assertTrue(matches_selection({'model': 'gpt-6-sol', 'effortIndex': 1}, selected))
+        self.assertFalse(matches_selection({'model': 'gpt-6-pro', 'effortIndex': 1}, selected))
+        for effort in ('none', 'high', 'xhigh', 'max'):
+            with self.subTest(effort=effort), self.assertRaises(RouterError):
+                WebModelProtocol(route, payload(route, effort, 'unsupported-gpt6'))
+
     def test_context_capacity_is_bound_to_exact_web_model_and_full_effort_set(self):
         for model in MODELS:
             self.assertEqual(MODELS[model]['context_window'], {'status': 'unverified'})
@@ -105,7 +117,7 @@ class WebModelCatalogTests(unittest.IsolatedAsyncioTestCase):
                     other = routes[-1]
                     with self.assertRaisesRegex(RouterError, 'consumed_no_retry'):
                         await bridge.exchange({**body, 'model': other.slug, 'reasoning': {'effort': 'max'}})
-            self.assertEqual(len(seen), 6)
+            self.assertEqual(len(seen), 7)
         finally:
             await bridge.stop()
 
@@ -128,7 +140,7 @@ class WebModelCatalogTests(unittest.IsolatedAsyncioTestCase):
 
     def test_unobserved_efforts_and_models_never_select_another_mode(self):
         with self.assertRaisesRegex(RouterError, 'web_explicit_model_required'):
-            text_route(model='gpt-6-sol')
+            text_route(model='gpt-7-sol')
         for route in text_routes():
             for effort in ('low', 'minimal', 'ultra', *({'max'} if not route.model.endswith('-pro') else {'high', 'none'})):
                 with self.assertRaises(RouterError):
@@ -151,14 +163,14 @@ class WebModelCatalogTests(unittest.IsolatedAsyncioTestCase):
         registry = ModelRegistry({'version': 2, 'models': []}, BEEPER)
         published = registry.with_web_routes(routes)
         self.assertFalse(registry.routes)
-        self.assertEqual(len(published.routes), 3)
+        self.assertEqual(len(published.routes), 4)
         native = {'models': [{**BEEPER['models'][0], 'slug': 'native-fixture'}]}
         self.assertEqual(published.merge(native)['models'][0], native['models'][0])
         rows = catalogue(routes)['models']
-        self.assertEqual(sum(len(r['supported_reasoning_levels']) for r in rows), 6)
+        self.assertEqual(sum(len(r['supported_reasoning_levels']) for r in rows), 7)
         reduced = published.with_web_routes(routes[:1])
         self.assertEqual(len(reduced.routes), 1)
-        self.assertEqual(len(published.routes), 3)
+        self.assertEqual(len(published.routes), 4)
         collision = ModelRegistry({'version': 2, 'models': []}, BEEPER)
         collision.routes = {routes[0].slug: replace(routes[0], web_binding=None)}
         with self.assertRaisesRegex(RouterError, 'collision'):

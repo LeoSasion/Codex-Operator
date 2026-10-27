@@ -4,6 +4,18 @@ Current guidance as of 2026-10-28. Codex-Operator has two areas: Channels and Mo
 
 ## Read first
 
+Later 2026-10-28 acceptance: the frozen code run passed 1,916 Python cases
+(four skips) and 157 Node checks. Native config drift was traced by the owner to
+explicit acceleration; cache model rows matched and only its fetch time changed.
+Original byte comparisons and prior failures remain retained. The explicitly named
+GPT-6 Medium Web option completed a fresh three-tool coding check and five actual
+tests. At the owner's explicit Computer Use request, a separate GPT-6.1 Sol/high
+Desktop task produced a paired user-aborted tool result, an interrupted turn and
+a different completed continuation without replay. See the current conversation
+plan and release audit for the fixture limitation and distinct evidence scopes.
+Missing local fixed-connection dependencies were rebuilt inside the project while
+reusing the exact healthy cloud Tunnel and plugin; the new key was human-saved.
+
 2026-10-28 diagnostic/acceptance follow-up: alpha144 source records bounded fixed-tunnel
 readiness and poll observations independently, fenced by the existing process/generation
 checks. Saved stopped diagnostics remain available; an unbound terminal snapshot retains
