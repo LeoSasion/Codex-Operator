@@ -9,6 +9,58 @@ earlier live-task result or proves that installed services were updated.
 
 2026-10-28 layered diagnostics / native cancellation (source alpha144, package unchanged):
 
+- The later frozen whole-tree run passed 1,916 Python tests in 2694.860 seconds
+  (four skips) and all 157 Node tests. CLI/Node/selected PowerShell identities and
+  source stayed fixed. Its 55-object protection comparison still recorded native
+  config/cache byte drift. Read-only review found only service_tier changed from
+  default to priority and cache fetched_at refreshed; all ten model rows matched.
+  The owner subsequently confirmed acceleration had been enabled, explaining
+  the priority setting. Current settings are not restored; the original failed
+  byte-preservation comparison remains alongside this explicit review.
+- Missing local fixed-connection dependencies were rebuilt with the owner's
+  direction inside the project. The exact existing cloud Tunnel and installed
+  plugin were matched to retained binding evidence and reused. The human saved a
+  newly restricted runtime key locally; its value was never inspected. Successful
+  binding, fresh polling and browser readiness were checked without model input.
+  The failed first assistance remains retained; explicit closed-worker recovery
+  did not replay a business request or replace cloud resources.
+- The owner selected the explicitly named GPT-6 Medium Web option. A new isolated
+  current-CLI case completed three exact tool steps, the intended source edit,
+  five executed tests and an exact final marker in 44.645 seconds. It dispatched
+  once and returned the same service to ready/idle. This does not satisfy manual
+  Desktop Stop, global entry, all-tool or context-capacity gates. The ordinary
+  catalog addition exposes medium only; Pro and 5.6 had no new inference.
+- The first catalog follow-up passed 166 Python tests; Node passed 156/157 because
+  its all-selection fixture still expected six selections instead of the seven
+  now registered. That failed run is retained; updating the exact expected count
+  does not weaken its per-model, generation, effort or pre-dispatch checks.
+- The corrected follow-up passed 33 Python tests covering catalog, mixed native
+  publication and coding acceptance, together with all 157 Node checks. The
+  preceding 166-test Python run also passed; the raw Node count failure remains.
+  These targeted checks validate the later catalog edit without reclassifying
+  the earlier whole-tree source identity or its protection drift.
+- The existing skill and fixed-connection guide now require confirmed expired or
+  unusable, unupdatable resources to be deleted successfully before replacement.
+  Healthy, in-use, uncertain and updatable objects are excluded. No new skill or
+  cloud resource was created for that rule, and current healthy objects remain.
+- At the owner's explicit request, Computer Use clicked Stop once in a dedicated
+  native Desktop chat using GPT-6.1 Sol/high, after the exact pending exec call
+  was observed. Its paired result was `aborted by user after 24.0s`; the original
+  turn ended interrupted. A different new turn in the same chat completed its
+  exact marker with zero tool calls and no old-call replay. The initial fixture
+  had already yielded a background cell and completed, so it is retained without
+  Stop acceptance. The later fixture used an explicit bounded 120-second yield
+  around a 90-second timer. This does not attest to upstream inference/billing
+  cessation or substitute for Web MCP cancellation evidence.
+- The restored persistent Web entry also passed a distinct GPT-6 Medium coding
+  case with three accepted tool calls, five executed tests and an exact final
+  marker. It then stopped normally. The final reviewed scope passed 42 Python
+  cases and all 157 Node checks with no new changes against the explicitly
+  reviewed protection baseline. The original raw byte-drift result remains.
+- The installed runtime update from alpha143 to alpha144 used the exact reviewed
+  preview, changed five of its 63 code files and retained all 2,602 original
+  runtime files. The ordinary stopped-service path was used after real persistent
+  entry verification; no historical recovery receipt was relabelled as clean stop.
 - The owner authorized this order: Web layered diagnostics, tool-wait validation,
   then current native cancellation acceptance, with repairs and lessons in the
   existing development documents. The installed alpha143 runtime and preview.2

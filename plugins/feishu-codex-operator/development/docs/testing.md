@@ -30,6 +30,18 @@ MCP waiting tests keep the 900-second whole-turn deadline while expiring one rea
 
 CurrentCliCancellationTests in test_responses_cli exercises the actual selected CLI with disposable App Server homes, never/read-only, synthetic Responses and one stdio MCP child. It verifies both native tool-timeout cancellation and turn/interrupt, exact RPC identity types and write ordering, one interrupted turn and a different completed continuation without restarting MCP. Set CODEX_OPERATOR_TEST_NATIVE_CANCELLATION_CAPTURE to a fresh private parent to retain bounded raw evidence and short case-name mappings. Loopback NO_PROXY applies only to these children. Record native EOF/startup failures immediately; do not mistake a Windows SQLite path failure for a cancellation timeout. These cases make no real inference or business request and do not establish live Desktop/Web acceptance.
 
+For a separately authorized live Desktop Stop check, bind the exact test chat,
+model, turn and actual tool input before clicking once. A default exec yield may
+return a running cell and let the turn finish before Stop; retain that fixture
+as unaccepted and use a different bounded pending-call fixture, never an old
+request replay. Verify the paired aborted tool result, interrupted turn and a
+different completed continuation. Read-thread summaries may omit custom calls;
+review the exact rollout's call/result records without reading reasoning text.
+Recheck the actual selected task after user input can switch the foreground
+chat. Gray composer suggestions with an empty edit value are placeholders,
+not user drafts; preserve a real nonempty draft. A Stop click or assistant claim
+alone does not attest to upstream inference or billing cessation.
+
 The existing isolated evaluator also adds exact loopback exclusions to its child's NO_PROXY, retaining inherited exclusions and proxy values. Verify that the parent environment is unchanged. A native 502 with zero admitted local requests needs private bounded stderr evidence before attribution; do not rewrite it into a tool, provider or permission failure. Repeat the original cancellation, multiround and selected terminal cases after repair. Keep the initial full-run failures and native config/cache protection drift separate from later affected-module results and a newly retained comparison snapshot.
 
 Explicit legacy alpha-version maintenance also tests the public version flags, default refusal, exact from/to mismatch, downgrade and release-line rejection, complete original-manifest restoration, late source changes and preservation of later edits. The version selection is part of the preview identity; source-test success does not itself authorize deployment or erase an earlier incomplete wrapper run. Keep the documented 3600-second whole-run allowance when invoking the complete legacy module.
