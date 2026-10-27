@@ -6,6 +6,8 @@
 
 Windows 预览版 **[1.2.0-preview.2](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.2)**（Operator 源码 `4.2.0-alpha.143`），项目自有代码采用 [MIT](LICENSE)。此版本为 Pre-release，实机验收尚未全部完成，支持范围与待验项见[发布验收清单](plugins/feishu-codex-operator/development/docs/first-release-readiness.md)。
 
+当前开发源码为 `4.2.0-alpha.144`：补充 Web 分层诊断和请求期限回归，并验证当前原生 CLI 的取消传播；尚未更新上方发布附件或本机安装。源码、隔离 CLI 与真实 Desktop/Web 验收分别记录。
+
 - **Channels**：首版实现飞书，其他 IM 作为后续通道扩展。
 - **Models**：分为 API Providers、Local Providers、Web Providers。ChatGPT Web 属于 Web Providers，复用登录与固定连接。
 

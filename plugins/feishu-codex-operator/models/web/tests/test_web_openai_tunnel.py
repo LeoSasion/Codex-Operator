@@ -502,6 +502,39 @@ class FixedTunnelObservationTests(unittest.IsolatedAsyncioTestCase):
                     get.assert_not_called()
                     client.assert_not_called()
 
+    async def test_health_diagnostics_distinguish_ready_endpoint_and_blocked_poll(self):
+        connection = self.connection()
+        connection.pause_idle_connection()
+        previous = connection.last_poll
+        await self.sample(connection, metrics=(
+            'commands_poll_last_successful_timestamp_seconds ' + str(previous) + '\n').encode())
+        with patch.object(connection, 'local_get') as get:
+            report = connection.status()['health_observation']
+            self.assertEqual(report['readyz'], 'ready')
+            self.assertEqual(report['poll'], 'blocked')
+            self.assertEqual(report['state'], 'current')
+            self.assertFalse(connection.status()['connected'])
+            get.assert_not_called()
+        await self.sample(connection)
+        self.assertEqual(connection.status()['health_observation']['poll'], 'fresh')
+        self.assertTrue(connection.status()['connected'])
+
+    async def test_health_diagnostics_keep_old_sample_stale_after_interruption(self):
+        connection = self.connection()
+        await self.sample(connection)
+        self.assertEqual(connection.status()['health_observation']['state'], 'current')
+
+        async def interrupt():
+            connection.pause_idle_connection()
+
+        await self.sample(connection, interrupt)
+        report = connection.status()['health_observation']
+        self.assertEqual(report['state'], 'stale')
+        self.assertEqual(report['samples'], 1)
+        self.assertFalse(connection.connected)
+        await connection.close()
+        self.assertEqual(connection.status()['health_observation']['state'], 'stale')
+
     async def test_status_uses_one_readiness_result_at_freshness_boundary(self):
         connection = self.connection()
         fresh = connection.observed_at

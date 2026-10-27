@@ -7,6 +7,72 @@ counts refer to their individual runs; the current source must be checked with
 the [test instructions](testing.md). A later source-only pass never changes an
 earlier live-task result or proves that installed services were updated.
 
+2026-10-28 layered diagnostics / native cancellation (source alpha144, package unchanged):
+
+- The owner authorized this order: Web layered diagnostics, tool-wait validation,
+  then current native cancellation acceptance, with repairs and lessons in the
+  existing development documents. The installed alpha143 runtime and preview.2
+  release assets are not renewed by this source change.
+- Fixed-tunnel status now retains readiness and poll observations independently,
+  using existing bounded local reads and interruption/process fences. Manager
+  exposes sanitized saved connection/browser/MCP observations separately from
+  authenticated local health and unobserved model-catalog status. Bound stopped
+  instances retain diagnostics. A labelled unbound terminal snapshot retains its
+  original uncertain-launch error, with no worker binding, recovery or new probe.
+- The selected tunnel-client v0.0.12 receives per-command response deadlines from
+  the service. A synthetic actual HTTP exchange expires before a 900-second turn:
+  one call is released with exact arguments, its pending result is cancelled,
+  late results/replays are rejected and the original turn deadline stays fixed.
+  No arbitrary 60-second production cap, parameter rewrite or replay was added.
+- Actual Windows package 26.1023.6123.0 binds CLI 0.165.0-alpha.1.2. Offline schema
+  generation and isolated native cases use new private homes. Never/read-only
+  is echoed by the real App Server; no approval request is answered. Tool-timeout
+  cancellation and turn/interrupt each send one exact typed MCP cancellation.
+  The interrupted turn stays interrupted; a different new turn completes using
+  the same MCP child. Only synthetic loopback inference/tools run, not real models,
+  business messages, existing chats or a restarted Desktop. A real Desktop Stop
+  click and live ChatGPT Web remain separate gates.
+- Diagnostic modules passed 168 tests; the complete current CLI module passed
+  five. These are separately frozen module runs, not a combined full-regression
+  claim. Full regression and protection observations are retained separately.
+- The frozen full run completed 1914 Python tests in 2798.155 seconds with 13
+  failed assertions across three methods and four skips; all 157 Node tests
+  passed. The old evaluator's failed native cases admitted zero local requests.
+  A separate bounded private stderr capture confirmed loopback 502 before tool
+  delivery. The evaluator now adds child-only IPv4/IPv6/localhost NO_PROXY,
+  preserving inherited proxy values and exclusions. Two new regression methods
+  first reproduced six failed assertions, including missing real tunnel codes
+  and an invented accepted code. The repaired seven-method follow-up passed with
+  one unselected Bash skip, including every original failing CLI permutation.
+  This does not reclassify the initial full run or claim a final whole-tree pass.
+- The initial 55-object protection check failed for native config.toml and
+  models_cache.json byte drift. The first read-only review found only the desktop
+  table and fetched_at changed, with routing/model settings and model records
+  equal. A later cache snapshot added one row (10 to 11), preserving all ten old
+  rows and containing no synthetic fixture identity; a subsequent comparison
+  changed only fetched_at. Attribution remains unproven. Every observed version
+  is retained without restoration. The separate reviewed snapshot does not erase
+  the original failure, and the final comparison protection gate also failed.
+- The final frozen affected scope completed all seven modules: 244 tests in
+  117.299 seconds, no failures and one unselected Bash skip. This includes every
+  original failed CLI permutation and both new native cancellation cases. CLI,
+  Node and selected PowerShell hashes remained unchanged; Operator/callback and
+  pending-user-task counts stayed zero, with the one historical inbox event
+  retained. This is an affected-module pass, not a later full-regression,
+  protection-gate, Desktop UI or live ChatGPT Web acceptance claim. Subsequent
+  source edits record these results and refresh reviewed-document hashes only.
+- Original failures remain retained: an incomplete sandbox wrapper before the
+  test child, three missing-diagnostic cases, two pre-tool loopback 502s, a capture
+  path-concatenation failure and a pre-start syntax failure. The initial permanent
+  cancellation fixture had one success and a Windows SQLite startup failure under
+  a long home path. Short case directories with retained mappings and immediate
+  RPC EOF failure resolve that fixture issue. Loopback NO_PROXY is confined to
+  disposable children; no host proxy or product routing change was made.
+- Safety preflight observed the Operator stopped, no pending callbacks or user
+  registrations, and one retained retryable_failed inbox event. The event is not
+  dispatched, closed or rewritten to make tests eligible. Test execution and any
+  later service/deployment maintenance keep their own applicable safety gates.
+
 2026-10-23 deployment/release maintenance (source alpha143, package preview.2):
 
 - The owner requested installed alpha138 to alpha143 synchronization and a new

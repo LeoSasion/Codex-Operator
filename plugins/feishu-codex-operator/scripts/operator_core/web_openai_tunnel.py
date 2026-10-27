@@ -122,6 +122,10 @@ class WebOpenAITunnel(WebMcpConnection):
         self.last_poll = self.blocked_poll = 0
         self.start_time = 0
         self._health_generation = 0
+        self._health_observation = None
+        self._health_observation_at = 0
+        self._health_observation_generation = None
+        self._health_samples = 0
 
     def read_binding(self):
         if not self.binding_file.exists() and not self.binding_file.is_symlink():
@@ -142,9 +146,17 @@ class WebOpenAITunnel(WebMcpConnection):
 
     def status(self):
         current = super().status()
+        observation = {'scope': 'local_health_only', 'state': 'not_observed',
+            'readyz': 'unknown', 'poll': 'unknown', 'samples': self._health_samples}
+        if self._health_observation is not None:
+            fresh = (not self.closed and not self.failed.is_set()
+                and current['process_running']
+                and self._health_observation_generation == self._health_generation
+                and time.monotonic() - self._health_observation_at < max(5, HEALTH_INTERVAL * 3))
+            observation.update(self._health_observation, state='current' if fresh else 'stale')
         return {**current, 'mode': 'openai_tunnel_v1',
             'local_ready': current['connected'], 'poll_observed': self.last_poll > 0,
-            'binding_persistent': self.connector is not None}
+            'binding_persistent': self.connector is not None, 'health_observation': observation}
 
     def setup(self):
         require(self.connected, 'web_connection_unavailable')
@@ -257,6 +269,16 @@ class WebOpenAITunnel(WebMcpConnection):
                         status, body, metric_status, metrics = sample
                         stamp = poll_timestamp(metrics) if metric_status == 200 else 0
                         now = time.time()
+                        poll = ('unavailable' if metric_status != 200 else 'missing' if stamp == 0
+                            else 'blocked' if stamp <= self.blocked_poll
+                            else 'stale' if stamp < max(self.start_time - 1, now - POLL_FRESH_SECONDS)
+                            else 'future' if stamp > now + 2 else 'fresh')
+                        self._health_observation = {
+                            'readyz': 'ready' if status == 200 and body == b'ready' else 'not_ready',
+                            'poll': poll}
+                        self._health_samples = min(9007199254740991, self._health_samples + 1)
+                        self._health_observation_at = time.monotonic()
+                        self._health_observation_generation = generation
                         good = (status == 200 and body == b'ready' and stamp > self.blocked_poll
                             and max(self.start_time - 1, now - POLL_FRESH_SECONDS) <= stamp <= now + 2)
                     if good:
