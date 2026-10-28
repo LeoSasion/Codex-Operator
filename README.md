@@ -4,9 +4,9 @@
 
 面向 Codex Desktop 的两个职能板块：Channels 连接 IM 会话，Models 接入 API、本地和 Web 模型。Codex 原生任务继续负责上下文、工具、审批和执行。
 
-Windows 预览版 **[1.2.0-preview.6](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.6)**（Operator 源码 `4.2.0-alpha.146`），项目自有代码采用 [MIT](LICENSE)。此版本为 Pre-release，支持范围与待验项见[发布验收清单](plugins/feishu-codex-operator/development/docs/first-release-readiness.md)。
+Windows 预览版 **[1.2.0-preview.7](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.7)**（Operator 源码 `4.2.0-alpha.146`），项目自有代码采用 [MIT](LICENSE)。此版本为 Pre-release，支持范围与待验项见[发布验收清单](plugins/feishu-codex-operator/development/docs/first-release-readiness.md)。
 
-本版精简运行发行包，测试、公共夹具和测试入口继续保留在完整源码仓库中；构建仍核对并筛查完整源码，运行包使用明确的发行审计范围。此前的 Web 分层诊断、GPT-6 Medium、取消及冷启动验收记录继续保留，Web/Local 仍为实验状态。
+本版补全 Beeper 原生发送失败诊断，并把实际工具预检、审批边界和禁止重放写入现有 skill。真实飞书往返仍待原生跨会话审批后的独立验收；工具预检通过、队列完成或失败通知送达均不能替代业务成功。运行发行包继续排除测试与公共夹具，构建仍核对并筛查完整源码；此前的 Web 分层诊断、GPT-6 Medium、取消及冷启动验收记录保留，Web/Local 仍为实验状态。
 
 - **Channels**：首版实现飞书，其他 IM 作为后续通道扩展。
 - **Models**：分为 API Providers、Local Providers、Web Providers。ChatGPT Web 属于 Web Providers，复用登录与固定连接。

@@ -109,28 +109,49 @@ class FinalCallbackStoreTests(unittest.TestCase):
     def test_server_program_resolves_send_and_never_retries_missing_or_uncertain_send(self) -> None:
         prompt = BeeperRelayClient._relay_prompt(request_id="a" * 32)
         code = prompt[prompt.index("const started="):]
-        envelope = {"threadId": "exact-task", "hostId": "local", "prompt": "原句"}
+        envelope = {"threadId": "exact-task", "hostId": "local", "prompt": "原句 PRIVATE_REQUEST_DO_NOT_COPY"}
         result = json.dumps({"structuredContent": {"code": relay_mcp.relay_program(envelope)}})
-        for mode in ("unique", "missing", "send_ambiguous", "send_missing", "send_error", "send_throws"):
+        outcomes = {
+            "send_null": "null", "send_array": "[]", "send_text": "'PRIVATE_ERROR_DO_NOT_COPY'",
+            "send_flag_text": "{isError:'false'}", "send_flag_null": "{isError:null}",
+        }
+        for mode in ("unique", "missing", "send_ambiguous", "send_missing", "send_error", "send_throws", *outcomes):
             with self.subTest(mode=mode):
                 harness = (
-                    "const calls=[];const text=()=>{};const tools={"
+                    "const calls=[],outputs=[];Date.now=()=>1234;const text=v=>outputs.push(v);const tools={"
                     "live_namespace__take_relay:async()=>{calls.push('take');return " + result + ";},"
                     "desktop_namespace__send_message_to_thread:async(p)=>{calls.push(p);return {};}};"
                     "let ALL_TOOLS=Object.keys(tools).map(name=>({name}));"
                     + {"unique": "", "missing": "ALL_TOOLS=[];",
                        "send_ambiguous": "ALL_TOOLS.push({name:'other__send_message_to_thread'});",
                        "send_missing": "ALL_TOOLS=ALL_TOOLS.slice(0,1);",
-                       "send_error": "tools.desktop_namespace__send_message_to_thread=async(p)=>{calls.push(p);return {isError:true};};",
-                       "send_throws": "tools.desktop_namespace__send_message_to_thread=async(p)=>{calls.push(p);throw Error('uncertain');};"}[mode]
-                    + "try{" + code + "}catch(e){} console.log(JSON.stringify(calls));"
+                       "send_error": "tools.desktop_namespace__send_message_to_thread=async(p)=>{calls.push(p);return {isError:true,content:[{type:'text',text:'需要明确授权 PRIVATE_ERROR_DO_NOT_COPY'}]};};",
+                       "send_throws": "tools.desktop_namespace__send_message_to_thread=async(p)=>{calls.push(p);throw Error('PRIVATE_ERROR_DO_NOT_COPY');};",
+                       **{key: "tools.desktop_namespace__send_message_to_thread=async(p)=>{calls.push(p);return " + value + ";};"
+                          for key, value in outcomes.items()}}[mode]
+                    + "let error=null;try{" + code + "}catch(e){error=e.message;}"
+                    + "console.log(JSON.stringify({calls,outputs,error}));"
                 )
                 output = subprocess.run([shutil.which("node"), "--input-type=module", "-e", harness],
                                         capture_output=True, encoding="utf-8", check=True, timeout=5)
                 expected = [] if mode == "missing" else ["take"]
-                if mode in {"unique", "send_error", "send_throws"}:
+                if mode in {"unique", "send_error", "send_throws", *outcomes}:
                     expected.append(envelope)
-                self.assertEqual(expected, json.loads(output.stdout))
+                observed = json.loads(output.stdout)
+                self.assertEqual(expected, observed["calls"])
+                diagnostics = json.dumps({k: observed[k] for k in ("outputs", "error")})
+                self.assertNotIn("PRIVATE_ERROR_DO_NOT_COPY", diagnostics)
+                self.assertNotIn("PRIVATE_REQUEST_DO_NOT_COPY", diagnostics)
+                reason = ("native_send_tool_error" if mode == "send_error" else
+                          "native_send_exception" if mode == "send_throws" else
+                          "invalid_native_send_result" if mode in outcomes else None)
+                if reason:
+                    self.assertEqual("operator_relay_" + reason, observed["error"])
+                    self.assertEqual([{"state": "send_error" if mode == "send_error" else "send_outcome_unknown",
+                                       "reason": reason, "preparation_ms": 0}], observed["outputs"])
+                elif mode == "unique":
+                    self.assertIsNone(observed["error"])
+                    self.assertEqual([{"state": "send_returned", "preparation_ms": 0}], observed["outputs"])
 
     def test_server_rejects_malformed_dispatch_before_building_program(self) -> None:
         for dispatch in ({}, {"prompt": "only"}, {"threadId": "task", "hostId": "local", "prompt": 7},
