@@ -45,6 +45,18 @@ REVIEWED_SEARCH_ADDITIONS = frozenset({"operator_core/native_search.py"})
 REVIEWED_ADDITION_SETS = (REVIEWED_ADDITIONS, REVIEWED_SEARCH_ADDITIONS,
                          REVIEWED_ADDITIONS | REVIEWED_SEARCH_ADDITIONS)
 START_HOOK = ".codex/hooks/start-feishu-codex-operator.ps1"
+STOP_HOOK = ".codex/hooks/stop-feishu-codex-operator.ps1"
+REVIEWED_STOP_HOOK_PAIRS = frozenset({(
+    "ff9258ba63e66941b9fa95f65b8f594028e451d2fb0f65054c117028a9d7494f",
+    "1f6489de46b2feb5fd845714a4312800a2e6e1352bbc7ea900dffd8128db4aad",
+)})
+# Reviewed alpha.144 installation -> alpha.145 source: exact Python argv
+# identity validation and explicit GPT-6 Luna admission. This is deliberately
+# a whole-file pair; unrelated edits and future source changes remain conflicts.
+REVIEWED_START_HOOK_PAIRS = frozenset({(
+    "a17041c32327cb8b715f46863e5bdd5f4641a261d3ac6151c2ae706858deb5f7",
+    "743030e4fc04be81187e551214ea09fd769f6dcb872d7fbd2b26592a7b995f55",
+)})
 ABSENT = {"sha256": "absent", "size": 0}
 WEB_RECOVERY_ERRORS = frozenset({
     "cutover_web_recovery_receipt_invalid", "cutover_web_recovery_changed",
@@ -210,10 +222,15 @@ def startup_inventory(path: Path) -> set[str]:
 
 
 def revised_start_hook(project: Path, plugin: Path) -> tuple[bytes, bytes]:
-    """Replace only one literal inventory, with byte-identical surrounding code."""
+    """Admit an exact reviewed Hook pair or one literal inventory change."""
     old = regular_bytes(project / START_HOOK, 2 * 1024 * 1024)
     source = regular_bytes(plugin / "scripts/start-feishu-codex-operator.ps1",
                            2 * 1024 * 1024)
+    if (digest(old), digest(source)) in REVIEWED_START_HOOK_PAIRS:
+        require(startup_inventory(project / START_HOOK) == startup_inventory(
+            plugin / "scripts/start-feishu-codex-operator.ps1"),
+            "cutover_runtime_inventory_mismatch")
+        return old, source
     old_matches = list(EXPECTED_FILES_BYTES_RE.finditer(old))
     new_matches = list(EXPECTED_FILES_BYTES_RE.finditer(source))
     require(len(old_matches) == len(new_matches) == 1,
@@ -229,6 +246,8 @@ def protected_after(plan: dict[str, Any]) -> dict[str, Any]:
     result = dict(plan["protected"])
     if plan.get("schema_version") == 2:
         result[START_HOOK] = plan["startup_hook"]["after"]
+        if "stop_hook" in plan:
+            result[STOP_HOOK] = plan["stop_hook"]["after"]
     return result
 
 
@@ -239,6 +258,11 @@ def check_restore_integrations(project: Path, plan: dict[str, Any]) -> None:
         require(current[START_HOOK] in (row["before"], row["after"]),
                 "cutover_restore_integration_changed")
         current[START_HOOK] = row["before"]
+        if "stop_hook" in plan:
+            row = plan["stop_hook"]
+            require(current[STOP_HOOK] in (row["before"], row["after"]),
+                    "cutover_restore_integration_changed")
+            current[STOP_HOOK] = row["before"]
     require(current == plan["protected"], "cutover_restore_integration_changed")
 
 
@@ -332,6 +356,48 @@ def queue_gate(runtime: Path) -> dict[str, int]:
     return {"actionable_inbox": actionable, "open_callbacks": callbacks}
 
 
+def _retained_marker(profile: Path, receipt: Path, archived: Path,
+                     receipt_raw: bytes, original: bytes) -> Path:
+    """Resolve an explicitly retained relocation without rewriting old evidence."""
+    relocation = profile / "history/retired-marker-relocations.json"
+    if not relocation.exists():
+        return archived
+    value = read_json(relocation)
+    require(set(value) == {"version", "status", "directory", "entries"}
+            and type(value["version"]) is int and value["version"] == 1
+            and value["status"] == "owner_reviewed_relocation"
+            and isinstance(value["directory"], str)
+            and isinstance(value["entries"], dict) and 1 <= len(value["entries"]) <= 64,
+            "cutover_web_recovery_receipt_invalid")
+    directory = Path(value["directory"])
+    require(directory.is_absolute() and ".." not in directory.parts and directory.is_dir(),
+            "cutover_web_recovery_receipt_invalid")
+    plain_path(directory)
+    for name, row in value["entries"].items():
+        require(isinstance(name, str) and re.fullmatch(r"recovery-[a-f0-9]{32}", name)
+                and isinstance(row, dict) and set(row) == {
+                    "receipt_sha256", "old_path", "original_sha256", "old_path_absent"}
+                and row["old_path_absent"] is True
+                and isinstance(row["old_path"], str)
+                and all(isinstance(row[key], str) and HASH_RE.fullmatch(row[key])
+                        for key in ("receipt_sha256", "original_sha256"))
+                and digest(regular_bytes(profile / "history" / name / "receipt.json", 65536))
+                    == row["receipt_sha256"], "cutover_web_recovery_changed")
+    row = value["entries"].get(receipt.parent.name)
+    if row is None:
+        return archived
+    plain_path(archived)
+    require(row["old_path"] == str(archived) and not archived.exists()
+            and row["receipt_sha256"] == digest(receipt_raw)
+            and row["original_sha256"] == digest(original),
+            "cutover_web_recovery_changed")
+    replacement = directory / archived.name
+    require(regular_bytes(replacement, 65536) == original
+            and replacement.stat().st_nlink == 1,
+            "cutover_web_recovery_changed")
+    return replacement
+
+
 def _recovery_journal(profile: Path, receipt: Path) -> tuple[dict[str, Any], bytes, list[bytes]]:
     """Validate retained recovery bytes without treating retirement as a stop."""
     require(receipt.is_absolute() and ".." not in receipt.parts
@@ -403,9 +469,10 @@ def _recovery_journal(profile: Path, receipt: Path) -> tuple[dict[str, Any], byt
             "cutover_web_recovery_changed")
     if original_marker is not None:
         archived = original_marker.with_name("retired-" + receipt.parent.name + "-" + original_marker.name)
-        require(value["archived_marker"] == str(archived)
-                and regular_bytes(archived, 65536) == originals[-1]
-                and archived.stat().st_nlink == 1,
+        require(value["archived_marker"] == str(archived), "cutover_web_recovery_changed")
+        retained = _retained_marker(profile, receipt, archived, raw, originals[-1])
+        require(regular_bytes(retained, 65536) == originals[-1]
+                and retained.stat().st_nlink == 1,
                 "cutover_web_recovery_changed")
     require(regular_bytes(receipt, 65536) == raw, "cutover_web_recovery_changed")
     return value, raw, originals
@@ -424,6 +491,13 @@ def _recovery_history(profile: Path) -> dict[str, str]:
         require(path.is_dir(), "cutover_web_recovery_receipt_invalid")
         _, raw, _ = _recovery_journal(profile, path / "receipt.json")
         result[path.name] = digest(raw)
+    relocation = history / "retired-marker-relocations.json"
+    if relocation.exists():
+        value = read_json(relocation)
+        require(isinstance(value.get("entries"), dict)
+                and set(value["entries"]) <= set(result),
+                "cutover_web_recovery_receipt_invalid")
+        result["retired-marker-relocations.json"] = digest(regular_bytes(relocation, 65536))
     return result
 
 
@@ -714,10 +788,23 @@ def preview(project: Path, plugin: Path, *,
             and (not additions or frozenset(additions) in REVIEWED_ADDITION_SETS),
             "cutover_runtime_inventory_mismatch")
     hook_update = None
-    if additions:
+    stop_update = None
+    installed_stop = file_fingerprint(project / STOP_HOOK)
+    source_stop = file_fingerprint(plugin / "scripts/stop-feishu-codex-operator.ps1")
+    if installed_stop != source_stop:
+        require((installed_stop["sha256"], source_stop["sha256"])
+                in REVIEWED_STOP_HOOK_PAIRS, "cutover_stop_hook_logic_requires_review")
+        stop_update = {"before": installed_stop, "after": source_stop}
+    if additions or regular_bytes(project / START_HOOK, 2 * 1024 * 1024) != regular_bytes(
+            plugin / "scripts/start-feishu-codex-operator.ps1", 2 * 1024 * 1024):
         hook_before, hook_after = revised_start_hook(project, plugin)
+        require(bool(additions) or (digest(hook_before), digest(hook_after))
+                in REVIEWED_START_HOOK_PAIRS, "cutover_hook_logic_requires_review")
         hook_update = {"before": {"sha256": digest(hook_before), "size": len(hook_before)},
                        "after": {"sha256": digest(hook_after), "size": len(hook_after)}}
+    if stop_update and hook_update is None:
+        hook_update = {"before": file_fingerprint(project / START_HOOK),
+                       "after": file_fingerprint(project / START_HOOK)}
     code: dict[str, dict[str, Any]] = {}
     for relative, old_hash in old["code_files"].items():
         require(isinstance(relative, str) and isinstance(old_hash, str)
@@ -750,7 +837,7 @@ def preview(project: Path, plugin: Path, *,
                                 plugin / "scripts/codex-operator.ps1")["sha256"]},
            "code_files": {name: row["after"]["sha256"] for name, row in code.items()},
            "start_hook_sha256": hook_update["after"]["sha256"] if hook_update else old["start_hook_sha256"],
-           "stop_hook_sha256": old["stop_hook_sha256"]}
+           "stop_hook_sha256": stop_update["after"]["sha256"] if stop_update else old["stop_hook_sha256"]}
     reviewed = reviewed_version_update(old["operator_version"], new["operator_version"], version_update)
     require(reviewed is None or not additions, "cutover_version_review_inventory_changed")
     plan = {"schema_version": 2 if hook_update else 1, "project": str(project), "plugin": str(plugin),
@@ -761,6 +848,8 @@ def preview(project: Path, plugin: Path, *,
         plan["version_update"] = reviewed
     if hook_update:
         plan["startup_hook"] = hook_update
+    if stop_update:
+        plan["stop_hook"] = stop_update
     if web_recovery_receipt is not None:
         require(isinstance(web_recovery, dict)
                 and web_recovery.get("receipt") == str(web_recovery_receipt),
@@ -884,6 +973,12 @@ def apply(project: Path, plugin: Path, expected_digest: str, *,
                 atomic_bytes(path, raw)
                 require(file_fingerprint(path) == plan["startup_hook"][
                     "before" if label == "original" else "after"], "cutover_backup_changed")
+        if "stop_hook" in plan:
+            for label, path in (("original", project / STOP_HOOK),
+                                ("prepared", plugin / "scripts/stop-feishu-codex-operator.ps1")):
+                target = transaction / ("stop-hook." + label + ".ps1")
+                expected = plan["stop_hook"]["before" if label == "original" else "after"]
+                atomic_bytes(target, checked_bytes(path, expected, "cutover_file_changed_before_write"))
         # The backup and original manifest are rechecked before the first write.
         require(preview(project, plugin, process_check=process_check,
                         services_check=services_check,
@@ -925,6 +1020,13 @@ def apply(project: Path, plugin: Path, expected_digest: str, *,
                     and file_fingerprint(plugin / "scripts/start-feishu-codex-operator.ps1") == hook["after"],
                     "cutover_backup_changed")
             writer(project / START_HOOK, checked_bytes(prepared_hook, hook["after"], "cutover_backup_changed"))
+        if "stop_hook" in plan:
+            row = plan["stop_hook"]
+            require(file_fingerprint(project / STOP_HOOK) == row["before"]
+                    and file_fingerprint(plugin / "scripts/stop-feishu-codex-operator.ps1") == row["after"],
+                    "cutover_integration_changed")
+            writer(project / STOP_HOOK, checked_bytes(transaction / "stop-hook.prepared.ps1",
+                row["after"], "cutover_backup_changed"))
         require(protected_snapshot(project) == protected_after(plan),
                 "cutover_integration_changed")
         require(file_fingerprint(runtime / "runtime-manifest.json")["sha256"]
@@ -1001,7 +1103,21 @@ def restore(project: Path, plugin: Path, preview_digest: str, *,
     if plan["schema_version"] == 2:
         require(not intent.get("restore_attempted"), "cutover_restore_terminal_no_retry")
         added = {name for name, row in plan["code"].items() if row["before"] == ABSENT}
-        require(frozenset(added) in REVIEWED_ADDITION_SETS
+        reviewed_hook_pair = (plan["startup_hook"]["before"]["sha256"],
+                              plan["startup_hook"]["after"]["sha256"])
+        reviewed_stop = False
+        if "stop_hook" in plan:
+            row = plan["stop_hook"]
+            require((row["before"]["sha256"], row["after"]["sha256"]) in REVIEWED_STOP_HOOK_PAIRS
+                    and row["before"] == plan["protected"][STOP_HOOK]
+                    and row["after"]["sha256"] == plan["new_manifest"]["stop_hook_sha256"]
+                    and file_fingerprint(transaction / "stop-hook.original.ps1") == row["before"]
+                    and file_fingerprint(transaction / "stop-hook.prepared.ps1") == row["after"],
+                    "cutover_restore_identity_invalid")
+            reviewed_stop = True
+        require((frozenset(added) in REVIEWED_ADDITION_SETS
+                 or not added and (reviewed_hook_pair in REVIEWED_START_HOOK_PAIRS
+                    or reviewed_stop and plan["startup_hook"]["before"] == plan["startup_hook"]["after"]))
                 and plan["startup_hook"]["before"] == plan["protected"][START_HOOK]
                 and plan["startup_hook"]["after"]["sha256"] == plan["new_manifest"]["start_hook_sha256"],
                 "cutover_restore_identity_invalid")
@@ -1081,6 +1197,9 @@ def restore(project: Path, plugin: Path, preview_digest: str, *,
                     "cutover_backup_changed")
             writer(project / START_HOOK, checked_bytes(original_hook,
                 plan["startup_hook"]["before"], "cutover_backup_changed"))
+        if "stop_hook" in plan:
+            writer(project / STOP_HOOK, checked_bytes(transaction / "stop-hook.original.ps1",
+                plan["stop_hook"]["before"], "cutover_backup_changed"))
         require(protected_snapshot(project) == plan["protected"],
                 "cutover_restore_integration_changed")
         manifest_path = runtime / "runtime-manifest.json"

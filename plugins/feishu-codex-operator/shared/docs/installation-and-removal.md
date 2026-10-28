@@ -448,3 +448,13 @@ reviewed migration. Do not treat the latest runtime backup as the original, and
 do not make old data appear to be a fresh-install receipt. A stopped recovery
 plan can preserve original shortcut receipts and identify exact owned Hook/rule
 fragments for removal, with its provenance stated separately.
+
+
+### 已退休 Web 标记的明确迁移
+
+已完成恢复的历史退休标记若随旧目录删除，原回执不能改写为新路径。
+所有者可指定新归档目录；仅在逐字恢复原件仍完整时，保留非活动副本并登记
+`history/retired-marker-relocations.json`。登记精确绑定原回执摘要、原路径、
+原件摘要和原路径缺失状态。维护检查仍遍历全部恢复历史，并将迁移凭据纳入
+历史摘要；原路径重现、回执或副本变化、链接和不完整档案均拒绝。
+这不恢复活动隧道、登录、密钥或旧安装所有权，也不构成正常停止证明。

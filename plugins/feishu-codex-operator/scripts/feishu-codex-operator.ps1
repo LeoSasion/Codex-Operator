@@ -1731,6 +1731,33 @@ function Invoke-OperatorReadiness {
     }
 }
 
+function Test-OperatorRulesMirror {
+    param([string]$Installed, [string]$Canonical)
+    try {
+        $blocks = @()
+        foreach ($path in @($Installed, $Canonical)) {
+            $info = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+            if ($info.PSIsContainer -or $info.Length -gt 2097152 -or
+                ($info.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $false }
+            $text = [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($path))
+            if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+            $text = $text.Replace("`r`n", "`n")
+            $markers = @('<!-- FEISHU_CODEX_OPERATOR_RULES_START -->', '<!-- FEISHU_CODEX_OPERATOR_RULES_END -->')
+            $positions = @()
+            foreach ($marker in $markers) {
+                $escaped = [regex]::Escape($marker)
+                if ([regex]::Matches($text, $escaped).Count -ne 1) { return $false }
+                $match = [regex]::Match($text, '(?m)^' + $escaped + '$')
+                if (-not $match.Success) { return $false }
+                $positions += $match.Index
+            }
+            if ($positions[1] -le $positions[0]) { return $false }
+            $blocks += $text.Substring($positions[0], $positions[1] + $markers[1].Length - $positions[0])
+        }
+        return $blocks[0] -ceq $blocks[1]
+    } catch { return $false }
+}
+
 function Get-OperatorValidateContract {
     $pluginRoot = Split-Path -Parent $PSScriptRoot
     $inventory = Join-Path $pluginRoot 'assets\release-inventory.json'
@@ -1738,11 +1765,7 @@ function Get-OperatorValidateContract {
     $rootRules = Join-Path (Resolve-Project) 'AGENTS.md'
     $checks = [ordered]@{
         release_inventory = (Test-Path -LiteralPath $inventory -PathType Leaf)
-        rules_mirror = (
-            (Test-Path -LiteralPath $rootRules -PathType Leaf) -and
-            (Get-FileHash -LiteralPath $rootRules -Algorithm SHA256).Hash -ceq
-            (Get-FileHash -LiteralPath $rules -Algorithm SHA256).Hash
-        )
+        rules_mirror = (Test-OperatorRulesMirror -Installed $rootRules -Canonical $rules)
         minimal_beeper_source = (
             (Test-Path -LiteralPath (Join-Path $pluginRoot 'scripts\operator_core\beeper_relay.py')) -and
             -not (Test-Path -LiteralPath (Join-Path $pluginRoot 'scripts\operator_core\beeper_queue.py'))

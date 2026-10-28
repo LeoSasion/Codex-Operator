@@ -2,7 +2,7 @@
 
 Connect IM channels, online/local models, and ChatGPT Web to Codex Desktop.
 
-**Windows preview · MIT · [1.2.0-preview.5](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.5) · Operator 4.2.0-alpha.144**
+**Windows preview · MIT · [1.2.0-preview.6](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.6) · Operator 4.2.0-alpha.146**
 
 本版精简运行发行包，开发测试、公共夹具和 runner 保留在完整 Git 源码仓库中。源码审计继续要求完整且互斥的运行与开发清单，并筛查两组内容；解压运行包使用 `audit-feishu-codex-release.ps1 -Scope release`。旧版本兼容、权限、取消和恢复测试继续保留。
 

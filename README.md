@@ -4,7 +4,7 @@
 
 面向 Codex Desktop 的两个职能板块：Channels 连接 IM 会话，Models 接入 API、本地和 Web 模型。Codex 原生任务继续负责上下文、工具、审批和执行。
 
-Windows 预览版 **[1.2.0-preview.5](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.5)**（Operator 源码 `4.2.0-alpha.144`），项目自有代码采用 [MIT](LICENSE)。此版本为 Pre-release，支持范围与待验项见[发布验收清单](plugins/feishu-codex-operator/development/docs/first-release-readiness.md)。
+Windows 预览版 **[1.2.0-preview.6](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.6)**（Operator 源码 `4.2.0-alpha.146`），项目自有代码采用 [MIT](LICENSE)。此版本为 Pre-release，支持范围与待验项见[发布验收清单](plugins/feishu-codex-operator/development/docs/first-release-readiness.md)。
 
 本版精简运行发行包，测试、公共夹具和测试入口继续保留在完整源码仓库中；构建仍核对并筛查完整源码，运行包使用明确的发行审计范围。此前的 Web 分层诊断、GPT-6 Medium、取消及冷启动验收记录继续保留，Web/Local 仍为实验状态。
 
