@@ -1,6 +1,6 @@
 # Codex 升级后固定检查流程
 
-更新：2026-10-17。本页用于官方 Desktop/CLI 升级、Operator 源码更新或明确端点合同变化后的人工维护，复用已有检查命令，不新增后台监视、自动升级、自动重试或产品界面。先读[项目记忆](../../models/web/docs/native-web-experience.md)、[原生对话计划](../../models/web/docs/native-conversation-plan.md)及[安装与恢复](../../shared/docs/installation-and-removal.md)。旧版本的通过、失败和未确认记录均保留。
+更新：2026-10-29。本页用于官方 Desktop/CLI 升级、Operator 源码更新或明确端点合同变化后的人工维护，复用已有检查命令，不新增后台监视、自动升级、自动重试或产品界面。先读[项目记忆](../../models/web/docs/native-web-experience.md)、[原生对话计划](../../models/web/docs/native-conversation-plan.md)及[安装与恢复](../../shared/docs/installation-and-removal.md)。旧版本的通过、失败和未确认记录均保留。
 
 升级回归需检查既有协议类型的新增字段，不只搜索新增类型名。`encrypted_function_args` 的历史和完整终态都要校验；明确明文适配合同只保留 absent/null/[]，非空或错误类型须在任何工具放行前拒绝，native/v1/null 保持透明。Windows Hook 必须解析实际 argv 核对脚本绝对路径，路径子串不能证明进程归属；未知参数形状、不可读身份或 PID 重用须拒绝控制。
 
@@ -28,7 +28,7 @@ $operatorPort = <已有记录绑定的端口>
 | --- | --- | --- |
 | 官方 Desktop | 唯一 Appx 包 full name/family/package_version、manifest 摘要、官方程序摘要；executable_product_version 与独立核验的 desktop_product_version 分开 | `Get-AppxPackage`、`Get-FileHash`；模式入口的 `inspect_package` 另核对 manifest 的 App/executable/entry point |
 | CLI 与测试环境 | 准确 CLI 路径、文件摘要、`--version` 原输出及退出码；Python/Node/pwsh/Bash 的版本与摘要 | 准确可执行文件的只读版本命令；不用旧成功替代当前版本 |
-| canonical 源码 | Git HEAD、完整未提交差异的范围、发布清单中的逐文件摘要 | release audit 与 `build_codex_operator_release.collect`；已装 runtime/cache 单独比较 |
+| canonical 源码 | Git HEAD、完整未提交差异的范围、运行及开发清单中的逐文件摘要 | source scope release audit 与 `build_codex_operator_release.collect(..., include_development=True)`；已装 runtime/cache 单独比较 |
 | 已装隔离入口 | `entry.json`、entry.ps1、三份编译入口、Python、source bindings、当前包与配对归属链 | `operator_mode_entry.py status`；已装配对入口只沿配对维护流程 |
 | 目录与端点合同 | 实际 `registry.json`、隔离 `home/models.json` 摘要；每个明确 Responses 合同及其 adapter/evaluator 摘要 | `readiness`、`preflight`、`verification-status`；目录可见不等于能力通过 |
 | 保护与恢复 | 本轮列明的原生 config/cache/入口、原恢复 helper/launcher、快捷方式和归属记录的摘要、原件位置、缺失状态 | 既有安装/恢复记录与只读预览；仅算摘要，不将凭据或历史正文复制到回执 |
@@ -82,7 +82,7 @@ import sys
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root / 'plugins/feishu-codex-operator/scripts'))
 from build_codex_operator_release import collect
-data, _, package_version = collect(root)
+data, _, package_version = collect(root, include_development=True)
 files = {name: hashlib.sha256(raw).hexdigest() for name, raw in sorted(data.items())}
 print(json.dumps({'package_version': package_version, 'files': files}, sort_keys=True))
 '@

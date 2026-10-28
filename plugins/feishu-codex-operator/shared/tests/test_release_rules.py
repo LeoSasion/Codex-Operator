@@ -112,8 +112,8 @@ class ReleaseMirrorCollectorTests(unittest.TestCase):
             # Root rules are private input even if someone previously copied
             # their entire contents to the public mirror by mistake.
             (root / 'AGENTS.md').write_bytes(b'PRIVATE_ROOT_ONLY\n' + mirror)
-            inventory = {'schema_version': 1, 'repository_files': ['LICENSE'],
-                         'components': [{'root_role': 'plugin_root', 'paths': list(files)}],
+            inventory = {'schema_version': 1, 'repository_files': ['LICENSE'], 'development_paths': [],
+                         'components': [{'root_role': 'plugin_root', 'paths': [*files, 'assets/release-inventory.json']}],
                          'reviewed_document_sha256': {name: hashlib.sha256(files[name]).hexdigest()
                                                      for name in release_builder.REVIEWED_DOCS}}
             (plugin / 'assets/release-inventory.json').write_text(json.dumps(inventory), encoding='utf8')

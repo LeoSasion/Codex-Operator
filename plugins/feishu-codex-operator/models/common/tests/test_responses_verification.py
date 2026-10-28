@@ -20,7 +20,7 @@ import sys
 import tempfile
 import unittest
 
-from test_responses_tools import ROUTE
+from operator_test_fixtures.responses import ROUTE
 from operator_core.model_registry import RouterError
 from operator_core.responses_profiles import CORE_CHECKS, make_profile
 from operator_core.responses_verification import REQUIRED, empty_ledger, inspect_ledger, format_verification_report

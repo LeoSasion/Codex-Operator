@@ -238,7 +238,7 @@ class CurrentCliCatalogTests(unittest.TestCase):
         beeper = json.loads((_OPERATOR_PLUGIN_ROOT /
             "scripts/operator_core/beeper_model_catalog.json").read_text(encoding="utf-8"))
         from copy import deepcopy
-        from test_responses_tools import ROUTE
+        from operator_test_fixtures.responses import ROUTE
         adapted = {**deepcopy(ROUTE), "slug": "local/adapted-catalog-check", "reasoning_efforts": ["none", "low"]}
         registry = ModelRegistry({"version": 2, "models": [{
             "slug": "api/catalog-check", "display_name": "Catalog check",

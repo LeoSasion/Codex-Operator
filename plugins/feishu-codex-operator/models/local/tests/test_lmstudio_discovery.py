@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 import operator_model_router as router_cli
 
-from test_responses_tools import ROUTE
+from operator_test_fixtures.responses import ROUTE
 from operator_core import model_router_config as settings
 from operator_core.lmstudio_discovery import discovery_plan, scan, stable_slug, synchronize, validate_policy
 from operator_core.model_registry import RouterError

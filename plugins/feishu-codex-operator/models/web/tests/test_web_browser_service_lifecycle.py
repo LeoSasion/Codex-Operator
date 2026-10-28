@@ -33,7 +33,7 @@ from operator_core.web_browser_driver import WebTextBrowserDriver
 from operator_core.web_browser_session import WebBrowserSession
 from operator_core.web_mcp_transport import WebMcpEndpoint, WebResponsesBridge
 from operator_core.web_responses_provider import WebResponsesProvider
-from test_web_model_protocol import message
+from operator_test_fixtures.web import message
 
 
 class BrowserServiceLifecycleTests(unittest.IsolatedAsyncioTestCase):

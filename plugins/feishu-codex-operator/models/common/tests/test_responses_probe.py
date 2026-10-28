@@ -17,7 +17,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from test_responses_tools import ROUTE, response
+from operator_test_fixtures.responses import ROUTE, response
 from operator_responses_probe import probe, probe_input, probe_usage, reserve_receipt, source_difference
 from operator_core.responses_profiles import profile_from_reports, inspect_profile
 

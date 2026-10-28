@@ -19,7 +19,7 @@ import unittest
 from unittest.mock import patch
 
 from aiohttp import ClientSession
-from test_web_model_protocol import message, SLUG, FUNCTION
+from operator_test_fixtures.web import message, SLUG, FUNCTION
 from test_web_mcp_transport import protocol
 from operator_core.model_router import MAX_BODY
 from operator_core.responses_capabilities import RouterError

@@ -14,7 +14,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import unittest
 
-from test_responses_tools import ROUTE
+from operator_test_fixtures.responses import ROUTE
 from operator_core.responses_profiles import CORE_CHECKS, contract_digest, inspect_profile, make_profile, preflight, profile_from_reports
 from operator_core.responses_capabilities import RouterError
 

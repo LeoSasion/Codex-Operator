@@ -14,7 +14,7 @@
 
 同版原生 App Server schema 的只读核对进一步确认：`model/list` 请求和返回的模型项均无 provider 字段，`turn/start` 也不能逐回合切换 provider；`thread/start` 虽可指定 `modelProvider`，但会创建独立任务。它不满足“同一主窗口现有任务里选任意提供方”的体验要求。目录、独立任务与 Desktop 主菜单分别验收；在上游支持前不把目录可见性写成菜单可用性。
 
-2026-09-28 的 opt-in 隔离实验 `test_one_provider_routes_two_models_in_same_task` 使用当前 CLI、临时 Codex home 和无真实账号的 loopback Responses 端点，证明同一任务在**同一个 provider** 内连续选择两个模型 slug 时，新用户输入到达各自的模型；固定 413 加上该自定义 provider 的双重零重试配置只发送一次，失败回合仍保留。切到第二个模型前还观察到 Codex 把一次自动上下文检查点发给旧模型，因此模型切换不能简单等同于“只有新模型会收到流量”。实验中 `model/list` 的两个合成条目依赖替换式静态 `model_catalog_json`；只实现 `/v1/models` 不会将它们列出。真实混合目录必须另外保留完整官方条目。这只证明单一合成 provider 的 App Server 行为，不证明官方、API、本地和 Web 在真实 Desktop 主菜单中可无缝切换，也不解除当前官方直连保护。完整隔离用例见 [`test_model_catalog_cli.py`](../tests/test_model_catalog_cli.py)。
+2026-09-28 的 opt-in 隔离实验 `test_one_provider_routes_two_models_in_same_task` 使用当前 CLI、临时 Codex home 和无真实账号的 loopback Responses 端点，证明同一任务在**同一个 provider** 内连续选择两个模型 slug 时，新用户输入到达各自的模型；固定 413 加上该自定义 provider 的双重零重试配置只发送一次，失败回合仍保留。切到第二个模型前还观察到 Codex 把一次自动上下文检查点发给旧模型，因此模型切换不能简单等同于“只有新模型会收到流量”。实验中 `model/list` 的两个合成条目依赖替换式静态 `model_catalog_json`；只实现 `/v1/models` 不会将它们列出。真实混合目录必须另外保留完整官方条目。这只证明单一合成 provider 的 App Server 行为，不证明官方、API、本地和 Web 在真实 Desktop 主菜单中可无缝切换，也不解除当前官方直连保护。完整隔离用例见 [`test_model_catalog_cli.py`](https://github.com/LeoSasion/Codex-Operator/blob/main/plugins/feishu-codex-operator/models/common/tests/test_model_catalog_cli.py)。
 
 ## 助手引导流程
 

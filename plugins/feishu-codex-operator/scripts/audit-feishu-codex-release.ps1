@@ -1,7 +1,8 @@
 [CmdletBinding()]
-param()
+param([ValidateSet('source','release')][string]$Scope = 'source')
 
 $ErrorActionPreference = 'Stop'
+$Scope = $Scope.ToLowerInvariant()
 $pluginRoot = Split-Path -Parent $PSScriptRoot
 $inventoryPath = Join-Path $pluginRoot 'assets\release-inventory.json'
 $inventory = Get-Content -LiteralPath $inventoryPath -Raw -Encoding utf8 |
@@ -35,29 +36,6 @@ foreach ($relative in $listed) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Release inventory path is missing: $relative"
     }
-}
-
-function Get-ReleaseSourceFiles([string]$Directory) {
-    foreach ($item in Get-ChildItem -LiteralPath $Directory -Force) {
-        if ($item.PSIsContainer -and ($item.Name -in @('_quarantine','__pycache__') -or
-            ($item.Name -eq '.tmp' -and (Split-Path -Leaf $Directory) -eq 'tests'))) { continue }
-        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            throw 'Release source contains a linked path.'
-        }
-        if ($item.PSIsContainer) { Get-ReleaseSourceFiles $item.FullName } else { $item }
-    }
-}
-
-[string[]]$actual = @(
-    Get-ReleaseSourceFiles $pluginRoot |
-        ForEach-Object {
-            $_.FullName.Substring($pluginRoot.Length).TrimStart('\', '/').Replace('\', '/')
-        } |
-        Sort-Object -Unique
-)
-$missingFromInventory = @($actual | Where-Object { $_ -notin $listed })
-if ($missingFromInventory.Count -gt 0) {
-    throw "Release inventory omits source files: $($missingFromInventory -join ', ')"
 }
 
 $configText = Get-Content -LiteralPath (Join-Path $pluginRoot 'scripts\operator_core\config.py') -Raw -Encoding utf8
@@ -114,12 +92,14 @@ sys.path.insert(0, str(root / 'scripts'))
 from build_codex_operator_release import collect, safe_path
 
 inventory = json.loads((root / 'assets/release-inventory.json').read_text(encoding='utf-8'))
-paths = [safe_path(p) for component in inventory['components'] for p in component['paths']]
+scope = sys.argv[2]
+collect(root.parent.parent, scope=scope)
+selected = inventory['components'][0]['paths'] + (inventory['development_paths'] if scope == 'source' else [])
+paths = [safe_path(p) for p in selected]
 for path in (root / p for p in paths if p.suffix == '.py'):
     compile(path.read_text(encoding='utf-8-sig'), str(path), 'exec')
-collect(root.parent.parent)
 '@
-& $python.Source @($python.Prefix) -B -c $sourceValidation $pluginRoot
+& $python.Source @($python.Prefix) -B -c $sourceValidation $pluginRoot $Scope
 if ($LASTEXITCODE -ne 0) { throw 'Python syntax or reviewed source validation failed.' }
 
 foreach ($script in Get-ChildItem -LiteralPath (Join-Path $pluginRoot 'scripts') -File | Where-Object Extension -in @('.ps1','.psm1')) {
@@ -138,8 +118,10 @@ foreach ($script in Get-ChildItem -LiteralPath (Join-Path $pluginRoot 'scripts')
 Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
     schema_version = 1
     status = 'passed'
+    scope = $Scope
     source_version = [string]$inventory.source_version
     inventory_files = $listed.Count
+    development_files = $(if ($Scope -eq 'source') { @($inventory.development_paths).Count } else { 0 })
     reviewed_documents = @($inventory.reviewed_document_sha256.PSObject.Properties).Count
     content_screen = $true
     python_syntax = $true

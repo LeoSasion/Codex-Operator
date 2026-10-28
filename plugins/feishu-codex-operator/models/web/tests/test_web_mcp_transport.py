@@ -17,7 +17,7 @@ import unittest
 from unittest.mock import patch
 
 from aiohttp import ClientSession, ClientTimeout, web
-from test_web_model_protocol import make, message, FUNCTION
+from operator_test_fixtures.web import make, message, FUNCTION
 from operator_core.responses_capabilities import RouterError
 from operator_core.responses_tool_adapter import dumps
 from operator_core.web_model_protocol import _tool_declaration_change_kinds
@@ -415,7 +415,7 @@ class IndexedWebRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(native.source_input(),source)
 
     async def test_paged_catalog_discovers_exact_entries_before_reading_the_remaining_inventory(self):
-        from test_web_model_protocol import EXEC
+        from operator_test_fixtures.web import EXEC
         tools = [{**FUNCTION, 'description': '中文 schema 😀\\r\\n' * 3500},
             {'type': 'namespace', 'name': 'functions', 'tools': [EXEC]},
             *[{**FUNCTION, 'name': 'inspect_' + str(i)} for i in range(336)]]
@@ -686,7 +686,7 @@ class IndexedWebRequestTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.gather(task, return_exceptions=True)
 
     async def test_exact_unicode_context_and_catalog_preserve_all_native_declarations(self):
-        from test_web_model_protocol import EXEC
+        from operator_test_fixtures.web import EXEC
         source = '中文😀 C:\\a_b\\z "quoted"\r\n\t\u0000  '
         tools = [{'type': 'namespace', 'name': 'functions', 'tools': [EXEC]},
             *[{**FUNCTION, 'name': 'inspect_' + str(i), 'description': source * 12}
@@ -952,7 +952,7 @@ class WebResponsesBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('citation_validation', bridge.diagnostics()['last_turn'])
 
     def payload(self, turn='turn-1', thread='thread-1'):
-        from test_web_model_protocol import SLUG
+        from operator_test_fixtures.web import SLUG
         return {'model': SLUG, 'input': [{'role': 'user', 'content': 'fixture'}],
             'tools': [FUNCTION], 'reasoning': {'effort': 'high'}, 'stream': True,
             'client_metadata': {'thread_id': thread, 'turn_id': turn}}
@@ -1462,7 +1462,7 @@ class WebMcpTurnTests(unittest.IsolatedAsyncioTestCase):
         endpoint = WebMcpEndpoint(begin_result_mode='structured_begin_v1', indexed_protocol='mcp_catalog_pages_v2')
         url = await endpoint.start()
         self.addAsyncCleanup(endpoint.stop)
-        from test_web_model_protocol import EXEC
+        from operator_test_fixtures.web import EXEC
         native = make({'tools': [FUNCTION,
             {'type': 'tool_search', 'execution': 'client', 'parameters': {'type': 'object'}},
             {'type': 'namespace', 'name': 'functions', 'tools': [EXEC]},
@@ -2374,7 +2374,7 @@ class WebMcpTurnTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(wait, 0.5)
 
     async def test_original_namespaced_result_is_retained(self):
-        from test_web_model_protocol import make, FUNCTION
+        from operator_test_fixtures.web import make, FUNCTION
         payload = {'input': [{'role': 'user', 'content': 'fixture'}],
             'tools': [{'type': 'namespace', 'name': 'fixture', 'tools': [FUNCTION]}]}
         p = make(payload, structured_tool_outputs=True)

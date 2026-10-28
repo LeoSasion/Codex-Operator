@@ -1078,7 +1078,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
         self.prefix = self.router.prefix
 
     def payload(self, turn='turn', stream=False):
-        from test_web_model_protocol import FUNCTION
+        from operator_test_fixtures.web import FUNCTION
         return {'model':self.base_route.slug,'input':[{'role':'user','content':'中文\r\n原文'}],
             'tools':[FUNCTION],'reasoning':{'effort':'high'},'stream':stream,
             'client_metadata':{'thread_id':'fixture-thread','turn_id':turn}}
@@ -1112,7 +1112,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
         self.fail('missing terminal')
 
     async def test_managed_web_waits_beyond_ordinary_read_timeout_http_and_socket(self):
-        from test_web_model_protocol import message
+        from operator_test_fixtures.web import message
         from dataclasses import replace
         async def browser(turn):
             turn.begin(turn.key)
@@ -1188,7 +1188,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.router.session.timeout.sock_read,.08)
 
     async def test_real_bridge_http_tools_results_native_auth_isolation_no_double_adaptation(self):
-        from test_web_model_protocol import message
+        from operator_test_fixtures.web import message
         actual = []
         async def browser(turn):
             turn.begin(turn.key)
@@ -1221,7 +1221,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider.requests,3)
 
     async def test_websocket_tools_continuation_and_sse(self):
-        from test_web_model_protocol import message
+        from operator_test_fixtures.web import message
         actual = []
         async def browser(turn):
             turn.begin(turn.key)
@@ -1279,7 +1279,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(actual),2)
 
     async def test_invalid_managed_terminal_body_never_becomes_assistant_output(self):
-        from test_web_model_protocol import message
+        from operator_test_fixtures.web import message
         from aiohttp import web
         async def browser(turn):
             return message()
@@ -1297,7 +1297,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(terminal.data,1011)
 
     async def test_snapshot_publication_new_http_old_socket_and_no_cross_instance_turn(self):
-        from test_web_model_protocol import message
+        from operator_test_fixtures.web import message
         async def old(turn):
             turn.begin(turn.key); return message(['old'])
         async def new(turn):
@@ -1320,7 +1320,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((first.requests,second.requests),(2,1))
 
     async def test_same_binding_no_io_failures_keep_previous_and_throttle(self):
-        from test_web_model_protocol import message
+        from operator_test_fixtures.web import message
         async def browser(turn):
             turn.begin(turn.key); return message()
         _, _, route = await self.provider(browser)
@@ -1339,7 +1339,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(self.router._web_bind_not_before,0)
 
     async def test_binding_selection_collision_and_private_field_cannot_be_registered(self):
-        from test_web_model_protocol import message
+        from operator_test_fixtures.web import message
         async def browser(turn):
             return message()
         _,_,route = await self.provider(browser)
@@ -1357,7 +1357,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
             await self.publish(route)
 
     async def test_registry_reload_preserves_binding_and_rejects_collision_atomically(self):
-        from test_web_model_protocol import message
+        from operator_test_fixtures.web import message
         async def browser(turn):
             return message()
         _,_,route = await self.provider(browser)
@@ -1393,7 +1393,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider.requests,1)
 
     async def test_native_catalog_and_wire_unchanged_after_web_attachment(self):
-        from test_web_model_protocol import message
+        from operator_test_fixtures.web import message
         seen=[]
         async def native(request):
             if request.path=='/models':
@@ -1422,7 +1422,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_binding_cancellation_and_concurrent_reload_cannot_publish_late(self):
         import threading
         entered,release=threading.Event(),threading.Event()
-        from test_web_model_protocol import message
+        from operator_test_fixtures.web import message
         async def browser(turn):
             return message()
         _,_,route=await self.provider(browser)
@@ -1443,7 +1443,7 @@ class ManagedWebRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.router._registry.routes,{})
 
     async def test_turn_admission_memory_is_bounded_and_identifies_original_turn(self):
-        from test_web_model_protocol import message
+        from operator_test_fixtures.web import message
         async def browser(turn):
             self.fail('capacity rejection must precede forwarding')
         provider,_,route=await self.provider(browser)
