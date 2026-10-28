@@ -44,6 +44,25 @@ alone does not attest to upstream inference or billing cessation.
 
 The existing isolated evaluator also adds exact loopback exclusions to its child's NO_PROXY, retaining inherited exclusions and proxy values. Verify that the parent environment is unchanged. A native 502 with zero admitted local requests needs private bounded stderr evidence before attribution; do not rewrite it into a tool, provider or permission failure. Repeat the original cancellation, multiround and selected terminal cases after repair. Keep the initial full-run failures and native config/cache protection drift separate from later affected-module results and a newly retained comparison snapshot.
 
+The isolated Desktop host must retain this same loopback property. The Windows
+compiled-host probe inspects its actual ProcessStartInfo for absent and existing
+bypass values, proxy preservation, private home selection and unchanged parent
+environment, without launching Desktop. A real CLI comparison using two disposable
+local capture endpoints can distinguish a system-proxy 502 from a router or Web
+failure: bind the CLI, count actual arrivals and retain the synthetic terminal,
+with zero account or model access. Do not disable the system proxy or broaden
+network permissions to make a local route work.
+
+For live cold-start acceptance, normally exit the exact extension instance and
+obtain a request-free router stop before editing bound source. Apply its checked
+pair upgrade, use the real shortcut and picker, then compare exact process births,
+model/effort, tool arguments/results and visible final output. Retain a failed turn
+and use a different new fixture after a fix. Verify exit/reopen and same-chat
+continuation separately. Newer Desktop versions can compress rollouts to
+`.jsonl.zst`; compare the fully decompressed bytes and retained prefixes rather
+than assuming a missing original path means history was lost. Never rewrite the
+history to satisfy a byte check.
+
 Explicit legacy alpha-version maintenance also tests the public version flags, default refusal, exact from/to mismatch, downgrade and release-line rejection, complete original-manifest restoration, late source changes and preservation of later edits. The version selection is part of the preview identity; source-test success does not itself authorize deployment or erase an earlier incomplete wrapper run. Keep the documented 3600-second whole-run allowance when invoking the complete legacy module.
 
 The fixture-only NativeApprovalCapture in [the evaluator](../../scripts/operator_responses_eval.py) is a separate opt-in App Server transport; the existing evaluate() and CLI cases keep their never/read-only policy. Use newly created private homes and raw-log folders, new synthetic work directories with normal permission inheritance, a pinned CLI, and an explicitly checked model/endpoint contract. The controller must constrain and inspect the actual command or file change. Capture the complete original request and response, exact RPC ID type, thread/turn/item identities, terminal outcome and before/after file bytes; a model claim is insufficient.
