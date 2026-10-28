@@ -3,7 +3,7 @@
   "release_name": "feishu-codex-operator-plugin",
   "source_version": "4.2.0-alpha.144",
   "reviewed_document_sha256": {
-    "README.md": "2816eb487ce109c8ec6c191992d8df93555af499f62a8dfffbed3d9596969a16",
+    "README.md": "99bde41af2b3c1d67932c8f3c18e95c8ace9b0cb73ba4cd6206ca6e781aede4a",
     "models/web/docs/native-web-experience.md": "78d2fa3ad97faa1dce81f39c02485c14209250cdd15271d2b44b1c18509b03da",
     "models/web/docs/chatgpt-web-integration.md": "8c4dbb5b52d65436d38d253c2fba2b67a70c0d420fb3788723920d5b9902d3df",
     "development/docs/release-audit.md": "5c6a819a876bec7822c822c71b73b05fb28278cb87a00e1422384365bdcec08e",
