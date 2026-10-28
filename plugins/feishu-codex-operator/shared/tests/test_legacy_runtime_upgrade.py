@@ -66,6 +66,7 @@ class LegacyRuntimeUpgradeTests(unittest.TestCase):
         stop_hook = self.project / ".codex/hooks/stop-feishu-codex-operator.ps1"
         write(start_hook, inventory)
         write(stop_hook, b"stopped legacy hook")
+        write(self.plugin / "scripts/stop-feishu-codex-operator.ps1", b"stopped legacy hook")
         write(self.plugin / "assets/release-inventory.json", json.dumps({
             "source_version": "4.2.0-alpha.138"}).encode())
         code = {}
@@ -1143,6 +1144,53 @@ class ReviewedStartHookTests(unittest.TestCase):
     def test_current_source_is_exact_reviewed_destination(self):
         source = (PLUGIN / "scripts/start-feishu-codex-operator.ps1").read_bytes()
         self.assertIn(sha(source), {pair[1] for pair in cutover.REVIEWED_START_HOOK_PAIRS})
+
+
+class ReviewedStopHookTests(unittest.TestCase):
+    setUp = LegacyRuntimeUpgradeTests.setUp
+    preview = LegacyRuntimeUpgradeTests.preview
+    apply = LegacyRuntimeUpgradeTests.apply
+    restore = LegacyRuntimeUpgradeTests.restore
+
+    def pair(self):
+        old_path = self.project / cutover.STOP_HOOK
+        source = self.plugin / "scripts/stop-feishu-codex-operator.ps1"
+        old = old_path.read_bytes(); new = b"# reviewed exact argv\n" + old
+        source.write_bytes(new)
+        patcher = mock.patch.object(cutover, "REVIEWED_STOP_HOOK_PAIRS", frozenset({(sha(old), sha(new))}))
+        patcher.start(); self.addCleanup(patcher.stop)
+        return old_path, source, old, new
+
+    def test_stop_only_roundtrip_keeps_original_start_hook(self):
+        path, source, old, new = self.pair()
+        start = (self.project / cutover.START_HOOK).read_bytes()
+        before = cutover.runtime_snapshot(self.runtime)
+        plan = self.preview(); self.assertEqual(plan["schema_version"], 2)
+        self.apply(plan["preview_sha256"])
+        self.assertEqual(path.read_bytes(), new)
+        self.assertEqual((self.project / cutover.START_HOOK).read_bytes(), start)
+        self.restore(plan["preview_sha256"])
+        self.assertEqual(path.read_bytes(), old)
+        self.assertEqual(cutover.runtime_snapshot(self.runtime), before)
+
+    def test_unknown_stop_change_rejected_and_current_source_is_bound(self):
+        path, source, old, new = self.pair(); source.write_bytes(new + b"later edit")
+        with self.assertRaisesRegex(cutover.CutoverError, "cutover_stop_hook_logic_requires_review"):
+            self.preview()
+        self.assertEqual(path.read_bytes(), old)
+        actual = (PLUGIN / "scripts/stop-feishu-codex-operator.ps1").read_bytes()
+        self.assertEqual(sha(actual), "1f6489de46b2feb5fd845714a4312800a2e6e1352bbc7ea900dffd8128db4aad")
+
+    def test_manifest_failure_after_stop_write_can_restore_retained_original(self):
+        path, source, old, new = self.pair(); plan = self.preview()
+        def writer(destination, raw):
+            if destination == self.runtime / "runtime-manifest.json":
+                raise OSError("fixture_manifest_failure")
+            cutover.atomic_bytes(destination, raw)
+        with self.assertRaises(OSError):self.apply(plan["preview_sha256"], writer=writer)
+        self.assertEqual(path.read_bytes(), new)
+        self.restore(plan["preview_sha256"])
+        self.assertEqual(path.read_bytes(), old)
 
 
 class RetiredMarkerRelocationTests(unittest.TestCase):

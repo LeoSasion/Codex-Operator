@@ -45,6 +45,11 @@ REVIEWED_SEARCH_ADDITIONS = frozenset({"operator_core/native_search.py"})
 REVIEWED_ADDITION_SETS = (REVIEWED_ADDITIONS, REVIEWED_SEARCH_ADDITIONS,
                          REVIEWED_ADDITIONS | REVIEWED_SEARCH_ADDITIONS)
 START_HOOK = ".codex/hooks/start-feishu-codex-operator.ps1"
+STOP_HOOK = ".codex/hooks/stop-feishu-codex-operator.ps1"
+REVIEWED_STOP_HOOK_PAIRS = frozenset({(
+    "ff9258ba63e66941b9fa95f65b8f594028e451d2fb0f65054c117028a9d7494f",
+    "1f6489de46b2feb5fd845714a4312800a2e6e1352bbc7ea900dffd8128db4aad",
+)})
 # Reviewed alpha.144 installation -> alpha.145 source: exact Python argv
 # identity validation and explicit GPT-6 Luna admission. This is deliberately
 # a whole-file pair; unrelated edits and future source changes remain conflicts.
@@ -241,6 +246,8 @@ def protected_after(plan: dict[str, Any]) -> dict[str, Any]:
     result = dict(plan["protected"])
     if plan.get("schema_version") == 2:
         result[START_HOOK] = plan["startup_hook"]["after"]
+        if "stop_hook" in plan:
+            result[STOP_HOOK] = plan["stop_hook"]["after"]
     return result
 
 
@@ -251,6 +258,11 @@ def check_restore_integrations(project: Path, plan: dict[str, Any]) -> None:
         require(current[START_HOOK] in (row["before"], row["after"]),
                 "cutover_restore_integration_changed")
         current[START_HOOK] = row["before"]
+        if "stop_hook" in plan:
+            row = plan["stop_hook"]
+            require(current[STOP_HOOK] in (row["before"], row["after"]),
+                    "cutover_restore_integration_changed")
+            current[STOP_HOOK] = row["before"]
     require(current == plan["protected"], "cutover_restore_integration_changed")
 
 
@@ -776,6 +788,13 @@ def preview(project: Path, plugin: Path, *,
             and (not additions or frozenset(additions) in REVIEWED_ADDITION_SETS),
             "cutover_runtime_inventory_mismatch")
     hook_update = None
+    stop_update = None
+    installed_stop = file_fingerprint(project / STOP_HOOK)
+    source_stop = file_fingerprint(plugin / "scripts/stop-feishu-codex-operator.ps1")
+    if installed_stop != source_stop:
+        require((installed_stop["sha256"], source_stop["sha256"])
+                in REVIEWED_STOP_HOOK_PAIRS, "cutover_stop_hook_logic_requires_review")
+        stop_update = {"before": installed_stop, "after": source_stop}
     if additions or regular_bytes(project / START_HOOK, 2 * 1024 * 1024) != regular_bytes(
             plugin / "scripts/start-feishu-codex-operator.ps1", 2 * 1024 * 1024):
         hook_before, hook_after = revised_start_hook(project, plugin)
@@ -783,6 +802,9 @@ def preview(project: Path, plugin: Path, *,
                 in REVIEWED_START_HOOK_PAIRS, "cutover_hook_logic_requires_review")
         hook_update = {"before": {"sha256": digest(hook_before), "size": len(hook_before)},
                        "after": {"sha256": digest(hook_after), "size": len(hook_after)}}
+    if stop_update and hook_update is None:
+        hook_update = {"before": file_fingerprint(project / START_HOOK),
+                       "after": file_fingerprint(project / START_HOOK)}
     code: dict[str, dict[str, Any]] = {}
     for relative, old_hash in old["code_files"].items():
         require(isinstance(relative, str) and isinstance(old_hash, str)
@@ -815,7 +837,7 @@ def preview(project: Path, plugin: Path, *,
                                 plugin / "scripts/codex-operator.ps1")["sha256"]},
            "code_files": {name: row["after"]["sha256"] for name, row in code.items()},
            "start_hook_sha256": hook_update["after"]["sha256"] if hook_update else old["start_hook_sha256"],
-           "stop_hook_sha256": old["stop_hook_sha256"]}
+           "stop_hook_sha256": stop_update["after"]["sha256"] if stop_update else old["stop_hook_sha256"]}
     reviewed = reviewed_version_update(old["operator_version"], new["operator_version"], version_update)
     require(reviewed is None or not additions, "cutover_version_review_inventory_changed")
     plan = {"schema_version": 2 if hook_update else 1, "project": str(project), "plugin": str(plugin),
@@ -826,6 +848,8 @@ def preview(project: Path, plugin: Path, *,
         plan["version_update"] = reviewed
     if hook_update:
         plan["startup_hook"] = hook_update
+    if stop_update:
+        plan["stop_hook"] = stop_update
     if web_recovery_receipt is not None:
         require(isinstance(web_recovery, dict)
                 and web_recovery.get("receipt") == str(web_recovery_receipt),
@@ -949,6 +973,12 @@ def apply(project: Path, plugin: Path, expected_digest: str, *,
                 atomic_bytes(path, raw)
                 require(file_fingerprint(path) == plan["startup_hook"][
                     "before" if label == "original" else "after"], "cutover_backup_changed")
+        if "stop_hook" in plan:
+            for label, path in (("original", project / STOP_HOOK),
+                                ("prepared", plugin / "scripts/stop-feishu-codex-operator.ps1")):
+                target = transaction / ("stop-hook." + label + ".ps1")
+                expected = plan["stop_hook"]["before" if label == "original" else "after"]
+                atomic_bytes(target, checked_bytes(path, expected, "cutover_file_changed_before_write"))
         # The backup and original manifest are rechecked before the first write.
         require(preview(project, plugin, process_check=process_check,
                         services_check=services_check,
@@ -990,6 +1020,13 @@ def apply(project: Path, plugin: Path, expected_digest: str, *,
                     and file_fingerprint(plugin / "scripts/start-feishu-codex-operator.ps1") == hook["after"],
                     "cutover_backup_changed")
             writer(project / START_HOOK, checked_bytes(prepared_hook, hook["after"], "cutover_backup_changed"))
+        if "stop_hook" in plan:
+            row = plan["stop_hook"]
+            require(file_fingerprint(project / STOP_HOOK) == row["before"]
+                    and file_fingerprint(plugin / "scripts/stop-feishu-codex-operator.ps1") == row["after"],
+                    "cutover_integration_changed")
+            writer(project / STOP_HOOK, checked_bytes(transaction / "stop-hook.prepared.ps1",
+                row["after"], "cutover_backup_changed"))
         require(protected_snapshot(project) == protected_after(plan),
                 "cutover_integration_changed")
         require(file_fingerprint(runtime / "runtime-manifest.json")["sha256"]
@@ -1068,8 +1105,19 @@ def restore(project: Path, plugin: Path, preview_digest: str, *,
         added = {name for name, row in plan["code"].items() if row["before"] == ABSENT}
         reviewed_hook_pair = (plan["startup_hook"]["before"]["sha256"],
                               plan["startup_hook"]["after"]["sha256"])
+        reviewed_stop = False
+        if "stop_hook" in plan:
+            row = plan["stop_hook"]
+            require((row["before"]["sha256"], row["after"]["sha256"]) in REVIEWED_STOP_HOOK_PAIRS
+                    and row["before"] == plan["protected"][STOP_HOOK]
+                    and row["after"]["sha256"] == plan["new_manifest"]["stop_hook_sha256"]
+                    and file_fingerprint(transaction / "stop-hook.original.ps1") == row["before"]
+                    and file_fingerprint(transaction / "stop-hook.prepared.ps1") == row["after"],
+                    "cutover_restore_identity_invalid")
+            reviewed_stop = True
         require((frozenset(added) in REVIEWED_ADDITION_SETS
-                 or not added and reviewed_hook_pair in REVIEWED_START_HOOK_PAIRS)
+                 or not added and (reviewed_hook_pair in REVIEWED_START_HOOK_PAIRS
+                    or reviewed_stop and plan["startup_hook"]["before"] == plan["startup_hook"]["after"]))
                 and plan["startup_hook"]["before"] == plan["protected"][START_HOOK]
                 and plan["startup_hook"]["after"]["sha256"] == plan["new_manifest"]["start_hook_sha256"],
                 "cutover_restore_identity_invalid")
@@ -1149,6 +1197,9 @@ def restore(project: Path, plugin: Path, preview_digest: str, *,
                     "cutover_backup_changed")
             writer(project / START_HOOK, checked_bytes(original_hook,
                 plan["startup_hook"]["before"], "cutover_backup_changed"))
+        if "stop_hook" in plan:
+            writer(project / STOP_HOOK, checked_bytes(transaction / "stop-hook.original.ps1",
+                plan["stop_hook"]["before"], "cutover_backup_changed"))
         require(protected_snapshot(project) == plan["protected"],
                 "cutover_restore_integration_changed")
         manifest_path = runtime / "runtime-manifest.json"
