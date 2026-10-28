@@ -45,6 +45,13 @@ REVIEWED_SEARCH_ADDITIONS = frozenset({"operator_core/native_search.py"})
 REVIEWED_ADDITION_SETS = (REVIEWED_ADDITIONS, REVIEWED_SEARCH_ADDITIONS,
                          REVIEWED_ADDITIONS | REVIEWED_SEARCH_ADDITIONS)
 START_HOOK = ".codex/hooks/start-feishu-codex-operator.ps1"
+# Reviewed alpha.144 installation -> alpha.145 source: exact Python argv
+# identity validation and explicit GPT-6 Luna admission. This is deliberately
+# a whole-file pair; unrelated edits and future source changes remain conflicts.
+REVIEWED_START_HOOK_PAIRS = frozenset({(
+    "a17041c32327cb8b715f46863e5bdd5f4641a261d3ac6151c2ae706858deb5f7",
+    "743030e4fc04be81187e551214ea09fd769f6dcb872d7fbd2b26592a7b995f55",
+)})
 ABSENT = {"sha256": "absent", "size": 0}
 WEB_RECOVERY_ERRORS = frozenset({
     "cutover_web_recovery_receipt_invalid", "cutover_web_recovery_changed",
@@ -210,10 +217,15 @@ def startup_inventory(path: Path) -> set[str]:
 
 
 def revised_start_hook(project: Path, plugin: Path) -> tuple[bytes, bytes]:
-    """Replace only one literal inventory, with byte-identical surrounding code."""
+    """Admit an exact reviewed Hook pair or one literal inventory change."""
     old = regular_bytes(project / START_HOOK, 2 * 1024 * 1024)
     source = regular_bytes(plugin / "scripts/start-feishu-codex-operator.ps1",
                            2 * 1024 * 1024)
+    if (digest(old), digest(source)) in REVIEWED_START_HOOK_PAIRS:
+        require(startup_inventory(project / START_HOOK) == startup_inventory(
+            plugin / "scripts/start-feishu-codex-operator.ps1"),
+            "cutover_runtime_inventory_mismatch")
+        return old, source
     old_matches = list(EXPECTED_FILES_BYTES_RE.finditer(old))
     new_matches = list(EXPECTED_FILES_BYTES_RE.finditer(source))
     require(len(old_matches) == len(new_matches) == 1,
@@ -332,6 +344,48 @@ def queue_gate(runtime: Path) -> dict[str, int]:
     return {"actionable_inbox": actionable, "open_callbacks": callbacks}
 
 
+def _retained_marker(profile: Path, receipt: Path, archived: Path,
+                     receipt_raw: bytes, original: bytes) -> Path:
+    """Resolve an explicitly retained relocation without rewriting old evidence."""
+    relocation = profile / "history/retired-marker-relocations.json"
+    if not relocation.exists():
+        return archived
+    value = read_json(relocation)
+    require(set(value) == {"version", "status", "directory", "entries"}
+            and type(value["version"]) is int and value["version"] == 1
+            and value["status"] == "owner_reviewed_relocation"
+            and isinstance(value["directory"], str)
+            and isinstance(value["entries"], dict) and 1 <= len(value["entries"]) <= 64,
+            "cutover_web_recovery_receipt_invalid")
+    directory = Path(value["directory"])
+    require(directory.is_absolute() and ".." not in directory.parts and directory.is_dir(),
+            "cutover_web_recovery_receipt_invalid")
+    plain_path(directory)
+    for name, row in value["entries"].items():
+        require(isinstance(name, str) and re.fullmatch(r"recovery-[a-f0-9]{32}", name)
+                and isinstance(row, dict) and set(row) == {
+                    "receipt_sha256", "old_path", "original_sha256", "old_path_absent"}
+                and row["old_path_absent"] is True
+                and isinstance(row["old_path"], str)
+                and all(isinstance(row[key], str) and HASH_RE.fullmatch(row[key])
+                        for key in ("receipt_sha256", "original_sha256"))
+                and digest(regular_bytes(profile / "history" / name / "receipt.json", 65536))
+                    == row["receipt_sha256"], "cutover_web_recovery_changed")
+    row = value["entries"].get(receipt.parent.name)
+    if row is None:
+        return archived
+    plain_path(archived)
+    require(row["old_path"] == str(archived) and not archived.exists()
+            and row["receipt_sha256"] == digest(receipt_raw)
+            and row["original_sha256"] == digest(original),
+            "cutover_web_recovery_changed")
+    replacement = directory / archived.name
+    require(regular_bytes(replacement, 65536) == original
+            and replacement.stat().st_nlink == 1,
+            "cutover_web_recovery_changed")
+    return replacement
+
+
 def _recovery_journal(profile: Path, receipt: Path) -> tuple[dict[str, Any], bytes, list[bytes]]:
     """Validate retained recovery bytes without treating retirement as a stop."""
     require(receipt.is_absolute() and ".." not in receipt.parts
@@ -403,9 +457,10 @@ def _recovery_journal(profile: Path, receipt: Path) -> tuple[dict[str, Any], byt
             "cutover_web_recovery_changed")
     if original_marker is not None:
         archived = original_marker.with_name("retired-" + receipt.parent.name + "-" + original_marker.name)
-        require(value["archived_marker"] == str(archived)
-                and regular_bytes(archived, 65536) == originals[-1]
-                and archived.stat().st_nlink == 1,
+        require(value["archived_marker"] == str(archived), "cutover_web_recovery_changed")
+        retained = _retained_marker(profile, receipt, archived, raw, originals[-1])
+        require(regular_bytes(retained, 65536) == originals[-1]
+                and retained.stat().st_nlink == 1,
                 "cutover_web_recovery_changed")
     require(regular_bytes(receipt, 65536) == raw, "cutover_web_recovery_changed")
     return value, raw, originals
@@ -424,6 +479,13 @@ def _recovery_history(profile: Path) -> dict[str, str]:
         require(path.is_dir(), "cutover_web_recovery_receipt_invalid")
         _, raw, _ = _recovery_journal(profile, path / "receipt.json")
         result[path.name] = digest(raw)
+    relocation = history / "retired-marker-relocations.json"
+    if relocation.exists():
+        value = read_json(relocation)
+        require(isinstance(value.get("entries"), dict)
+                and set(value["entries"]) <= set(result),
+                "cutover_web_recovery_receipt_invalid")
+        result["retired-marker-relocations.json"] = digest(regular_bytes(relocation, 65536))
     return result
 
 
@@ -714,8 +776,11 @@ def preview(project: Path, plugin: Path, *,
             and (not additions or frozenset(additions) in REVIEWED_ADDITION_SETS),
             "cutover_runtime_inventory_mismatch")
     hook_update = None
-    if additions:
+    if additions or regular_bytes(project / START_HOOK, 2 * 1024 * 1024) != regular_bytes(
+            plugin / "scripts/start-feishu-codex-operator.ps1", 2 * 1024 * 1024):
         hook_before, hook_after = revised_start_hook(project, plugin)
+        require(bool(additions) or (digest(hook_before), digest(hook_after))
+                in REVIEWED_START_HOOK_PAIRS, "cutover_hook_logic_requires_review")
         hook_update = {"before": {"sha256": digest(hook_before), "size": len(hook_before)},
                        "after": {"sha256": digest(hook_after), "size": len(hook_after)}}
     code: dict[str, dict[str, Any]] = {}
@@ -1001,7 +1066,10 @@ def restore(project: Path, plugin: Path, preview_digest: str, *,
     if plan["schema_version"] == 2:
         require(not intent.get("restore_attempted"), "cutover_restore_terminal_no_retry")
         added = {name for name, row in plan["code"].items() if row["before"] == ABSENT}
-        require(frozenset(added) in REVIEWED_ADDITION_SETS
+        reviewed_hook_pair = (plan["startup_hook"]["before"]["sha256"],
+                              plan["startup_hook"]["after"]["sha256"])
+        require((frozenset(added) in REVIEWED_ADDITION_SETS
+                 or not added and reviewed_hook_pair in REVIEWED_START_HOOK_PAIRS)
                 and plan["startup_hook"]["before"] == plan["protected"][START_HOOK]
                 and plan["startup_hook"]["after"]["sha256"] == plan["new_manifest"]["start_hook_sha256"],
                 "cutover_restore_identity_invalid")

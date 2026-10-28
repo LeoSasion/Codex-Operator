@@ -1094,5 +1094,99 @@ class ReleaseInclusionTests(unittest.TestCase):
                 self.assertTrue((PLUGIN / regression).is_file())
 
 
+class ReviewedStartHookTests(unittest.TestCase):
+    setUp = LegacyRuntimeUpgradeTests.setUp
+    preview = LegacyRuntimeUpgradeTests.preview
+    apply = LegacyRuntimeUpgradeTests.apply
+    restore = LegacyRuntimeUpgradeTests.restore
+
+    def prepare_pair(self):
+        old_path = self.project / cutover.START_HOOK
+        source_path = self.plugin / "scripts/start-feishu-codex-operator.ps1"
+        old = old_path.read_bytes()
+        new = b"# reviewed identity guard\n" + old
+        source_path.write_bytes(new)
+        patcher = mock.patch.object(cutover, "REVIEWED_START_HOOK_PAIRS",
+                                    frozenset({(sha(old), sha(new))}))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return old_path, source_path, old, new
+
+    def test_reviewed_pair_roundtrip_retains_original_and_inventory(self):
+        old_path, source_path, old, new = self.prepare_pair()
+        before = cutover.runtime_snapshot(self.runtime)
+        plan = self.preview()
+        self.assertEqual(plan["schema_version"], 2)
+        self.assertEqual(plan["startup_hook"]["before"]["sha256"], sha(old))
+        result = self.apply(plan["preview_sha256"])
+        self.assertEqual(old_path.read_bytes(), new)
+        self.restore(plan["preview_sha256"])
+        self.assertEqual(old_path.read_bytes(), old)
+        self.assertEqual(cutover.runtime_snapshot(self.runtime), before)
+
+    def test_unknown_same_inventory_hook_change_is_rejected(self):
+        old_path, source_path, old, new = self.prepare_pair()
+        source_path.write_bytes(new + b"# unreviewed\n")
+        with self.assertRaisesRegex(cutover.CutoverError, "cutover_hook_logic_requires_review"):
+            self.preview()
+        self.assertEqual(old_path.read_bytes(), old)
+        self.assertFalse((self.project / cutover.MAINTENANCE_RELATIVE).exists())
+
+    def test_changed_hook_after_preview_cannot_be_applied(self):
+        old_path, source_path, old, new = self.prepare_pair()
+        plan = self.preview()
+        source_path.write_bytes(new + b"# later edit\n")
+        with self.assertRaises(cutover.CutoverError):
+            self.apply(plan["preview_sha256"])
+        self.assertEqual(old_path.read_bytes(), old)
+
+    def test_current_source_is_exact_reviewed_destination(self):
+        source = (PLUGIN / "scripts/start-feishu-codex-operator.ps1").read_bytes()
+        self.assertIn(sha(source), {pair[1] for pair in cutover.REVIEWED_START_HOOK_PAIRS})
+
+
+class RetiredMarkerRelocationTests(unittest.TestCase):
+    setUp = LegacyRetiredWebCutoverTests.setUp
+    evidence = LegacyRetiredWebCutoverTests.evidence
+
+    def relocate(self):
+        directory = self.project / "owner-selected-archives"
+        directory.mkdir()
+        replacement = directory / self.archived_marker.name
+        original = self.archived_marker.read_bytes()
+        replacement.write_bytes(original)
+        self.archived_marker.unlink()
+        path = self.profile / "history/retired-marker-relocations.json"
+        value = {"version": 1, "status": "owner_reviewed_relocation",
+                 "directory": str(directory), "entries": {self.receipt.parent.name: {
+                     "receipt_sha256": sha(self.receipt.read_bytes()),
+                     "old_path": str(self.archived_marker),
+                     "original_sha256": sha(original), "old_path_absent": True}}}
+        self.manager.service.write_json(path, value)
+        return path, value, replacement, original
+
+    def test_complete_history_accepts_retained_exact_copy_and_binds_journal(self):
+        receipt = self.receipt.read_bytes()
+        path, value, replacement, original = self.relocate()
+        evidence = self.evidence()
+        self.assertEqual(self.receipt.read_bytes(), receipt)
+        self.assertFalse(self.archived_marker.exists())
+        self.assertEqual(cutover._recovery_history(self.profile)[path.name], sha(path.read_bytes()))
+        replacement.write_bytes(original + b"changed")
+        with self.assertRaises(cutover.CutoverError):
+            self.evidence()
+
+    def test_later_old_path_edit_and_unbound_receipt_are_rejected(self):
+        path, value, replacement, original = self.relocate()
+        self.archived_marker.write_bytes(original)
+        with self.assertRaises(cutover.CutoverError):
+            self.evidence()
+        self.archived_marker.unlink()
+        value["entries"][self.receipt.parent.name]["receipt_sha256"] = "0" * 64
+        self.manager.service.write_json(path, value)
+        with self.assertRaises(cutover.CutoverError):
+            self.evidence()
+
+
 if __name__ == "__main__":
     unittest.main()
