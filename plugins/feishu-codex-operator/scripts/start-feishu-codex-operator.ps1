@@ -383,7 +383,7 @@ function Assert-OperatorEnvSemantics {
         [pscustomobject]@{ Name = 'CODEX_OPERATOR_ACCESS_MODE'; Values = @('locked', 'compat') },
         [pscustomobject]@{ Name = 'CODEX_OPERATOR_LIFECYCLE_MODE'; Values = @('hooks', 'manual') },
         [pscustomobject]@{ Name = 'CODEX_OPERATOR_REPLY_FORMAT'; Values = @('text', 'markdown') },
-        [pscustomobject]@{ Name = 'CODEX_OPERATOR_BEEPER_MODEL'; Values = @('', 'beeper', 'gpt-5.3-codex-spark', 'gpt-5.6-luna') },
+        [pscustomobject]@{ Name = 'CODEX_OPERATOR_BEEPER_MODEL'; Values = @('', 'beeper', 'gpt-5.3-codex-spark', 'gpt-5.6-luna', 'gpt-6-luna') },
         [pscustomobject]@{ Name = 'CODEX_OPERATOR_BEEPER_REASONING_EFFORT'; Values = @('', 'low', 'high') },
         [pscustomobject]@{ Name = 'CODEX_OPERATOR_BEEPER_PROMPT_LANGUAGE'; Values = @('', 'en', 'zh-cn') }
     )

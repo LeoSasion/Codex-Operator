@@ -431,6 +431,44 @@ class BeeperRelayClientTests(unittest.TestCase):
             self.assertIs(subprocess.PIPE, observed["kwargs"]["stdout"])
             self.assertIs(subprocess.PIPE, observed["kwargs"]["stderr"])
 
+    def test_explicit_gpt6_luna_keeps_low_exact_dispatch_and_never_falls_back(self) -> None:
+        for accepted in (True, False):
+            with self.subTest(accepted=accepted), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                executable = root / "codex.exe"
+                executable.write_bytes(b"synthetic")
+                queued = []
+                client = None
+                def runner(argv, **_kwargs):
+                    queued.append(argv)
+                    if accepted:
+                        request_id = BeeperRelayClient.request_id("gpt6-luna")
+                        dispatch = client.callbacks.take_relay(request_id)
+                        self.assertEqual(RESPONDER_ID, dispatch["threadId"])
+                        client.callbacks.submit(request_id, "完整回复 🚀")
+                    return SimpleNamespace(returncode=0 if accepted else 2,
+                        stdout="", stderr="" if accepted else "HTTP 429: too many requests")
+                client = BeeperRelayClient(config_for(root, model_override="gpt-6-luna"),
+                    runner=runner, wake_signal_sender=lambda _: None,
+                    codex_executable=executable)
+                try:
+                    if accepted:
+                        answer = client.send({"thread_id": RESPONDER_ID}, "原文",
+                            event_id="gpt6-luna", beeper_model="gpt-6-luna")
+                        self.assertEqual("完整回复 🚀", answer.final_answer)
+                        self.assertEqual("gpt-6-luna", answer.beeper_model)
+                        self.assertFalse(answer.beeper_fallback_used)
+                    else:
+                        with self.assertRaises(RelayUnavailable):
+                            client.send({"thread_id": RESPONDER_ID}, "原文",
+                                event_id="gpt6-luna", beeper_model="gpt-6-luna")
+                    self.assertEqual(1, len(queued))
+                    self.assertEqual("gpt-6-luna", option_value(queued[0], "--model"))
+                    self.assertEqual('model_reasoning_effort="low"', option_value(queued[0], "--config"))
+                    self.assertEqual("low", beeper_reasoning_effort("gpt-6-luna"))
+                finally:
+                    client.close()
+
     def test_local_beeper_uses_private_catalog_and_loopback_provider_once(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -35,6 +35,7 @@ QUEUE_DIAGNOSTIC_MAX_CHARS = 32_768
 BEEPER_PRIMARY_MODEL = "gpt-5.3-codex-spark"
 BEEPER_FALLBACK_MODEL = "gpt-5.6-luna"
 BEEPER_DEFAULT_MODEL = BEEPER_FALLBACK_MODEL
+BEEPER_LUNA_MODELS = frozenset({BEEPER_FALLBACK_MODEL, "gpt-6-luna"})
 BEEPER_PRIMARY_REASONING_EFFORT = "medium"
 BEEPER_FALLBACK_REASONING_EFFORT = "low"
 BEEPER_DEFAULT_PROMPT_LANGUAGE = "en"
@@ -42,7 +43,7 @@ BEEPER_FALLBACK_PROMPT_LANGUAGE = "zh-cn"
 BEEPER_WAKE_LEASE_SECONDS = 30 * 60
 BEEPER_WAKE_FALLBACK_SECONDS = 30
 _BEEPER_MODELS = frozenset(
-    {BEEPER_LOCAL_MODEL, BEEPER_PRIMARY_MODEL, BEEPER_FALLBACK_MODEL}
+    {BEEPER_LOCAL_MODEL, BEEPER_PRIMARY_MODEL, *BEEPER_LUNA_MODELS}
 )
 _BEEPER_PROMPT_LANGUAGES = frozenset(
     {BEEPER_DEFAULT_PROMPT_LANGUAGE, BEEPER_FALLBACK_PROMPT_LANGUAGE}
@@ -61,7 +62,7 @@ def beeper_reasoning_effort(model: str, *, primary_override: str = "") -> str:
         if primary_override not in {"", "low", "high"}:
             raise ValueError("unsupported Spark Beeper reasoning override")
         return primary_override or BEEPER_PRIMARY_REASONING_EFFORT
-    if model == BEEPER_FALLBACK_MODEL:
+    if model in BEEPER_LUNA_MODELS:
         return BEEPER_FALLBACK_REASONING_EFFORT
     if model == BEEPER_LOCAL_MODEL:
         return BEEPER_FALLBACK_REASONING_EFFORT
@@ -444,7 +445,7 @@ class BeeperRelayClient:
         if language not in _BEEPER_PROMPT_LANGUAGES or model not in _BEEPER_MODELS:
             raise ValueError("unsupported minimal Beeper prompt policy")
         code = beeper_bootstrap(request_id)
-        if language == BEEPER_FALLBACK_PROMPT_LANGUAGE and model == BEEPER_FALLBACK_MODEL:
+        if language == BEEPER_FALLBACK_PROMPT_LANGUAGE and model in BEEPER_LUNA_MODELS:
             instructions = (
                 "你是 Feishu Codex Operator 的最小 Beeper。第一项动作只能调用一次 exec，"
                 "原样执行以下四行。只执行本项目 MCP 生成的 code，不要输出、改写或展开它，"

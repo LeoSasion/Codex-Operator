@@ -113,6 +113,20 @@ class RateLimitTests(unittest.TestCase):
                 self.assertEqual("low", decision.beeper_reasoning_effort)
                 self.assertEqual("codex_bengalfox", decision.beeper_limit_id)
 
+    def test_explicit_gpt6_luna_retains_account_gate_and_low_effort(self) -> None:
+        for used in (1, 100):
+            with self.subTest(used=used):
+                guard = rate_module.AdaptiveRateLimitGuard(
+                    SimpleNamespace(beeper_model_override="gpt-6-luna"),
+                    reader=lambda: rate_module.parse_account_rate_limits(result_for(
+                        used=used, reached="usageLimitExceeded" if used == 100 else None)),
+                    monotonic=FakeClock(),
+                )
+                decision = guard.prime()
+                self.assertEqual("gpt-6-luna", decision.beeper_model)
+                self.assertEqual("low", decision.beeper_reasoning_effort)
+                self.assertEqual(used == 100, decision.blocked)
+
     def test_explicit_luna_override_bypasses_spark_selection(self) -> None:
         snapshot = rate_module.parse_account_rate_limits(
             result_for(used=1, spark_used=1)
