@@ -7,7 +7,7 @@
     "models/web/docs/native-web-experience.md": "78d2fa3ad97faa1dce81f39c02485c14209250cdd15271d2b44b1c18509b03da",
     "models/web/docs/chatgpt-web-integration.md": "8c4dbb5b52d65436d38d253c2fba2b67a70c0d420fb3788723920d5b9902d3df",
     "development/docs/release-audit.md": "fe5f711c71a1abcac88ff91dc0869856a1139425e779ed4d4513feab84bd69b2",
-    "development/docs/testing.md": "d636a76c459fdd8358ae6add8a3feba5ff987a85a2a1cb9886aa6dbda9f02b7c"
+    "development/docs/testing.md": "f35cc16de7379c9cdd943a9aa7e1e94349438fe30770aa385a5d5cf2071252a9"
   },
   "repository_files": [
     ".agents/plugins/marketplace.json",
