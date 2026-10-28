@@ -25,11 +25,11 @@ import operator_legacy_runtime_upgrade as upgrade
 import operator_web_service as web
 import operator_uninstall as uninstall
 from operator_core import windows_config_transaction as transaction
-from test_unified_retire import UnifiedRetirementTests
+import test_unified_retire as retirement_tests
 
 
 @unittest.skipUnless(os.name == 'nt', 'Windows file identity and sharing required')
-class FailedArchiveTests(UnifiedRetirementTests):
+class FailedArchiveTests(retirement_tests.UnifiedRetirementTests):
     # Inherit the ordinary retirement cases too: the separate path must never
     # admit an uncertain attempt through the existing retirement operation.
     def test_effort_review_is_root_scoped_and_preserves_all_other_settings(self):
