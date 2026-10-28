@@ -2,9 +2,9 @@
 
 Connect IM channels, online/local models, and ChatGPT Web to Codex Desktop.
 
-**Windows preview · MIT · [1.2.0-preview.3](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.3) · Operator 4.2.0-alpha.144**
+**Windows preview · MIT · [1.2.0-preview.4](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.4) · Operator 4.2.0-alpha.144**
 
-本版包含 Web 分层诊断、单次请求期限验证、实测 GPT-6 Medium 目录及当前原生 CLI/桌面端停止验收。完整回归、真实 Web 工具执行和 Desktop 界面的证据范围独立记录；未覆盖场景不由一次通过推定可用。
+本版修复拓展启动子进程的回环代理排除，避免本机模型请求误入系统代理而返回 502。当前 Windows 包已完成真实快捷方式冷启动、GPT-6 Medium 文件读取、正常退出重开与同聊接续验收。此前的 Web 分层诊断、等待期限及原生停止结果继续保留；完整回归、真实工具执行和 Desktop 界面的证据范围独立记录，未覆盖场景不由一次通过推定可用。
 
 The first-release scope is Windows and Feishu, with two API registrations selected
 for release qualification: `api/glm-5.3-flash` / `low` and
