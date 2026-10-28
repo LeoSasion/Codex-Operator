@@ -49,8 +49,16 @@ def relay_program(dispatch: dict | None) -> str:
         'const matches=ALL_TOOLS.filter(t=>t.name.endsWith("__send_message_to_thread"));\n'
         'if(matches.length!==1||typeof tools[matches[0].name]!=="function")'
         'throw Error("Desktop send unavailable; stop without retry");\n'
-        "const sent=await tools[matches[0].name](dispatch);\n"
-        'text({state:sent.isError?"send_error":"send_returned",preparation_ms});\n'
+        'const fail=(state,reason)=>{text({state,reason,preparation_ms});'
+        'throw Error("operator_relay_"+reason);};\n'
+        "let sent;\n"
+        "try{sent=await tools[matches[0].name](dispatch);}"
+        'catch{fail("send_outcome_unknown","native_send_exception");}\n'
+        'if(sent===null||typeof sent!=="object"||Array.isArray(sent)||'
+        '("isError" in sent&&typeof sent.isError!=="boolean"))'
+        'fail("send_outcome_unknown","invalid_native_send_result");\n'
+        'if(sent.isError===true)fail("send_error","native_send_tool_error");\n'
+        'text({state:"send_returned",preparation_ms});\n'
         "})"
     )
 

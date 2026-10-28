@@ -2,9 +2,11 @@
 
 Connect IM channels, online/local models, and ChatGPT Web to Codex Desktop.
 
-**Windows preview · MIT · [1.2.0-preview.6](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.6) · Operator 4.2.0-alpha.146**
+**Windows preview · MIT · [1.2.0-preview.7](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.7) · Operator 4.2.0-alpha.146**
 
-本版精简运行发行包，开发测试、公共夹具和 runner 保留在完整 Git 源码仓库中。源码审计继续要求完整且互斥的运行与开发清单，并筛查两组内容；解压运行包使用 `audit-feishu-codex-release.ps1 -Scope release`。旧版本兼容、权限、取消和恢复测试继续保留。
+本版补全 Beeper 原生发送失败诊断：工具错误、调用异常和非法返回分别记录固定原因并明确失败，不复制错误正文、不重试。实际工具预检、原生审批和真实飞书回传的验收边界已补到现有 skill。当前真实往返仍待原生跨会话审批后的独立验收，不能以工具预检或失败通知送达判通过。Operator runtime 保持 alpha.146。
+
+运行发行包继续排除开发测试、公共夹具和 runner；完整 Git 源码的互斥清单与两组内容仍须审计。解压运行包使用 `audit-feishu-codex-release.ps1 -Scope release`，旧版本兼容、权限、取消和恢复测试保留。
 
 上一版修复拓展启动子进程的回环代理排除，避免本机模型请求误入系统代理而返回 502。当前 Windows 包已完成真实快捷方式冷启动、GPT-6 Medium 文件读取、正常退出重开与同聊接续验收。此前的 Web 分层诊断、等待期限及原生停止结果继续保留；完整回归、真实工具执行和 Desktop 界面的证据范围独立记录，未覆盖场景不由一次通过推定可用。
 
