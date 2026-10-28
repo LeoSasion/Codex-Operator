@@ -31,6 +31,29 @@ PWSH = shutil.which("pwsh")
 
 @unittest.skipUnless(os.name == "nt" and PWSH, "Windows PowerShell installer")
 class InstallUpgradeTests(unittest.TestCase):
+    def rules_validation(self, raw: bytes) -> bool:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); path = root / 'AGENTS.md'; path.write_bytes(raw)
+            result = subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-File',
+                str(ROOT / 'scripts/feishu-codex-operator.ps1'), 'operator', 'validate',
+                '-ProjectRoot', str(root), '-Json'], capture_output=True, timeout=30,
+                creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(path.read_bytes(), raw)
+            return json.loads(result.stdout)['checks']['rules_mirror']
+
+    def test_validate_preserves_unrelated_project_rules_and_line_endings(self):
+        block = (ROOT / 'assets/AGENTS.feishu-codex-operator.md').read_bytes().replace(b'\r\n', b'\n')
+        for raw in (b'# owner rules\n\n' + block + b'\n# other project rules\n',
+                    b'\xef\xbb\xbf# owner rules\r\n' + block.replace(b'\n', b'\r\n')):
+            with self.subTest(raw_start=raw[:24]):self.assertTrue(self.rules_validation(raw))
+
+    def test_validate_rejects_changed_duplicate_incomplete_and_inline_markers(self):
+        block = (ROOT / 'assets/AGENTS.feishu-codex-operator.md').read_bytes().replace(b'\r\n', b'\n')
+        marker = b'<!-- FEISHU_CODEX_OPERATOR_RULES_START -->'
+        for raw in (block.replace(b'runtime safety', b'changed safety', 1), block + marker,
+                    block.replace(marker, b'', 1), block.replace(marker, b'prefix ' + marker, 1)):
+            with self.subTest(raw_start=raw[:24]):self.assertFalse(self.rules_validation(raw))
+
     @staticmethod
     def ps_quote(value: Path) -> str:
         return "'" + str(value).replace("'", "''") + "'"
