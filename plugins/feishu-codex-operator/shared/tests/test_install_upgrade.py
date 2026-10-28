@@ -479,6 +479,23 @@ Export-ModuleMember -Function Assert-OperatorPlainPath
             for key in ("unknown_status_timeout_seconds", "callback_grace_seconds", "responder_status_observer"):
                 self.assertEqual(snapshot[key], health[key])
             self.assertNotIn("private-fixture-value", status.stdout)
+            for model, effort, valid in (("gpt-6-luna", "low", True),
+                                        ("gpt-6-luna", "high", False), ("gpt-5.6-luna", "high", False)):
+                with self.subTest(model=model, effort=effort):
+                    health["account_rate_limits"].update(beeper_model=model, beeper_reasoning_effort=effort)
+                    (runtime / "health.json").write_text(json.dumps(health), encoding="utf-8")
+                    current = subprocess.run([PWSH, "-NoProfile", "-File",
+                        str(ROOT / "scripts" / "feishu-codex-operator.ps1"), "operator", "status",
+                        "-ProjectRoot", str(project), "-Json"], capture_output=True, text=True, timeout=60)
+                    self.assertEqual(0, current.returncode, current.stdout + current.stderr)
+                    current_snapshot = json.loads(current.stdout)["health_snapshot"]
+                    self.assertEqual(valid, current_snapshot["valid"])
+                    if valid:
+                        self.assertEqual(model, current_snapshot["account_rate_limits"]["beeper_model"])
+                        self.assertEqual(effort, current_snapshot["account_rate_limits"]["beeper_reasoning_effort"])
+                    else:
+                        self.assertIn("invalid_health_snapshot", json.loads(current.stdout)["issue_codes"])
+                    self.assertNotIn("private-fixture-value", current.stdout)
             for name, value in preserved.items():
                 self.assertEqual(value, (runtime / name).read_bytes(), name)
 

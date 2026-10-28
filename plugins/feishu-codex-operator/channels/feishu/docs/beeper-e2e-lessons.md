@@ -1,6 +1,39 @@
 # Beeper E2E lessons
 
-## Current owner selection (2026-09-21)
+## Current explicit selection and simulation (2026-10-29)
+
+The owner explicitly selected `gpt-6-luna` / `low` for Beeper and the current
+Terra 6-series entry `gpt-6.1-terra` / `low` for the business task. Admit the
+new Luna ID explicitly in Python configuration, relay policy, both PowerShell
+environment validators and health parsing. Retain the old default and legacy
+cases for compatibility; this explicit selection does not migrate another
+installation, change a Responder model, or permit model fallback or replay.
+
+Two owner-approved disposable Desktop tasks completed two different simulated
+Feishu requests through the real queue, Beeper input MCP, native task send and
+Final Callback MCP. The first preserved Chinese, Emoji, a Windows path and
+quotes; the second continued the same business task. The local Feishu sink
+received one exact reply for each request, at 15.027 s and 15.028 s. Repeating
+each admitted event caused no additional queue or reply. Native turn metadata
+confirmed the exact models and low effort; both callback rows closed after one
+relay consumption, with prior rows and the callback registration unchanged.
+This is a two-sample simulated-transport observation, not real Feishu delivery,
+statistical reliability or acceptance of the old production bindings.
+
+The saved old Beeper and Responder UUIDs were not found by the native reader and
+exact same-home index. Retain those UUIDs; do not adopt another task by title or
+create replacements automatically. Here the owner separately approved two new
+test tasks, which were archived after verification. Plugin skills/tool presence
+must be checked from actual tool calls and model metadata, not an assistant
+claim or an enabled flag alone. The temporary plugin enablement was restored.
+
+A new invalid-effort fixture exposed a prior health-reporting defect: parsing
+could raise `invalid_health_snapshot` after setting `valid=true`. Clear that
+flag on every parsing failure. Preserve the original failed run and exercise
+both old and new Luna invalid efforts. Account quota rejection fixtures need
+the existing explicit reached signal; a percentage alone is not that signal.
+
+## Previous owner selection (2026-09-21)
 
 The fixed relay task is named **Beeper**. The owner now selects **Luna/low only**
 for online relay work and reports Spark retired; do not run new Spark probes.

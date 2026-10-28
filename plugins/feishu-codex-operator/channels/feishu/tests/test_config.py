@@ -37,7 +37,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual("callbacks.sqlite3", config.callback_db.name)
 
     def test_beeper_model_selection_is_bounded(self) -> None:
-        for model in ("", "beeper", "gpt-5.3-codex-spark", "gpt-5.6-luna"):
+        for model in ("", "beeper", "gpt-5.3-codex-spark", "gpt-5.6-luna", "gpt-6-luna"):
             with self.subTest(model=model), patch.dict(
                 os.environ,
                 {"CODEX_OPERATOR_BEEPER_MODEL": model},
@@ -66,7 +66,7 @@ class ConfigTests(unittest.TestCase):
             config = load_config()
         self.assertEqual("high", config.beeper_reasoning_effort_override)
 
-        for model in ("", "beeper", "gpt-5.6-luna"):
+        for model in ("", "beeper", "gpt-5.6-luna", "gpt-6-luna"):
             with self.subTest(model=model), patch.dict(
                 os.environ,
                 {
