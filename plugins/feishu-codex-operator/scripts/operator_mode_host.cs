@@ -210,6 +210,12 @@ internal static class OperatorModeHost
         foreach (string key in remove) start.EnvironmentVariables.Remove(key);
         start.EnvironmentVariables["CODEX_HOME"] = Value(plan, "home");
         start.EnvironmentVariables["CODEX_ELECTRON_USER_DATA_PATH"] = Value(plan, "user_data");
+        // Desktop's native HTTP client also reads the Windows system proxy.
+        // Keep this child's loopback router local while retaining every existing
+        // bypass and proxy setting. Never change the host or official instance.
+        string bypass = start.EnvironmentVariables["NO_PROXY"];
+        start.EnvironmentVariables["NO_PROXY"] = "127.0.0.1,localhost,::1" +
+            (String.IsNullOrEmpty(bypass) ? "" : "," + bypass);
         return start;
     }
 

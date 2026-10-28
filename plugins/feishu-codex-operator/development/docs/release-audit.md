@@ -2628,3 +2628,50 @@ lifecycle, Channels attachment/scope/recovery cases and the unavailable second
 account remain separate open release gates. Web stays experimental. No runtime
 deployment, service restart, routing activation or formal publication occurred
 as part of this evidence review.
+
+## 2026-10-28: custom entry cold launch and loopback proxy repair
+
+Acceptance used the official 26.1023.6123.0 package, CLI 0.165.0-alpha.1.2,
+the existing independent home and the saved Web service, with GPT-6 Medium.
+The first fresh Desktop request received an empty-body 502 in 299 ms before
+the local router or Web browser admitted it. A synthetic, account-free local
+CLI comparison reproduced zero endpoint arrivals and 502 without an explicit
+loopback bypass, then one arrival and the intended synthetic terminal with it.
+No real model was used by that comparison.
+
+The host now adds exact loopback exclusions only to its Desktop child's
+NO_PROXY, retaining inherited exclusions and proxy values. The normal native
+entry and host/system settings are untouched. A stopped, digest-bound pair
+upgrade retained the original launchers and ownership chain before installing
+the compiled candidate. The earlier failed turn remains failed and was not
+replayed. A source-changed stop refusal during preparation also remains in the
+transcript; the retained candidate and exact original source were exchanged
+only to complete the ordinary verified stop, without bypassing source checks.
+
+Two subsequent real shortcut/picker cold launches had distinct verified process
+births. Between them the extension exited normally and its exact router confirmed
+request-free shutdown and exclusive port absence. The first new GPT-6 Medium
+turn executed one exact read-only file command, received exit 0 and returned the
+file marker in 29.237 seconds. Reopening the same chat preserved model/effort and
+history; a different continuation recalled that marker, read only a different
+new file and returned both exact markers in 22.411 seconds. Native metadata,
+paired call/results and visible final replies agree. Neither test modified its
+fixture. Six old rollouts were compressed by Desktop to jsonl.zst; their complete
+decompressed hashes match the baseline, and the retained failed/new-turn prefixes
+remain intact. No history repair or request replay occurred.
+
+The affected shared mode suite completed 56 tests in 290.054 seconds: 55 passed
+and one environment skip. The separately pinned current-CLI mode cases both
+passed. The three compiled-host cases also passed in a focused run; these are
+a subset of the 56, not additional distinct coverage. This is scoped regression,
+not a new whole-project Python or Node run.
+
+The official native instance predates this acceptance and remains running.
+Default native configuration and desktop shortcut bytes are unchanged; the
+plugin's disabled preference is retained. Native model-cache fetched_at changed
+while the official app remained in use, with all ten model records unchanged.
+The raw-byte protection result remains drift, its writer is not attested and no
+old cache was restored. Expected pair files and the explicit extension model
+selection are recorded separately. Basic cold-start acceptance does not qualify
+other models, native cold boot, all approval/patch states, full-capacity compaction,
+OS reboot, second-user installation or global routing. Web remains experimental.

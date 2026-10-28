@@ -11,6 +11,63 @@ from test_mode_entry import mode
 
 @unittest.skipUnless(os.name == 'nt', 'Windows kernel process metadata required')
 class ModeHostTests(unittest.TestCase):
+    def test_desktop_child_keeps_loopback_local_and_preserves_proxy_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            mode.compile_host(root)
+            source = root / 'environment-probe.cs'
+            source.write_text(r'''
+using System; using System.Collections.Generic; using System.Diagnostics;
+using System.Reflection; using System.Web.Script.Serialization;
+internal static class Probe {
+    private static int Main(string[] args) {
+        MethodInfo method=Assembly.LoadFrom(args[0]).GetType("OperatorModeHost")
+            .GetMethod("DesktopStart",BindingFlags.NonPublic|BindingFlags.Static);
+        var plan=new Dictionary<string,object> {
+            {"official_executable",args[0]}, {"root",args[1]},
+            {"home",args[1]+"\\home"}, {"user_data",args[1]+"\\data"} };
+        var cases=new List<object>();
+        foreach(string bypass in new string[] {null,"example.test,10.9.0.0/16"," existing.test "}) {
+            Environment.SetEnvironmentVariable("NO_PROXY",bypass);
+            Environment.SetEnvironmentVariable("HTTPS_PROXY","http://synthetic-proxy.invalid:9");
+            Environment.SetEnvironmentVariable("CODEX_UNRELATED_FIXTURE","must-not-inherit");
+            var child=(ProcessStartInfo)method.Invoke(null,new object[] {plan});
+            cases.Add(new { inherited=bypass, child=child.EnvironmentVariables["no_proxy"],
+                parent=Environment.GetEnvironmentVariable("NO_PROXY"),
+                proxy=child.EnvironmentVariables["HTTPS_PROXY"],
+                parent_proxy=Environment.GetEnvironmentVariable("HTTPS_PROXY"),
+                codex_unrelated=child.EnvironmentVariables["CODEX_UNRELATED_FIXTURE"],
+                home=child.EnvironmentVariables["CODEX_HOME"],
+                user_data=child.EnvironmentVariables["CODEX_ELECTRON_USER_DATA_PATH"] });
+        }
+        Console.WriteLine(new JavaScriptSerializer().Serialize(cases));
+        return 0; // Inspect actual ProcessStartInfo; never launch Desktop.
+    }
+}
+''', encoding='utf-8')
+            compiler = Path(os.environ['SystemRoot']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+            executable = root / 'environment-probe.exe'
+            built = subprocess.run([str(compiler), '/nologo', '/target:exe', '/r:System.Web.Extensions.dll',
+                                    '/out:' + str(executable), str(source)], capture_output=True, timeout=30,
+                                   creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(built.returncode, 0, built.stderr.decode(errors='replace'))
+            before = dict(os.environ)
+            observed = subprocess.run([str(executable), str(root / 'operator-mode-host.exe'), str(root)],
+                                      capture_output=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(observed.returncode, 0, observed.stderr.decode(errors='replace'))
+            self.assertEqual(dict(os.environ), before)
+            values = json.loads(observed.stdout)
+            self.assertEqual(len(values), 3)
+            for value in values:
+                self.assertEqual(value['parent'], value['inherited'])
+                self.assertEqual(value['child'], '127.0.0.1,localhost,::1' +
+                                 (',' + value['inherited'] if value['inherited'] else ''))
+                self.assertEqual(value['proxy'], 'http://synthetic-proxy.invalid:9')
+                self.assertEqual(value['parent_proxy'], value['proxy'])
+                self.assertIsNone(value['codex_unrelated'])
+                self.assertEqual(value['home'], str(root / 'home'))
+                self.assertEqual(value['user_data'], str(root / 'data'))
+
     def test_picker_projects_only_bound_fixed_failure_reasons_without_opening_a_window(self):
         generic = '启动未完成，检查记录已保留。请关闭此窗口后检查。'
         package = '官方应用版本或安装身份已变化；原配置保留，请检查升级记录。'
