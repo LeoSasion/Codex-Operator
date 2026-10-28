@@ -22,7 +22,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from test_responses_tools import ROUTE, prepare, response
+from operator_test_fixtures.responses import ROUTE, prepare, response
 from operator_core.responses_capabilities import RouterError
 from operator_core.responses_tool_adapter import dumps, restore_response
 from operator_responses_eval import evaluate, isolated_environment

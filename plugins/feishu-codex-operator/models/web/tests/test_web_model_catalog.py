@@ -12,7 +12,7 @@ prepare_test_imports(ROOT)
 import asyncio
 from dataclasses import replace
 import unittest
-from test_web_model_protocol import message, BEEPER
+from operator_test_fixtures.web import message, BEEPER
 from operator_core.model_registry import ModelRegistry, WebServiceBinding
 from operator_core.responses_capabilities import RouterError
 from operator_core.web_model_catalog import MODELS, CATALOG, browser_selection, matches_selection

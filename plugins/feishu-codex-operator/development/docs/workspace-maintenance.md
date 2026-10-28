@@ -77,7 +77,9 @@
 
 ## 发布时避免把开发现场带出去
 
-公开源文件按 `assets/release-inventory.json` 收集。五份常用公开文档只在原位维护；发布构建核对其中的 `reviewed_document_sha256`（仅计算摘要时统一 CRLF/LF），并再次检查敏感内容，打包仍保留原字节。修改这些文档后须审阅完整新内容，再更新对应摘要；摘要通过不代替人工检查。
+`assets/release-inventory.json` 的 component paths 是运行发行清单，`development_paths` 保留源码仓库的测试、夹具及 runner 清单。两组必须互斥且完整覆盖规范源码；构建先筛查两组，只将运行文件打包。默认 source 审计不允许开发文件缺失；解压的运行包须明确选择 release scope，不把运行包通过当成开发测试通过。冻结回归使用 `collect(..., include_development=True)` 绑定全部源码，不能因测试不再随包分发就漏掉其摘要。
+
+五份常用公开文档只在原位维护；发布构建核对其中的 `reviewed_document_sha256`（仅计算摘要时统一 CRLF/LF），并再次检查敏感内容，打包仍保留原字节。修改这些文档后须审阅完整新内容，再更新对应摘要；摘要通过不代替人工检查。
 
 更完整的旧开发记录只在 `_quarantine/private-docs-*` 作为私有历史保留，不参与发布。普通 Git 暂存不会执行发布筛查；不得直接 `git add -A` 后假定本机路径、身份或运行记录会被排除。先审阅准确 staged 字节及发布清单中的所有其他文档，不把历史记录中带日期的“当前”当作新状态。
 

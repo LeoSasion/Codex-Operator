@@ -1,8 +1,9 @@
-"""Build an allowlisted, content-screened source preview. Never publish or install."""
+"""Audit complete source and build an allowlisted runtime preview. Never deploy."""
 import argparse
 import hashlib
 import io
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
@@ -83,21 +84,65 @@ def validate_public_rules_mirror(raw):
         raise ValueError('private_rules_mirror_surroundings')
 
 
-def collect(root):
+def development_path(value):
+    path = safe_path(value)
+    return ('tests' in path.parts or path.name.endswith('.test.cjs')
+            or value == 'development/run_tests.py'
+            or path.parts[:2] == ('development', 'operator_test_fixtures'))
+
+
+def source_walk_error(error):
+    raise error
+
+
+def validate_source_coverage(plugin, expected):
+    actual = set()
+    for directory, dirs, files in os.walk(plugin, followlinks=False, onerror=source_walk_error):
+        parent = Path(directory)
+        dirs[:] = [name for name in dirs if name.casefold() not in {'_quarantine', '__pycache__'}
+                   and not (name == '.tmp' and parent.name == 'tests')]
+        for name in [*dirs, *files]:
+            path = parent / name
+            if path.is_symlink() or getattr(path.stat(), 'st_file_attributes', 0) & 0x400:
+                raise ValueError('linked_source')
+        actual.update((parent / name).relative_to(plugin).as_posix() for name in files)
+    if actual != set(expected):
+        raise ValueError('source_inventory_coverage')
+
+
+def collect(root, *, scope='source', include_development=False):
     root = Path(root)
     if not root.is_absolute() or not root.is_dir():
         raise ValueError('absolute_repository_required')
+    if scope not in {'source', 'release'} or (include_development and scope != 'source'):
+        raise ValueError('invalid_collection_scope')
     inventory = json.loads(read_source(root, str(PLUGIN / 'assets/release-inventory.json')))
     if inventory.get('schema_version') != 1:
         raise ValueError('inventory_version')
     components = inventory.get('components', [])
     if len(components) != 1 or components[0].get('root_role') != 'plugin_root':
         raise ValueError('inventory_components')
-    paths = [str(safe_path(p)) for p in inventory['repository_files']] + [str(PLUGIN / safe_path(p)) for p in components[0]['paths']]
-    if len(paths) != len({p.casefold() for p in paths}):
+    runtime = components[0]['paths']
+    development = inventory.get('development_paths')
+    if not isinstance(runtime, list) or not isinstance(development, list):
+        raise ValueError('development_inventory_required')
+    plugin_paths = [str(safe_path(p)) for p in runtime + development]
+    repository_paths = [str(safe_path(p)) for p in inventory['repository_files']]
+    declared = repository_paths + [str(PLUGIN / p) for p in plugin_paths]
+    if len(declared) != len({p.casefold() for p in declared}):
         raise ValueError('duplicate_inventory_path')
-    if any(p.casefold() in ('agents.md', 'release-manifest.json') for p in paths):
+    if any(p.casefold() in ('agents.md', 'release-manifest.json') for p in declared):
         raise ValueError('generated_inventory_path')
+    if any(development_path(p) for p in runtime + repository_paths):
+        raise ValueError('development_file_in_release')
+    if any(p.startswith(str(PLUGIN) + '/') for p in repository_paths):
+        raise ValueError('plugin_path_in_repository_inventory')
+    if any(not development_path(p) for p in development):
+        raise ValueError('runtime_file_in_development')
+    selected = runtime + (development if scope == 'source' else [])
+    validate_source_coverage(root / str(PLUGIN), selected)
+    runtime_paths = repository_paths + [str(PLUGIN / p) for p in runtime]
+    paths = runtime_paths + ([str(PLUGIN / p) for p in development] if scope == 'source' else [])
     data, provenance = {}, {}
     for relative in paths:
         data[relative] = read_source(root, relative)
@@ -134,6 +179,9 @@ def collect(root):
         raise ValueError('release_identity')
     if 'LICENSE' not in data or str(PLUGIN / 'LICENSE') not in data:
         raise ValueError('license_missing')
+    if not include_development:
+        selected_output = set(runtime_paths) | {'AGENTS.md'}
+        data = {name: raw for name, raw in data.items() if name in selected_output}
     return data, provenance, manifest['version']
 
 
@@ -145,7 +193,9 @@ def build(root, output):
         raise ValueError('new_zip_and_receipt_required')
     data, provenance, version = collect(root)
     files = {p: hashlib.sha256(b).hexdigest() for p, b in sorted(data.items())}
+    inventory = json.loads(data[str(PLUGIN / 'assets/release-inventory.json')])
     metadata = {'product': 'Codex-Operator', 'version': version, 'channel': 'preview',
+        'package_scope': 'runtime',
         'license': 'MIT', 'files': files, 'public_document_sources': provenance,
         'published': False, 'live_acceptance': False}
     data['RELEASE-MANIFEST.json'] = (json.dumps(metadata, ensure_ascii=False, indent=2) + '\n').encode('utf8')
@@ -160,6 +210,7 @@ def build(root, output):
     with output.open('xb') as stream:
         stream.write(payload)
     receipt = {'product': 'Codex-Operator', 'version': version, 'files': len(data),
+        'package_scope': 'runtime', 'development_files_excluded': len(inventory['development_paths']),
         'zip_sha256': hashlib.sha256(payload).hexdigest(), 'bytes': len(payload),
         'public_document_overrides': 0, 'reviewed_documents': len(REVIEWED_DOCS),
         'content_screen': 'passed',

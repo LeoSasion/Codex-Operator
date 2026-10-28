@@ -24,8 +24,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from test_responses_tools import ROUTE
-from test_responses_events import events_for, wire
+from operator_test_fixtures.responses import ROUTE
+from operator_test_fixtures.events import events_for, wire
 import operator_responses_eval as evaluator_module
 from operator_responses_eval import (
     EXPECTED, SOURCE, STOP_CASES, Fixture, evaluate, isolated_environment, verify_final_message,

@@ -942,7 +942,7 @@ earlier live-task result or proves that installed services were updated.
 - The Web composer guidance now identifies `operator_begin` as a required
   read-only transport step even for a request that forbids task tools or search.
   It does not grant a business tool call or relax complete-context checks;
-  [44 focused driver tests](../../models/web/tests/test_web_browser_driver.py)
+  [44 focused driver tests](https://github.com/LeoSasion/Codex-Operator/blob/main/plugins/feishu-codex-operator/models/web/tests/test_web_browser_driver.py)
   passed. A **new** App Server task on the recovered service answered `17 + 25`
   with the exact `42`, using the intended Web provider and no business tool
   call. An app-native message to that same task returned `50` for the next
@@ -1025,7 +1025,7 @@ earlier live-task result or proves that installed services were updated.
   behavior or live Desktop rendering. The owner rejected a separate same-UUID
   App Server wrapper because Desktop cannot display its execution process;
   that route was stopped and no wrapper was added.
-- A later [isolated CLI 413 probe](../../models/common/tests/test_native_official_413_cli.py)
+- A later [isolated CLI 413 probe](https://github.com/LeoSasion/Codex-Operator/blob/main/plugins/feishu-codex-operator/models/common/tests/test_native_official_413_cli.py)
   used one new failed turn per condition, a disposable home with a fake API key,
   and only loopback Router/upstream fixtures. CLI 0.158.0-alpha.2.1's built-in
   `openai` provider sent **six HTTP POST attempts** for an upstream 413 plus

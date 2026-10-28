@@ -2,15 +2,20 @@
 
 For official Desktop/CLI upgrades, source updates or endpoint-contract changes, use the [fixed upgrade checklist](upgrade-checklist.md) to bind versions, fingerprints, affected modules and separate evidence gates before maintenance.
 
-Run from the extracted repository root with Python 3.11+ and the dependencies in `../../scripts/model-router-requirements.txt` installed in your test environment:
+Run from a full Git source checkout with Python 3.11+ and the dependencies in `../../scripts/model-router-requirements.txt` installed in your test environment. The runtime ZIP retains the application and maintenance code but omits development tests, fixtures and this runner. `assets/release-inventory.json` keeps separate runtime component paths and `development_paths`; source audit requires their complete, disjoint union and screens both groups before building only the runtime files.
 
 Before a full regression or a CLI-containing module run, bind the current CLI and the exact private catalog copy needed by catalog cases in [本轮测试输入](upgrade-checklist.md#本轮测试输入). Predeclare any additional PowerShell/Bash terminal cases, bind each selected executable and disposable-CLI backend/outcome, and clear inherited inputs for unselected cases. Missing selected inputs are setup omissions; unselected cases remain unverified. Neither kind of skip counts as a passed CLI check. Preserve failed runs when choosing a different scope for later work.
 
 ```powershell
 python -B plugins/feishu-codex-operator/development/run_tests.py
 python -B plugins/feishu-codex-operator/development/run_tests.py --node
+node --test plugins/feishu-codex-operator/models/common/native-menu/provider-policy.test.cjs
 pwsh -NoProfile -File plugins/feishu-codex-operator/scripts/audit-feishu-codex-release.ps1
 ```
+
+The runner collects Node files only under the owning `tests` directories. The native-menu policy test sits beside its implementation and uses the separate Node command above. Verify the actual `--list --node` file list before recording coverage; a wider filename pattern does not expand directory discovery.
+
+For an extracted runtime ZIP, explicitly select `audit-feishu-codex-release.ps1 -Scope release`. This checks the complete runtime file set, reviewed documents and syntax; it does not claim development coverage. The default source scope rejects missing development files rather than inferring that an incomplete checkout is a release. Source fingerprints use `build_codex_operator_release.collect(root, include_development=True)` so changes to excluded tests remain visible during frozen regression.
 
 Stop the exact Operator instance and finish pending callbacks before tests. Use temporary projects and isolated homes; never aim fixtures at real chats, credentials or task histories. Tests must not send real business messages. Synthetic protocol checks, real model execution and Desktop UI acceptance are distinct.
 
@@ -18,9 +23,13 @@ The suite includes Windows-specific and environment-dependent skips. Retain fail
 
 Import shared TestCase fixtures through their module rather than exposing the class as another test module's global. unittest also discovers directly imported TestCase classes, so fixture reuse can silently run an existing test ID twice. Check the collected ID multiset before and after a discovery repair: preserve every unique ID, test method's source and required inheritance. Inherited methods with different fixture inputs remain distinct coverage; do not remove them merely because they share a function. Discovery checks do not execute cases or replace behavioral regression results, and prior run counts remain historical evidence.
 
+Shared Responses, event-fragmentation and Web protocol inputs live in `development/operator_test_fixtures`. These modules contain the original synthetic constructors and constants, without importing TestCase modules. Callers retain their local fixture names and direct-file bootstrap. A fixture move must preserve its function AST, exact source values and the collected case identities; import-path-only edits are reviewed separately from assertion or input changes. Existing migration, cancellation, permissions and recovery cases stay in the source suite.
+
 Upgrade repairs add isolated argv/PID ownership fixtures for both PowerShell 5 and 7, complete-terminal opaque argument rejection, managed-rule byte comparisons, and public single-entry maintenance cases. Tests must exercise the public dispatch as well as private receipt validators. A run edited midway is diagnostic evidence; repeat the affected scope after freezing. Preserve raw log bytes and parse both Node spec and TAP summaries, including indented unittest subtest skips. Native cache timestamp drift remains a separate failed protection gate even when model records are unchanged.
 
 Temporary directories do not isolate shared fixed ports; related port-reservation fixtures run serially across processes. Keep the product's exclusive reservation gate unchanged. Pin UTF-8 on both sides of captured PowerShell JSON, retain strict decoding and Unicode assertions, and use a private child console. Negative source-read injection must prove it hit the exact module and changed its digest. New contracts also require valid baseline fixtures; retain the original secret/allowlist and archive byte assertions when updating them.
+
+A direct asynchronous test can stall in standard-library socketpair initialization before its setup runs in a restricted execution environment. Retain that stack and failed observation, then use the same declared local test boundary as the main suite for a separate check. Do not change event-loop policies, suppress callbacks or relax product deadlines to hide the difference. Concurrent native configuration changes remain a separate failed protection gate: preserve current settings and originals, and do not attribute a writer without evidence.
 
 Transaction concurrency checks use independent interpreters and explicit checkpoints around the real write path, including abrupt exit and outside edits after preflight/fsync. On Windows a venv executable can redirect to a different process: bind the current environment's base interpreter for these standard-library-only fixtures and compare the child's reported PID with the controlled process. Retain uncertainty and original bytes; never turn a fixture crash into automatic lock takeover. Asynchronous health checks need both stale-success and stale-validation-error interleavings; invalid current-generation observations must still fail. A protocol test that releases one valid call before a later invalid item is a failure even if the final response is rejected.
 

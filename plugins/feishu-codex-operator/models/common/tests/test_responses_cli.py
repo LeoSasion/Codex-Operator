@@ -24,8 +24,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from test_responses_tools import BEEPER, ROUTE
-from test_responses_events import events_for, wire
+from operator_test_fixtures.responses import BEEPER, ROUTE
+from operator_test_fixtures.events import events_for, wire
 from operator_core.model_registry import ModelRegistry
 from operator_core.responses_tool_adapter import dumps
 

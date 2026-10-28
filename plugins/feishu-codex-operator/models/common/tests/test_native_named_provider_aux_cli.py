@@ -23,7 +23,7 @@ import subprocess
 import tempfile
 import unittest
 
-from test_responses_events import events_for, wire
+from operator_test_fixtures.events import events_for, wire
 from operator_core.responses_events import completed_response_events
 
 _operator_test_sys.path.insert(0, str(_OPERATOR_PLUGIN_ROOT / "scripts"))

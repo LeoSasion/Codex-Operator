@@ -21,7 +21,7 @@ import unittest
 from unittest.mock import patch
 
 from aiohttp import ClientSession
-from test_web_model_protocol import message, make, FUNCTION
+from operator_test_fixtures.web import message, make, FUNCTION
 from operator_core.web_browser_driver import (WebTextBrowserDriver, WebMcpBrowserDriver, text_prompt,
     child_environment, safe_generation_progress, safe_public_turn_state, safe_public_identity_structure, safe_public_interruption, safe_prompt_mismatch_shape,
     safe_modern_identity_shape, safe_fresh_chat_control_structure,

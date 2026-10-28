@@ -26,7 +26,7 @@ import operator_model_router as router
 class ContractUpdateTests(unittest.TestCase):
     def setUp(self):
         from copy import deepcopy
-        from test_responses_tools import ROUTE
+        from operator_test_fixtures.responses import ROUTE
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.state = Path(self.tmp.name)
@@ -256,7 +256,7 @@ class RouterConfigTests(unittest.TestCase):
             child.wait.assert_called_once_with(timeout=5)
 
     def test_v2_append_preserves_legacy_routes_and_refuses_replacement(self):
-        from test_responses_tools import ROUTE
+        from operator_test_fixtures.responses import ROUTE
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory)
             config.initialize(state)
@@ -276,7 +276,7 @@ class RouterConfigTests(unittest.TestCase):
             self.assertEqual(before, (state / "registry.json").read_bytes())
 
     def test_lmstudio_can_explicitly_append_v2_capabilities(self):
-        from test_responses_tools import CAPABILITIES
+        from operator_test_fixtures.responses import CAPABILITIES
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory)
             config.initialize(state)

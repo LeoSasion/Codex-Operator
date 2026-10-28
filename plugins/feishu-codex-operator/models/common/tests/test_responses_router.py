@@ -19,8 +19,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-from test_responses_tools import CAPABILITIES, ROUTE, BEEPER, EXEC, FUNCTION, CODE, prepare, response
-from test_responses_events import events_for, text_events, wire
+from operator_test_fixtures.responses import CAPABILITIES, ROUTE, BEEPER, EXEC, FUNCTION, CODE, prepare, response
+from operator_test_fixtures.events import events_for, text_events, wire
 from operator_core.model_registry import ModelRegistry
 from operator_core.responses_capabilities import ResponsesCapabilities
 from operator_core.responses_events import DONE, SSEDecoder

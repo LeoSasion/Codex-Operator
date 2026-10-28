@@ -1079,17 +1079,19 @@ class LegacyCombinedDependencyAdditionTests(LegacyInventoryAdditionTests):
 
 
 class ReleaseInclusionTests(unittest.TestCase):
-    def test_release_zip_includes_cutover_and_its_regression_test(self):
+    def test_release_keeps_cutover_and_development_keeps_its_regression_test(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary).resolve() / "operator-preview.zip"
             release.build(PLUGIN.parent.parent, output)
             with zipfile.ZipFile(output) as archive:
-                for relative in ("scripts/operator_legacy_runtime_upgrade.py",
-                                 "shared/tests/test_legacy_runtime_upgrade.py"):
-                    source = PLUGIN / relative
-                    self.assertEqual(archive.read(
-                        f"plugins/feishu-codex-operator/{relative}"),
-                        source.read_bytes())
+                relative = 'scripts/operator_legacy_runtime_upgrade.py'
+                self.assertEqual(archive.read(f'plugins/feishu-codex-operator/{relative}'),
+                                 (PLUGIN / relative).read_bytes())
+                regression = 'shared/tests/test_legacy_runtime_upgrade.py'
+                self.assertNotIn(f'plugins/feishu-codex-operator/{regression}', archive.namelist())
+                inventory = json.loads(archive.read('plugins/feishu-codex-operator/assets/release-inventory.json'))
+                self.assertIn(regression, inventory['development_paths'])
+                self.assertTrue((PLUGIN / regression).is_file())
 
 
 if __name__ == "__main__":

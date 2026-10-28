@@ -1087,7 +1087,7 @@ class ReleaseTests(unittest.TestCase):
         self.write = write
         files = ['.codex-plugin/plugin.json','assets/release-inventory.json','LICENSE',
             'assets/AGENTS.feishu-codex-operator.md', *sorted(release.REVIEWED_DOCS)]
-        self.inventory = {'schema_version': 1, 'repository_files': ['LICENSE'],
+        self.inventory = {'schema_version': 1, 'repository_files': ['LICENSE'], 'development_paths': [],
             'reviewed_document_sha256': {name: hashlib.sha256(b'public documentation\n').hexdigest()
                 for name in release.REVIEWED_DOCS},
             'components': [{'root_role': 'plugin_root', 'paths': files}]}
@@ -1214,7 +1214,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_fixture_exception_requires_exact_value_and_exact_file(self):
         relative = str(release.PLUGIN / 'models/web/tests/test_web_service_manager.py')
-        self.inventory['components'][0]['paths'].append('models/web/tests/test_web_service_manager.py')
+        self.inventory['development_paths'].append('models/web/tests/test_web_service_manager.py')
         self.save_inventory()
         fixture = 'sk-' + 'fixture-private-never-copy'
         self.write(relative, fixture)
@@ -1224,6 +1224,84 @@ class ReleaseTests(unittest.TestCase):
         self.write(relative, fixture)
         self.write('LICENSE', fixture)
         with self.assertRaisesRegex(ValueError, 'release_content_findings'): release.collect(self.repo)
+
+    def add_development(self, relative='models/web/tests/test_sample.py', text='# synthetic test fixture\n'):
+        self.inventory['development_paths'].append(relative)
+        self.write(str(release.PLUGIN / relative), text)
+        self.save_inventory()
+
+    def test_runtime_zip_excludes_development_and_requires_explicit_release_scope(self):
+        self.add_development()
+        self.add_development('development/run_tests.py')
+        full, _, _ = release.collect(self.repo, include_development=True)
+        development = str(release.PLUGIN / 'models/web/tests/test_sample.py')
+        self.assertIn(development, full)
+        output = self.base / 'runtime.zip'
+        receipt = release.build(self.repo, output)
+        self.assertEqual(receipt['package_scope'], 'runtime')
+        self.assertEqual(receipt['development_files_excluded'], 2)
+        with self.assertRaisesRegex(ValueError, 'source_inventory_coverage'):
+            release.collect(self.repo, scope='release')
+        extracted = self.base / 'extracted'
+        with zipfile.ZipFile(output) as archive:
+            self.assertNotIn(development, archive.namelist())
+            self.assertNotIn(str(release.PLUGIN / 'development/run_tests.py'), archive.namelist())
+            self.assertEqual(json.loads(archive.read('RELEASE-MANIFEST.json'))['package_scope'], 'runtime')
+            archive.extractall(extracted)
+        data, _, _ = release.collect(extracted, scope='release')
+        self.assertEqual(data[str(release.PLUGIN / 'LICENSE')], (self.plugin / 'LICENSE').read_bytes())
+        with self.assertRaisesRegex(ValueError, 'source_inventory_coverage'):
+            release.collect(extracted)
+        with self.assertRaisesRegex(ValueError, 'invalid_collection_scope'):
+            release.collect(extracted, scope='release', include_development=True)
+
+    def test_source_requires_development_files_and_rejects_unlisted_files(self):
+        self.add_development()
+        sample = self.plugin / 'models/web/tests/test_sample.py'
+        sample.unlink()
+        with self.assertRaisesRegex(ValueError, 'source_inventory_coverage'):
+            release.build(self.repo, self.base / 'missing.zip')
+        self.assertFalse((self.base / 'missing.zip').exists())
+        sample.write_text('# retained source\n', encoding='utf8')
+        (self.plugin / 'unlisted.md').write_text('unlisted source', encoding='utf8')
+        with self.assertRaisesRegex(ValueError, 'source_inventory_coverage'):
+            release.collect(self.repo)
+
+    def test_development_inventory_cannot_overlap_or_hide_runtime_sources(self):
+        from copy import deepcopy
+        original = deepcopy(self.inventory)
+        cases = [
+            ('duplicate_inventory_path', lambda value: value['development_paths'].append('LICENSE')),
+            ('runtime_file_in_development', lambda value: value['development_paths'].append('scripts/hidden.py')),
+            ('development_file_in_release', lambda value: value['components'][0]['paths'].append('models/web/tests/hidden.py')),
+            ('development_file_in_release', lambda value: value['repository_files'].append(str(release.PLUGIN / 'shared/tests/hidden.py'))),
+            ('development_inventory_required', lambda value: value.pop('development_paths')),
+        ]
+        for error, change in cases:
+            with self.subTest(error=error):
+                self.inventory = deepcopy(original)
+                change(self.inventory)
+                self.save_inventory()
+                with self.assertRaisesRegex(ValueError, error):
+                    release.collect(self.repo)
+
+    def test_excluded_development_content_is_still_screened_without_echoing_secrets(self):
+        secret = 'sk-' + 'D' * 31
+        self.add_development(text=secret)
+        with self.assertRaisesRegex(ValueError, 'release_content_findings') as caught:
+            release.build(self.repo, self.base / 'private.zip')
+        self.assertNotIn(secret, str(caught.exception))
+        self.assertFalse((self.base / 'private.zip').exists())
+
+    def test_source_walk_error_cannot_silently_omit_unreadable_content(self):
+        def inaccessible(directory, **options):
+            options['onerror'](PermissionError('synthetic directory access denied'))
+            yield directory, [], []
+        with patch.object(release.os, 'walk', side_effect=inaccessible) as walk:
+            with self.assertRaises(PermissionError):
+                release.build(self.repo, self.base / 'unreadable.zip')
+        walk.assert_called_once()
+        self.assertFalse((self.base / 'unreadable.zip').exists())
 
 
 if __name__ == '__main__': unittest.main()
