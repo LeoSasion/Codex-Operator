@@ -3,7 +3,7 @@
 Use this reference only after the user explicitly asks about taking over the
 Feishu frontend, controlling the client, or automating a real client
 conversation test. Do not inspect installation or login during generic setup,
-first use, `operator preflight`, permission work, mounting, or headless Operator
+first use, read-only product checks, permission work, mounting, or headless Operator
 operation. The Operator runtime and Feishu CLI do not require the desktop client.
 
 ## State model
@@ -34,7 +34,7 @@ the current request, resolve those details and run the install automatically
 without a second consent prompt:
 
 ```powershell
-feishu-codex-operator.ps1 feishu desktop-install
+codex-operator.ps1 channels desktop-install
 ```
 
 Only run this command when installation is included in the user's request.
@@ -50,7 +50,7 @@ If the client is already present, do not reinstall merely to determine login.
 Run:
 
 ```powershell
-feishu-codex-operator.ps1 feishu desktop-status
+codex-operator.ps1 channels desktop-status
 ```
 
 ## Login inspection
@@ -63,9 +63,10 @@ inspect one current client window. Observation is read-only:
 - an ambiguous splash, update, error, permission, or multi-account screen means
   unknown.
 
-If the app-control launch attempt times out, do not loop or claim the client
-failed to start. When one launch is in the current request, start the exact
-verified executable once through the platform launcher, then re-list windows.
+If an app-control launch times out, re-observe the exact process and windows before
+deciding what remains. A timeout does not prove that launch failed and does not authorize
+a second launch. Start the verified executable once only when launch is requested and
+no launch has already been attempted; keep uncertain outcomes for review.
 If screenshot capture fails with `SetIsBorderRequired` or another
 capture-interface error, discard the stale window state, reselect the unique
 Feishu window, and retry once with accessibility text only. Text such as
@@ -106,22 +107,13 @@ action and request that outcome explicitly.
 
 ## Stable Windows compatibility lessons
 
-- Query current official metadata for every install. Never pin a historical
-  URL, version, byte count, checksum, signer observation, or download time.
-- If the exact official metadata request is blocked by the sandbox, use the
-  supported network-access path for that request only. Do not start a generic
-  consent loop or switch to a mirror.
-- A verified installation and one visible process/window do not prove login.
-- Screenshot capture may fail with `SetIsBorderRequired ... 0x80004002`. After
-  reselecting the unique window, allow one accessibility-text-only observation.
-  Minimize the read because it may expose visible chat names or previews.
-- Accessibility can prove a QR/login page or main workspace without proving safe
-  input. If composer focus fails with `coordinate input geometry is
-  unavailable` or remains on the document root, classify the client as
-  observation-only. Never type blindly; ask the user to send the exact test
-  message manually.
-- A stale observation permits at most one fresh observation and one retry of the
-  same uniquely identified focus action. It does not repair missing geometry.
-- Installing, logging in, or observing the client never widens the requested
-  scope to sending. A live send proceeds automatically only when the current
-  request explicitly includes that exact representational action.
+Query official package metadata for each requested installation. Historical URLs, versions,
+checksums and signer observations are evidence for their own date only. If that exact metadata
+request is sandbox-blocked, use the supported approval path for the same request; do not
+switch mirrors or start a generic login flow.
+
+The state model and login-inspection rules above also apply after updates. Preserve the
+distinction between installation, login, actionable input and an authorized send. Accessibility
+without geometry is observation-only; stale focus may be refreshed once, while uncertain
+launches or sends must not be repeated. For a live channel test, verify the matching native
+dispatch, Final Callback and exact Feishu reply using [the E2E criteria](beeper-e2e-lessons.md#what-success-means).

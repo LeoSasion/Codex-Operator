@@ -10,8 +10,9 @@
 - **Final Callback**: the responder-owned call that returns the exact final reply.
 - **request_id**: public correlation key joining a Feishu event to its pending
   callback route; not a token or attestation.
-- **Read-only App Server**: stdio child used for the `/init` catalog, one
-  account-only quota read, or request-scoped lifecycle metadata; never a task owner.
+- **Read-only App Server**: a bounded stdio child for the Channels catalog, quota,
+  registration verification, model settings or lifecycle metadata; never a task
+  owner or final-answer transport. Isolated CLI evaluation is a separate test lane.
 - **Catalog App Server**: the `/init` lane, limited to task identity and status
   without turns.
 - **Quota cache**: one process-wide account/Spark snapshot refreshed on an adaptive
@@ -24,7 +25,9 @@
   deterministic Responses API installed with Operator and selected only by config.
 - **Beeper model selection**: first-time onboarding asks for local `beeper`/low
   or Luna/low; blank runtime configuration defaults to Luna/low for compatibility,
-  but is not evidence of user choice. Legacy Spark fallback code is retained for
+  but is not evidence of user choice. The current owner explicitly selected
+  `gpt-6-luna`/low on 2026-10-29; that does not change another installation.
+  Legacy Spark fallback code is retained for
   old explicit Spark settings: exhausted quota selects Luna before queuing Spark,
   and a proven Spark queue quota rejection permits one same-event Luna attempt.
   Local `beeper` and Luna never fall back. New setup does not select Spark.
@@ -42,6 +45,32 @@
   repeated wake-up signals. A request with an active lease gets a 30-second
   background probe before the same accepted request may receive one wake-up
   signal. It never applies to the Responder or authorizes another queue attempt.
+
+## Launcher, shortcuts and launch modes
+
+Use **one unified launcher with two launch modes** to describe the product's
+launch design. The Desktop shortcut named `ChatGPT 自定义启动` opens the custom
+launcher, which presents **原生** and **拓展** buttons in a mode-selection window.
+The two buttons select a launch operation; their count does not describe the
+number of Desktop shortcuts or installed executable files.
+
+| Term | Meaning |
+| --- | --- |
+| Launcher / 启动器 | The user-facing program that presents the launch choices and dispatches the selected operation. |
+| Desktop shortcut / 桌面快捷方式 | A Windows link that opens the launcher or another explicitly registered launch target. Count shortcuts separately from modes. |
+| Launch mode / 启动模式 | The selected Codex environment: native opens the official default environment; extension opens the configured isolated Operator environment. |
+| Mode button / 模式按钮 | The **原生** or **拓展** control in the launcher window. Specific models are selected later inside Codex. |
+
+In the current isolated implementation, each mode has its own environment and
+chat list; selecting a mode does not convert a running conversation into the
+other mode. A matching existing instance may be brought forward instead of
+creating another process. See [mode behavior](../../models/common/docs/mode-entry-window.md).
+
+Use **single-shortcut layout** or **two-shortcut layout** only when discussing
+Windows shortcut installation and restoration. Fresh installation creates one
+Desktop shortcut; historical two-shortcut records keep their existing scope.
+These are installation layouts, not competing definitions of the launcher's
+two modes. Preserve their distinct [ownership and restoration chains](installation-and-removal.md).
 
 ## Application flow, not a radio protocol
 

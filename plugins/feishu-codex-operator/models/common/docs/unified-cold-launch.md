@@ -1,5 +1,9 @@
 # One-shot unified picker cold launch
 
+This contract applies to the saved shared-home unified-entry generation and its explicit
+maintenance transactions. The later [isolated mode entry](mode-entry-window.md) has a different
+identity and lifecycle. Do not apply an old plan to a new entry or reactivate it from historical success.
+
 `scripts/operator_unified_cold_start.py` consumes a reviewed
 `operator_unified_prepare.py` plan once. It does not start or restart the Web
 service, router, or Desktop; it sends no model request. Its successful result is

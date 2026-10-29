@@ -16,9 +16,11 @@ using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
+#if !OPERATOR_DESKTOP_LAUNCHER
 [assembly: AssemblyTitle("Codex-Operator 启动方式")]
 [assembly: AssemblyProduct("Codex-Operator")]
 [assembly: AssemblyDescription("Native or extension mode selection")]
+#endif
 
 internal enum OperatorModeChoice
 {
@@ -30,6 +32,7 @@ internal enum OperatorModeChoice
 internal sealed class OperatorModePicker : Form
 {
     private readonly bool preview;
+    private readonly bool extensionAvailable;
     private readonly Button nativeButton;
     private readonly Button extensionButton;
     private readonly Label status;
@@ -40,12 +43,16 @@ internal sealed class OperatorModePicker : Form
     internal OperatorModeChoice Choice { get; private set; }
 
     internal OperatorModePicker(bool previewOnly, string root = null, string digest = null)
+        : this(previewOnly, root, digest, true) { }
+
+    internal OperatorModePicker(bool previewOnly, string root, string digest, bool extensionConfigured)
     {
         preview = previewOnly;
+        extensionAvailable = extensionConfigured;
         entryRoot = root;
         entryDigest = digest;
         Choice = OperatorModeChoice.Cancelled;
-        Text = preview ? "Codex-Operator 启动方式预览" : "Codex-Operator";
+        Text = preview ? "Codex-Operator 启动方式预览" : "ChatGPT 自定义启动";
         ClientSize = new Size(516, 282);
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -67,20 +74,21 @@ internal sealed class OperatorModePicker : Form
         nativeButton.TabIndex = 0;
         extensionButton = MakeButton("拓展", 266, true);
         extensionButton.TabIndex = 1;
+        extensionButton.Enabled = extensionAvailable;
         nativeButton.Click += delegate { SelectMode(OperatorModeChoice.Native); };
         extensionButton.Click += delegate { SelectMode(OperatorModeChoice.Extension); };
 
         Label nativeDescription = MakeLabel("原生设置 · 官方直连", 28, 173, 222, 27,
             9.5F, FontStyle.Regular, Color.FromArgb(89, 99, 113));
         nativeDescription.TextAlign = ContentAlignment.MiddleCenter;
-        Label extensionDescription = MakeLabel("统一路由 · 多模型切换", 266, 173, 222, 27,
+        Label extensionDescription = MakeLabel(extensionAvailable ? "统一路由 · 多模型切换" : "尚未配置拓展环境", 266, 173, 222, 27,
             9.5F, FontStyle.Regular, Color.FromArgb(89, 99, 113));
         extensionDescription.TextAlign = ContentAlignment.MiddleCenter;
         Panel divider = new Panel();
         divider.SetBounds(28, 216, 460, 1);
         divider.BackColor = Color.FromArgb(222, 226, 232);
         status = MakeLabel(preview ? "界面预览 · 具体模型在 Codex 内选择" :
-            "具体模型在 Codex 内选择", 28, 230, 460, 38, 9F,
+            (extensionAvailable ? "具体模型在 Codex 内选择" : "配置拓展环境后可使用拓展模式"), 28, 230, 460, 38, 9F,
             FontStyle.Regular, Color.FromArgb(95, 107, 121));
         status.AccessibleName = "启动状态";
 
@@ -133,6 +141,7 @@ internal sealed class OperatorModePicker : Form
 
     private void SelectMode(OperatorModeChoice selected)
     {
+        if (selected == OperatorModeChoice.Extension && !extensionAvailable) return;
         if (preview) {
             // Preview clicks stay in this window; they cannot launch a backend.
             string name = selected == OperatorModeChoice.Native ? "原生" : "拓展";

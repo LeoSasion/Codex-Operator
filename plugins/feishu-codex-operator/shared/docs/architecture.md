@@ -28,7 +28,7 @@ shared account quota cache -> optional account/rateLimits/read refresh
 open public request_id callback route
         |
         v
-codex.exe queue --thread fixed-Beeper-UUID --model gpt-5.6-luna --config model-policy
+codex.exe queue --thread fixed-Beeper-UUID --model <explicit relay model> --config model-policy
         |
         +--> adaptive Beeper wake-up policy
         |      inactive/expired wake lease -> send wake-up signal once
@@ -52,6 +52,11 @@ submit_final_callback(request_id, exact final_answer)
         v
 sealed outbox -> Feishu reply -> terminal scrub
 ```
+
+`<explicit relay model>` is the saved, validated selection, not a literal command argument.
+The 2026-10-29 owner selection is `gpt-6-luna`/low; blank legacy configuration still falls
+back to `gpt-5.6-luna`/low for compatibility. First-time setup must obtain a choice and
+verify actual new-turn metadata. It must not silently substitute the compatibility default.
 
 The Operator never reads native task output as the answer. The selected task is
 the only Responder. Current owner-selected online relay work uses Luna/low;

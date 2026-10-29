@@ -6,17 +6,21 @@ description: Configure, operate and develop Codex-Operator's Channels and Models
 # Codex-Operator
 
 总产品与插件名为 Codex-Operator / `codex-operator`，两个职能板块是 Channels 和 Models；Models 包含 API、Local、Web Providers，ChatGPT Web 属于 Web Providers。
-Channels 首版只实现飞书，不声称其他 IM 已可用。先读 [快速开始](../../QUICKSTART.md) 与
-[模块职责](../../MODULES.md)，运行 `scripts/codex-operator.ps1 status -ProjectRoot <项目绝对路径> -Json`
+Channels 首版只实现飞书，不声称其他 IM 已可用。首次配置读 [快速开始](../../QUICKSTART.md)，按
+[模块与文档导航](../../MODULES.md)选择专项资料；运行 `scripts/codex-operator.ps1 status -ProjectRoot <项目绝对路径> -Json`
 检查进度，按缺失步骤继续。用户只处理必须本人完成的登录与授权；已有配置继续复用。
 公开入口使用 `codex-operator.ps1 channels|models`（Web 使用 `models web`）；下方旧脚本/目录名属于内部安装兼容。
 名称调整不自动迁移运行时，不同时运行旧插件与新插件的两套接收服务。
 
 只修改仓库 `plugins/feishu-codex-operator`。项目 runtime 与插件 cache 是安装产物，
-不按时间或版本号提升为源码。开始变更前核实 Git、现有改动、精确进程和 pending callback。
+不按时间或版本号提升为源码。先核实 Git 和现有改动；维护运行文件、绑定或服务前，再核实精确进程和 pending callback。
 
 ## 面向用户的配置引导
 
+- 启动设计统一为“一个自定义启动器，提供原生与拓展两种启动模式”。新安装只创建
+  `ChatGPT 自定义启动` 桌面快捷方式；两个窗口按钮是模式选项。拓展未配置时保持不可用，
+  不因安装启动器自动启用路由。升级按保存的布局与归属维护；旧双快捷方式、已有单快捷方式
+  及其恢复原件不能互相冒充，未知快捷方式不认领。细节见[安装与恢复](../../shared/docs/installation-and-removal.md)。
 - 首次配置 Channels 且没有已确认的中继选择时，先让用户二选一：本地 `beeper`
   伪模型，或 Luna/low；不提供 Spark，不把底层空值默认 Luna 当作用户已选择。
   简要解释本地方案不需要模型推理、原生接入仍需验证，Luna 使用账号模型额度。
@@ -90,170 +94,70 @@ Channels 首版只实现飞书，不声称其他 IM 已可用。先读 [快速�
   不把许可转给其他用户、群聊、新目标或新绑定；业务工具和原生审批保持原有边界。
 - 真实新业务会刷新 `sessions.json` 的更新时间。发送前保留完整原件，之后分别核对准确绑定、
   历史 UUID 和预期状态变化；不能要求整文件不变后据此回滚，也不能把缺少原件的比较改判通过。
-- 成功须同时核对同一新消息的实际转交、精确 Final Callback 和同一飞书私聊的机器人原文回复。
+- 成功须同时核对同一新消息的实际转交、精确 Final Callback 和同一获授权飞书会话范围内的机器人原文回复。
   队列 `completed` 也可能表示失败通知已送达，不能据此判通过。操作细节与失败证据边界读
   [现有 E2E 经验](../../channels/feishu/docs/beeper-e2e-lessons.md#从工具可见到真实转交)。
 
 ## 工作边界
 
-- Operator 管接收、持久路由和回传；固定 Beeper 的业务转交只发送一次；Responder 独占业务执行与 final。
-  已授权私聊的任务登记可在同一固定任务运行独立管理程序：原生项目查询、一次原生创建、
-  保存准确返回身份。程序由私有授权生成，不含用户业务正文，不提交业务回调或决定绑定。
-- 原生列表漏项不能作为重新创建任务的理由。自动登记可按已知准确 UUID 对空摘要的
-  paginated 任务执行受限的 v5 索引只读核验；只接受同一原生 home 的未归档匹配记录。
-  未知存储、身份变化或读取不确定保持待审核，不改原生索引、摘要或历史；详见
-  `channels/feishu/docs/automatic-task-provisioning.md`。这不扩大 `/init` 的原生可见目录。
-- Final Callback 的 `request_id` 仅关联请求，不是身份认证。不要恢复 Page/capability/claim。
-- queue 接受或结果不确定后不重放。2026-09-21 所有者要求固定转交任务保持
-  `Beeper` 命名；首次选择为本地伪模型或 Luna/low，在线方案只提供 Luna，
-  不再选 Spark 或做其实机诊断。Spark 兼容代码及旧验收保留为历史。
-  本地方案只能在用户明确选择后配置，不能从目录可见或文件已安装推断原生可用。
-- 未配置或留空时底层兼容默认仍为 Luna/low，首次向导必须先取得明确选择。
-  排队参数不等于原生任务的实际模型：首次配置通过原生任务工具设置固定 Beeper，
-  再核对新回合模型元数据；不能自行覆盖用户业务任务的模型。用户通过 /model 显式选择
-  时，仅下一条新业务消息携带经过校验的 model/thinking；不改变 Beeper 或全局设置，
-  不为切换额外发送确认轮次。保存选择不等于已生效，/model 读回设置不等于执行成功。
-  本地 provider 随运行时安装，协议外输入只返回已确认的固定身份声明。
-  目录使用 `visibility: list`，但 Desktop 下拉框及固定任务默认 provider 的接入仍待验证；
-  不得以目录可见性代替路由证据，也不能替换原生 provider/catalog 条目而影响 Spark/Luna。
-  可选 Python Responses 路由器仅追加目录项，原生请求仍送原生后端；不依赖
-  LiteLLM，不转换 Chat Completions。涉及此功能先读 `../../models/common/docs/model-router.md`。
-  registry v2 按明确能力适配外部工具，v1/null 保留透传；代码与调用 ID 不改写，
-  工具调用仅在成功终态完整校验后交付。探测、隔离 CLI 执行和真实 Desktop 验收分别记录。
-  现有登记与已验证源码合同不一致时，先用 `update-contracts` 只读预览；仅在既有停用、
-  空回调和端口检查通过后，绑定原登记与候选摘要显式更新。它只改 `responses`，保留原件；
-  不改型号、容量或档位，不重试旧请求。参数与恢复边界见上述路由文档。
-  能力复用、注册前检查和多轮评测再读 `../../models/common/docs/responses-acceptance.md`；
-  私有 profile/receipt 不随发布复制。只读补丁计划与实际文件写入审批分开验收。
-  全局入口启用与安装分开；常驻生命周期、原生辅助工具及真实 Desktop 下拉/默认值
-  尚未验收，不能根据隔离测试自动启用。
-  此处“全局入口”指模型请求路由；可恢复的桌面/开始菜单快捷方式初始化不代表启用模型路由。
-  本地 provider 失败或不确定时不兜底。
-  所有 Operator 添加给 Spark 的外层指令、内层回调/附件说明
-  均用简洁结构化英文，飞书原句不翻译。附件元数据用无损 JSON 转义，不改真实路径。
-  旧 Spark 到 Luna 的额度备选和 Spark 推理强度诊断仅作历史兼容记录，当前不选择 Spark。
-  中文控制模板仍可供 Luna 显式诊断；不覆盖 Responder 设置，也不构成重试理由。
-- 保留 `wake lease` 名称和行为。wake-up signal 是动作，deep link 是当前实现，可能导航
-  Desktop；只针对 Beeper，不能据此认定执行成功。`itemsView=notLoaded` 不是驻留状态。
-- App Server 只用于目录、额度、无正文生命周期观察，不能接管 Desktop 任务或运输最终答案。
-- 用户授权只覆盖其请求；本地安装和生命周期可自动执行，发布、凭据、跨项目变更不自动扩大。
+- Operator 管接收、持久映射和回传；固定 Beeper 只转交一次，Responder 独占业务执行和 final。
+  已授权的用户任务登记是独立管理流程，不含业务正文、回调或自动决定绑定；详见
+  [首次接入](../../channels/feishu/docs/automatic-task-provisioning.md)。列表漏项、空摘要和读取不确定
+  不能证明任务不存在；只使用已实现的准确 UUID 核验，不改原生索引或历史。
+- Final Callback 的 `request_id` 只关联请求，不是认证。Page/capability/claim 已退役。
+  已接受或不确定的 queue、发送和调用不重放、不换模型兜底；保留原失败与未确认结果。
+- 固定任务保持 `Beeper` 名称。新在线配置只选明确代际的 Luna/low；空值兼容默认不是用户同意。
+  Luna 固定 low，`CODEX_OPERATOR_BEEPER_REASONING_EFFORT` 仅供历史 Spark 诊断，应留空。
+  Spark 兼容、提示语言与旧额度备选保留在[架构](../../shared/docs/architecture.md)，不用于新实机诊断。
+  本地 `beeper` 只能显式选择；目录可见不证明 provider 或 Desktop 默认已接入。
+- `/model` 只影响准确绑定任务的下一条新业务发送；改绑清除，发送边界消费，失败不恢复。
+  未选择时省略模型覆盖，不改变 Beeper 或全局设置。保存和读回不证明实际执行。
+- 保留 `wake lease` 名称、字段与行为。wake-up signal 只针对 Beeper，可能导航 Desktop，
+  不证明执行；`itemsView=notLoaded` 不是前台、驻留或唤醒状态。
+- Channels 的 App Server 目录、额度、登记核验和生命周期观察只读，不接管 Desktop 任务或运输答案。
+  独立 CLI/App Server 验收使用自己的隔离夹具，不能把测试操作套到现有业务任务。
+- 安装请求涵盖已说明的本地配置与生命周期；发布、凭据、跨项目和破坏性操作仍限于用户准确授权。
+  文档中的个人选择或过去授权是日期证据，不授予其他安装、用户或任务同样权限。
 
 ## 按任务读取资料
 
-- 添加或撤回 API、本地模型：先读[原生模型接入](../../models/common/docs/native-models.md)，
-  使用 `models native prepare|install|status|restore` 为准确模型配置独立原生 profile 和目录。
-  先核对当前 CLI 对文件式 profile 的支持、端点与密钥引用；保留官方默认、已有 profile 与权限。
-  旧 `[profiles.name]` 表不能作为当前接入方式。不要仅追加混合目录后声称 Desktop 能切换 provider；
-  配置加载、列表可见、真实路由、工具执行与主窗口验收分别记录。API 密钥不发到对话中。
-- 原生体验、Web 模型、工具连接、配置引导或后台生命周期：先读
-  [长期项目记忆](../../models/web/docs/native-web-experience.md) 与
-  [原生对话改进计划](../../models/web/docs/native-conversation-plan.md)。2026-10-05 最新方向以
-  BigPizzaV3/CodexPlusPlus（Codex++）为首要研究参考，保留自身已验证优势，
-  仅借鉴方案补救已确认的必要缺点。此前参考、采用机制和来源/许可记录保留。
-  新增功能或界面须先与所有者商量并取得同意；好的建议先讨论，参考不扩大授权。
-  已授权范围内的现有功能修复继续进行；重大内部方向调整先讨论用户收益、迁移与验证。
-  不扩展独立工作界面、浏览器伴随扩展产品、Goal/Loop 或另一套多智能体编排。
-  记录实际借鉴与验证范围，不将研究结论或上游宣传当作本机验收。
-  当前 Codex++ 的固定来源、已采用方法及必要缺口见[方案吸纳记录](../../development/docs/codexplusplus-adoption.md)；先核对已有合同和覆盖，再决定修复，不能为参考项目的功能创造需求。
-- 改架构、配置或投递逻辑：先读 [Architecture](../../shared/docs/architecture.md)。
-- 复盘目录、删除垃圾或整理隔离区：先读
-  [文件维护与已验证经验](../../development/docs/workspace-maintenance.md)。核对当前进程和保存引用，
-  不按临时目录名或日期判废；保留登录、任务、失败证据及恢复原件。删除前形成逐文件清单，
-  核对精确副本或可重建来源，执行后复核配置和服务。公开摘要与私有同名文档分别审阅，
-  不用 `git add -A` 把本地复盘记录带入发布。
-- 改 Beeper 提示、模型、推理强度、wake-up、观察器或真实 E2E：必须再读
-  [Beeper E2E lessons](../../channels/feishu/docs/beeper-e2e-lessons.md)。保留失败样本，不重放；
-  成功必须是同一飞书消息经 Final Callback 收到精确关联回复，不能用 Desktop 输出替代。
-- 安装、迁移或升级：读 [README](../../README.md) 和 [Upgrade](../../upgrade-operator.md)。
-  桌面双入口的命名、日期含义、原生恢复与发布验收只维护在
-  [安装与恢复指南](../../shared/docs/installation-and-removal.md#desktop-entry-pair)。
-  桌面双入口已实现，支持经审查的旧入口迁移；保留原归属记录，实机冷启动、退出后重开
-  和模型连续对话仍需分别验收。
-- ChatGPT Web 后台连接、Tunnel ID 或运行密钥配置：先读
-  [固定连接与对话引导](../../models/web/docs/web-fixed-tunnel.md)，按其中用户步骤逐步带操作。
-  管理已配置的后台服务时读[原生 Web 体验方案](../../models/web/docs/native-web-experience.md)，
-  由助手使用持久配置入口，复用准确实例，不让用户重复填写配置或寻找运行目录。
-  优先使用统一入口 `models web status|start|assist|inspect|stop`；首次 `models web configure` 由助手登记
-  已有设置与准确 Python 路径。已有保存入口的 configure 可省略 Settings/Python，核验原设置摘要、
-  程序与完整登记后只确认复用，不更新登记或启动服务。设置/程序变化时先核对，再明确提供设置
-  进入既有升级流程；不因省略参数而自动采用变化。入口固定 reason/stage 区分访问受限、登记、
-  程序及检查失败；这些情况不能当作丢失配置并要求重新登录。占用记录未经独立进程核对不能当成可自动清除的旧锁。
-  已确认异常退出时可显式使用 `models web recover` 预览；按准确摘要应用归档，保留原异常
-  和请求记录。它不启动后台，不重放请求；不能从普通 start/status 隐式触发。
-  查看已结束对话用 `models web inspect` 的只读文字快照；`assist` 会准备空白聊天，不能
-  用来保留旧现场。只读预览不重发请求、不展开卡片，也不能替代工具执行/拒绝证据。
-  将该后台接入模型路由时，按原生 Web 体验方案使用显式 `--web-profile` 与
-  `bind-web` 内存绑定。摘要回执不含密钥；不要手填端口、复制 session 凭据、
-  自动重启现有路由，或把目录追加当作 Desktop 列表/工具任务验收。
-  升级已经成功启用的统一入口，先按[受控升级交接](../../models/common/docs/unified-cold-launch.md#replacing-a-witnessed-activation-during-an-explicit-upgrade)
-  准备并核验 `prepare-upgrade` 的完整私有清单，再协调用户退出。旧成功记录、用户后来选定的
-  模型和显示偏好须保留；失败或不确定的启动不能重置重试。不要让用户先退出，再临时准备恢复。
-  2026-09-30 所有者要求避免升级时无反馈地等待：交接必须先确认独立后台和可见维护状态窗口，
-  再请用户退出；明确窗口关闭不一定代表应用退出，等待可延期且有截止时间。超时、检查失败、
-  官方恢复与升级完成分开报告，不让用户猜状态、反复退出或自行结束进程。具体行为与发布验收
-  统一见上述受控交接文档；未完成真实退出闭环前不声称发布就绪。
-  用户要求验证编码能力时，可使用 `models web verify`：只在新合成项目中做一次有界真实
-  CLI 读取、精确修正与实际测试。失败保留，不重放；回执须区分工具执行与 Desktop
-  体验。它会调用网页模型；普通 `status` 等只读检查不能暗中调用它。
-  独立 Desktop 验收先用 `models web desktop-prepare` 准备，再用 `desktop-connect` 追加
-  供显式选择的 provider；`desktop-status` 查看登记，`desktop-check` 用新原生进程
-  只读核对模型目录与提供方（不等于运行中菜单或路由验收），`desktop-disconnect`
-  撤回准确片段。服务换代时先以 `desktop-status` 确认 `stale`，核对当前服务
-  ready/idle 后显式 `desktop-rebind`，保留原 provider 名称与任务，保存原配置。
-  用户明确要求以所选 Web 型号新建任务时，助手先核对保存后台 ready/idle、独立
-  provider 已连接、项目位置和准确型号/强度，再通过原生 App Server 的
-  `thread/start.modelProvider` 创建专用任务，以新输入调用一次 `turn/start`，
-  核对落盘的提供方、实际模型和回合结果后打开该任务的准确 UUID。空任务在首轮落盘前
-  不能视为可续用；普通 `create_thread` 不提供 provider 选择，不能替代这一步。
-  这仍是助手引导的专用任务入口，不宣称主窗口新任务模型菜单已经支持 Web。
-  rebind 只更新保存配置，已加载任务可能仍缓存旧地址。对已授权维护的准确空闲任务，按
-  [原生任务重载](../../models/web/docs/native-web-experience.md#reload-an-idle-web-task)
-  由助手使用原生归档/恢复工具处理同一 UUID，并读回实际状态；不重建任务、不重启 Desktop。
-  操作报错不能当作一定未生效，不盲目重复；确认恢复后才用全新输入验证实际去向，不重发旧失败请求。
-  所有者已授权助手代发验收测试消息；先核对准确任务与提供方，发送每次全新的测试输入，
-  核对原生任务最终内容和服务证据。任务工具转交与用户亲自在输入框发送属于不同验收范围，
-  不能混称。旧长任务若在 Web 索引上下文容量处返回 413，保留历史与失败回合；
-  旧版 64 MiB 原生 HTTP 正文修复不适用于 48 KiB/24 页/40 读取的 Web 容量限制。
-  如环境提供 Windows Computer Use 且用户已授权操作，可在准确任务的普通 Desktop
-  输入框代发一次全新测试消息：先观察任务标题、历史及输入框，确认草稿后只发送一次，
-  再分别核对窗口可见结果、原生回合的模型/提供方/工具记录及后台状态。操作结果不明时
-  先检查实际回合，不能再次点击发送或重放原请求；桌面输入框实测也不等于用户亲自输入。
-  `desktop-status` 的保守验收字段不是已发生的主窗口输入回执。
-  不要为 Web 任务在项目或全局 `.codex/config.toml` 关闭 `web_search`：项目设置也会影响
-  同目录的 GLM、DeepSeek 和原生任务。Web provider 仅将准确的可选 live hosted
-  `web_search` 声明绑定到 ChatGPT 网页自己的搜索路径，不生成 Codex
-  `web_search_call`；有缓存、索引、域名/位置限制或强制工具选择时，在网页提交前拒绝。
-  该绑定只适用于 Web provider，状态中的 `web_page_auto_v1` 表示路由选择，
-  不能单独证明网页实际搜索或结果正确。GLM-5.3 官方直连曾返回服务商托管搜索事件；
-  GLM-5.3 Flash 的已验收搜索是 Codex 执行，型号和端点不能混称。
-  DeepSeek 官方 Responses 文档说明忽略 hosted `web_search`，适配型号如需搜索须
-  单独验证 Codex 搜索工具。保留原生搜索设置、默认路由和旧失败任务。
-  官方默认、权限和现有任务保持；新任务必须有明确创建指令。
-  登记不是活跃 Desktop 的加载或切换证据，不能据此启用全局路由。卸载前先撤回。
-  改浏览器、MCP 或模型执行逻辑时再读
-  [ChatGPT Web integration](../../models/web/docs/chatgpt-web-integration.md)。
-- 初始化入口或卸载：读 [Installation and removal](../../shared/docs/installation-and-removal.md)。
-  首次写入前说明入口改动、原件备份、任务栏手动固定和安全卸载顺序。初始化请求已覆盖
-  说明后的当前用户入口配置，不重复索要许可；不自动启用未经配置的模型路由。
-  用户要求移除插件时，先预览并执行项目安全卸载，成功后才移除 Desktop 插件。
-  不把 Desktop 直接删除插件说成自动恢复，不覆盖后续用户修改，也不伪造旧安装原件记录。
-- Hook 审核：读 [Permissions and Hooks](../../shared/docs/permissions-and-hooks.md)。
-  首选 Desktop“设置 → 钩子”；Desktop 没有 `/hooks`，Windows CMD 启动 CLI 的动态路径命令仅作备选。
-- 命名变更：读 [Terminology](../../shared/docs/terminology.md)。新执行面只用 Operator，
-  旧名称仅出现在一次性迁移识别、退役状态和未更名的 GitHub 地址中。
-- 飞书客户端安装或权限问题：分别读 [Desktop client](../../channels/feishu/docs/feishu-desktop-client.md)
-  或 [Authentication and permissions](../../channels/feishu/docs/feishu-auth.md)，不要默认加载。
+| 任务 | 指南与主要边界 |
+| --- | --- |
+| API / Local 接入、撤回 | [原生模型](../../models/common/docs/native-models.md)：先核对准确模型、端点、容量依据及当前 CLI 的 profile 支持，保留官方默认、已有配置和权限。 |
+| Responses 协议、能力与契约更新 | [路由合同](../../models/common/docs/model-router.md)、[验收规则](../../models/common/docs/responses-acceptance.md)：显式能力、完整身份、成功终态；原生/v1/null 保持透传。`update-contracts` 先预览，再按停用、空回调和端口条件更新，保留原件。 |
+| 原生体验、Web、工具连接、引导或后台生命周期 | [项目记忆](../../models/web/docs/native-web-experience.md)及实现来源、[对话计划](../../models/web/docs/native-conversation-plan.md)：区分现行约束、阶段计划和日期证据。 |
+| Web 首次连接、登录与密钥 | [固定连接引导](../../models/web/docs/web-fixed-tunnel.md)：逐步引导，复用准确 Tunnel、app 和登录，不把本机保存当成执行通过。 |
+| 已保存 Web 服务、独立 provider 与任务维护 | [助手操作指南](../../models/web/docs/native-web-experience.md#assistant-operation-guide)：configure 复用、显式恢复、启动登记、任务重载和实际路由分别处理。 |
+| Web 型号及档位 | [模型目录](../../models/web/docs/web-model-catalog.md)：逐请求核对代际、选中项和档位；Pro 单列，Latest 不是身份依据。共享串行与已消费记录，不以换模型重试。 |
+| 架构、配置、投递或命名 | [架构](../../shared/docs/architecture.md)、[术语](../../shared/docs/terminology.md)。保留原生任务归属与唯一 Operator 命名面。 |
+| Beeper 提示、模型、wake-up、观察器或真实 E2E | [E2E 经验](../../channels/feishu/docs/beeper-e2e-lessons.md)：核对同一新消息的实际转交、Final Callback 与精确飞书回复，保留旧失败。 |
+| 安装、迁移、升级、启动器或卸载 | [安装与恢复](../../shared/docs/installation-and-removal.md)、[升级流程](../../upgrade-operator.md)。启动器内有原生与拓展两种模式；桌面快捷方式数量另按已有归属链维护，不混称“单/双入口”，不从名字推定状态。 |
+| Hook 审核 | [权限与 Hooks](../../shared/docs/permissions-and-hooks.md)：先核对准确命令，再在 Desktop 钩子设置中审核，不信任全部。 |
+| 飞书客户端或账号权限 | [客户端](../../channels/feishu/docs/feishu-desktop-client.md)、[认证](../../channels/feishu/docs/feishu-auth.md)，只在相关任务读取。 |
+| 目录整理、垃圾删除或经验沉淀 | [工作区维护](../../development/docs/workspace-maintenance.md)：核对保存引用，保留登录、历史和恢复原件；先形成逐文件清单，再精确清理。 |
+
+安装前说明入口改动、原件保留、任务栏手动固定与安全卸载顺序。初始化请求已覆盖说明后的当前用户
+入口配置，不再次索取同一许可；它不自动启用全局模型路由。卸载先完成项目安全恢复，再移除 Desktop 插件。
+旧安装不能补造首次归属。安装、真实冷启动和模型对话分别验收。
+
+受控入口升级先准备完整私有清单、独立后台及可见维护状态，再协调正常退出；等待有截止时间，
+不强杀、盲等或重试失败计划。细节见[受控交接](../../models/common/docs/unified-cold-launch.md#replacing-a-witnessed-activation-during-an-explicit-upgrade)。
+
+研究以 BigPizzaV3/CodexPlusPlus 为首要参考，只补已确认的必要缺口；保留自身已验证优势、原有来源和许可。
+具体采用见[方案记录](../../development/docs/codexplusplus-adoption.md)。新功能、界面或重大内部方向变化先与
+用户讨论收益、迁移和验证；已授权修复继续执行。不另建工作界面、伴随扩展产品、Goal/Loop 或多智能体编排。
 
 ## 开发与验证
 
 开发经验归入[现有经验文档](../../development/docs/workspace-maintenance.md)，升级专项读[固定检查流程与回归经验](../../development/docs/upgrade-checklist.md)。本 Skill 在此只维护经验导航，不因一次经验沉淀另建独立 skill 或重复工作流。
 
-精确服务已停止、无 pending callback 后，按 [测试维护](../../development/docs/testing.md) 选择受影响模块。
-跨层改动和发布/部署前运行全量；纯文档措辞改动执行发布审计，不重复启动 CLI 执行用例。
+代码测试在精确服务已停止、无 pending callback 后，按 [测试维护](../../development/docs/testing.md) 先做
+`--group quick` 日常反馈，再选受影响模块或职能分组；快速组不替代权限、恢复与兼容覆盖。
+共享生产逻辑、发现规则变化、影响不明和代码发布/部署前运行 `--group full --node`，另跑原生菜单测试。
+只调整夹具时覆盖全部调用方并核对原用例身份与断言；不为降低数量合并不同边界。
+纯文档整理做链接、skill、规则镜像和发布审计，不重启服务或重复 CLI 执行用例。
 测试和诊断不发真实消息；真实 E2E 按当前 AGENTS 授权核对目标与身份。
 
 同步源码、安装清单、MCP、测试、文档和规则镜像。根 `AGENTS.md` 的唯一受管理块与
 `assets/AGENTS.feishu-codex-operator.md` 对应块保持 byte-identical；根的私人补充不进入公共镜像。安装只能通过项目脚本；
 不要手改 runtime/cache。除非用户要求，不提交、不推送、不发布。
-
-Web 模型目录维护先读 [版本与推理档位契约](../../models/web/docs/web-model-catalog.md)。网页档位以当前可见菜单为准；Pro 单列，“最新”须核对明确代际标签。普通与 Pro 请求共享串行执行和已消费任务记录，不能通过换模型重试。目录准备、CLI 执行、Desktop 菜单与路由分别验收，不为增加菜单项自动恢复全局路由。

@@ -3,8 +3,8 @@
 `operator_core.windows_config_transaction` is an independent, one-shot primitive
 for an existing `config.toml`. The reviewed
 [unified cold-launch consumer](unified-cold-launch.md) now calls it, while the
-disposable tests still use temporary directories only. No real Desktop
-activation has been verified from that integration.
+disposable tests still use temporary directories only. This primitive’s isolated tests alone do not prove real Desktop activation;
+version-bound integration and live evidence are recorded in the cold-launch guide.
 
 The caller first takes `observe_config`'s exact bytes and Windows volume/file
 identity, then supplies a reviewed candidate and a controlled state directory

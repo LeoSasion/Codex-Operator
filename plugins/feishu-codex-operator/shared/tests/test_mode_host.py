@@ -11,6 +11,52 @@ from test_mode_entry import mode
 
 @unittest.skipUnless(os.name == 'nt', 'Windows kernel process metadata required')
 class ModeHostTests(unittest.TestCase):
+    def test_mode_buttons_keep_native_extension_and_cancel_distinct(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            mode.compile_host(root)
+            source = root / 'mode-choice-probe.cs'
+            source.write_text(r'''
+using System; using System.Collections.Generic; using System.Reflection;
+using System.Text; using System.Web.Script.Serialization; using System.Windows.Forms;
+internal static class Probe {
+    [STAThread] private static int Main(string[] args) {
+        Console.OutputEncoding = new UTF8Encoding(false, true);
+        Type picker = Assembly.LoadFrom(args[0]).GetType("OperatorModePicker");
+        Type choice = picker.Assembly.GetType("OperatorModeChoice");
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var rows = new List<object>();
+        foreach (bool available in new bool[] {false, true}) {
+            foreach (int selected in new int[] {0, 10, 20}) {
+                using (Form form = (Form)Activator.CreateInstance(picker, flags, null,
+                        new object[] {false, null, null, available}, null)) {
+                    var extension = (Button)picker.GetField("extensionButton", flags).GetValue(form);
+                    if (selected != 0) picker.GetMethod("SelectMode", flags).Invoke(form,
+                        new object[] {Enum.ToObject(choice, selected)});
+                    rows.Add(new {available=available, selected=selected, enabled=extension.Enabled,
+                        choice=Convert.ToInt32(picker.GetProperty("Choice", flags).GetValue(form, null))});
+                }
+            }
+        }
+        // No Application.Run/Show: the real form's choice handler cannot launch
+        // anything without an exact bound entry root.
+        Console.WriteLine(new JavaScriptSerializer().Serialize(rows)); return 0;
+    }
+}
+''', encoding='utf-8')
+            compiler = Path(os.environ['SystemRoot']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+            executable = root / 'mode-choice-probe.exe'
+            built = subprocess.run([str(compiler), '/nologo', '/target:exe', '/r:System.Web.Extensions.dll',
+                '/r:System.Windows.Forms.dll', '/out:' + str(executable), str(source)],
+                capture_output=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+            result = subprocess.run([str(executable), str(root / 'operator-mode-picker.exe')],
+                capture_output=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            values = json.loads(result.stdout)
+            self.assertEqual([v['choice'] for v in values], [0, 10, 0, 0, 10, 20])
+            self.assertEqual([v['enabled'] for v in values], [False] * 3 + [True] * 3)
+
     def test_desktop_child_keeps_loopback_local_and_preserves_proxy_environment(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

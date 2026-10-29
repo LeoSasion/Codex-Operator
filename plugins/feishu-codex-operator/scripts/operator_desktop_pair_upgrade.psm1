@@ -236,10 +236,10 @@ function Get-OperatorUpgradeCompilerHash([string]$Path) {
 function Get-OperatorUpgradeSource {
     param([switch]$Direct,[switch]$Isolated)
     $result=[ordered]@{}
-    $names=@('operator_desktop_entry.cs','operator_desktop_entry.ps1','operator_native_entry.ps1',
+    $names=@('operator_desktop_entry.cs','operator_mode_picker.cs','operator_desktop_entry.ps1','operator_native_entry.ps1',
             'restore-codex-official-route.ps1','operator_desktop_pair_upgrade.psm1','../.codex-plugin/plugin.json')
     if ($Direct -or $Isolated) {$names+=@('operator_direct_entry.py','operator_direct_profile.py','operator_native_models.py','operator_core/windows_config_transaction.py')}
-    if ($Isolated) {$names+=@('operator_mode_entry.py','operator_mode_entry.ps1','operator_mode_native.cs','operator_mode_host.cs','operator_mode_picker.cs','operator_mode_onboarding.py')}
+    if ($Isolated) {$names+=@('operator_mode_entry.py','operator_mode_entry.ps1','operator_mode_native.cs','operator_mode_host.cs','operator_mode_onboarding.py')}
     foreach ($name in $names) {
         $bytes=Read-OperatorUpgradeBytes (Join-Path $PSScriptRoot $name)
         if ($null -eq $bytes) {throw 'pair_upgrade_source_missing'}
@@ -280,9 +280,12 @@ function New-OperatorEntryBuildCandidate {
     if (Test-Path -LiteralPath $stage) {throw 'pair_candidate_already_exists'}
     $bundle=Join-Path $project '.codex/operator-desktop-entry'
     if (Test-Path -LiteralPath (Join-Path $bundle 'native-only')) {throw 'pair_native_only_requires_review'}
-    & $script:PairModule {param($P) Get-RecoveryEntryPlan $P|Out-Null} $project
+    & $script:PairModule {param($P) Get-OperatorPairBuild $P|Out-Null} $project
     $before=Read-OperatorUpgradeBytes (Join-Path $bundle 'desktop-entry.json') 16384
     $config=$script:UpgradeUtf8.GetString($before)|ConvertFrom-Json -AsHashtable
+    $existingBuild=Get-OperatorUpgradeJson (Join-Path $bundle 'launcher-manifest.json')
+    $shortcutLayout=if ($existingBuild.shortcut_layout -ceq 'single') {'single'} else {'paired'}
+    if ($shortcutLayout -ceq 'single' -and $DirectPickerPath) {throw 'unified_launcher_requires_isolated_mode'}
     $picker=$null
     $modeEntry=$null
     if ($DirectPickerPath) {
@@ -312,7 +315,7 @@ function New-OperatorEntryBuildCandidate {
         $files[$name]=Get-OperatorUpgradeHash $bytes
     }
     $icon=Read-OperatorUpgradeBytes (Join-Path $bundle 'Codex拓展入口.ico') 1048576
-    $arguments=@('/nologo','/target:winexe','/optimize+','/platform:anycpu','/reference:System.Windows.Forms.dll')
+    $arguments=@('/nologo','/target:winexe','/main:OperatorDesktopEntry','/define:OPERATOR_DESKTOP_LAUNCHER','/optimize+','/platform:anycpu','/reference:System.Windows.Forms.dll','/reference:System.Drawing.dll','/reference:System.Web.Extensions.dll')
     if ($null -ne $icon) {
         [IO.File]::WriteAllBytes((Join-Path $stage 'Codex拓展入口.ico'),$icon)
         $files['Codex拓展入口.ico']=Get-OperatorUpgradeHash $icon
@@ -320,6 +323,7 @@ function New-OperatorEntryBuildCandidate {
     }
     $arguments+=('/out:'+(Join-Path $stage 'Codex拓展入口.exe'))
     $arguments+=(Join-Path $PSScriptRoot 'operator_desktop_entry.cs')
+    $arguments+=(Join-Path $PSScriptRoot 'operator_mode_picker.cs')
     $compilerOutput=@(& $compiler @arguments 2>&1)
     if ($LASTEXITCODE -ne 0) {throw 'pair_candidate_compile_failed'}
     $files['Codex拓展入口.exe']=Get-OperatorUpgradeHash (Read-OperatorUpgradeBytes (Join-Path $stage 'Codex拓展入口.exe'))
@@ -335,9 +339,9 @@ function New-OperatorEntryBuildCandidate {
     }
     [IO.File]::WriteAllBytes((Join-Path $stage 'desktop-entry.json'),(ConvertTo-OperatorUpgradeBytes $config))
     $files['desktop-entry.json']=Get-OperatorUpgradeHash (Read-OperatorUpgradeBytes (Join-Path $stage 'desktop-entry.json'))
-    $sourceDigest=Get-OperatorUpgradeHash ($script:UpgradeUtf8.GetBytes($sources['operator_desktop_entry.cs']+"`n"+$files['operator_desktop_entry.ps1']))
+    $sourceDigest=Get-OperatorUpgradeHash ($script:UpgradeUtf8.GetBytes($sources['operator_desktop_entry.cs']+"`n"+$files['operator_desktop_entry.ps1']+"`n"+$sources['operator_mode_picker.cs']))
     $manifest=[ordered]@{schema_version=1;native_fallback='native-only-v1';binary_sha256=$files['Codex拓展入口.exe'];
-        entry_script_sha256=$files['operator_desktop_entry.ps1'];build_date=$BuildDate;shortcut_layout='paired';
+        entry_script_sha256=$files['operator_desktop_entry.ps1'];build_date=$BuildDate;shortcut_layout=$shortcutLayout;
         product_version=$plugin.version;source_sha256=$sourceDigest}
     [IO.File]::WriteAllBytes((Join-Path $stage 'launcher-manifest.json'),(ConvertTo-OperatorUpgradeBytes $manifest))
     $files['launcher-manifest.json']=Get-OperatorUpgradeHash (Read-OperatorUpgradeBytes (Join-Path $stage 'launcher-manifest.json'))
@@ -351,7 +355,7 @@ function New-OperatorEntryBuildCandidate {
     $record=[ordered]@{schema_version=1;scope='entry_build_candidate';project=$project;candidate=(Split-Path -Leaf $stage);
         build_date=$BuildDate;version=$plugin.version;source_sha256=$sourceDigest;sources=$sources;files=$files;
         config_before_sha256=(Get-OperatorUpgradeHash $before);config_before_base64=[Convert]::ToBase64String($before);
-        icon_before_sha256=(Get-OperatorUpgradeHash $icon);
+        icon_before_sha256=(Get-OperatorUpgradeHash $icon);shortcut_layout=$shortcutLayout;
         compiler=$compiler;compiler_sha256=$compilerHash}
     if ($picker) {$record.direct_picker=@{path=[IO.Path]::GetFullPath($DirectPickerPath);sha256=$pickerSha;home=$picker.home}}
     if ($modeEntry) {$record.isolated_mode=@{path=[IO.Path]::GetFullPath($IsolatedModePath);sha256=$modeSha;home=$modeEntry.native_home}}
@@ -388,7 +392,7 @@ function Get-OperatorEntryBuildCandidate {
     $config=Get-OperatorUpgradeJson (Join-Path $stage 'desktop-entry.json')
     $parsedDate=[DateTime]::MinValue
     $plugin=Get-OperatorUpgradeJson (Join-Path $PSScriptRoot '../.codex-plugin/plugin.json')
-    $derivedSource=Get-OperatorUpgradeHash ($script:UpgradeUtf8.GetBytes($sources['operator_desktop_entry.cs']+"`n"+$record.files['operator_desktop_entry.ps1']))
+    $derivedSource=Get-OperatorUpgradeHash ($script:UpgradeUtf8.GetBytes($sources['operator_desktop_entry.cs']+"`n"+$record.files['operator_desktop_entry.ps1']+"`n"+$sources['operator_mode_picker.cs']))
     if (-not [DateTime]::TryParseExact($record.build_date,'yyyy-MM-dd',[Globalization.CultureInfo]::InvariantCulture,
         [Globalization.DateTimeStyles]::None,[ref]$parsedDate) -or $record.version -cne $plugin.version -or
         $record.source_sha256 -cne $derivedSource) {throw 'pair_candidate_metadata_changed'}
@@ -425,7 +429,9 @@ function Get-OperatorEntryBuildCandidate {
         (Get-OperatorUpgradeHash (ConvertTo-OperatorUpgradeBytes $config[$_])) -cne
             (Get-OperatorUpgradeHash (ConvertTo-OperatorUpgradeBytes $expectedConfig[$_]))
     }).Count) {throw 'pair_candidate_config_changed'}
-    if ($manifest.schema_version -ne 1 -or $manifest.shortcut_layout -cne 'paired' -or
+    if ($record.shortcut_layout -cnotin @('paired','single') -or
+        ($record.shortcut_layout -ceq 'single' -and ($direct -or $config.launch_selection -cne 'native_or_extension_v1')) -or
+        $manifest.schema_version -ne 1 -or $manifest.shortcut_layout -cne $record.shortcut_layout -or
         $manifest.native_fallback -cne 'native-only-v1' -or $manifest.build_date -cne $record.build_date -or
         $manifest.product_version -cne $record.version -or $manifest.source_sha256 -cne $record.source_sha256 -or
         $manifest.binary_sha256 -cne $record.files['Codex拓展入口.exe'] -or
@@ -458,12 +464,14 @@ function Get-OperatorDesktopPairUpgrade {
         (Test-Path -LiteralPath (Join-Path $project '.codex/operator-entry-migration'))) {throw 'pair_upgrade_normal_owner_required'}
     $candidate=Get-OperatorEntryBuildCandidate $project $CandidateDirectory
     $record=$candidate.record
+    $layout=& $script:PairModule {param($R) Get-OperatorDesktopShortcutLayout $R} $old
+    if ($layout -cne $record.shortcut_layout) {throw 'pair_shortcut_layout_changed'}
     if ((Test-Path -LiteralPath (Join-Path $old.home 'operator-direct-entry')) -and -not $record.Contains('direct_picker') -and -not $record.Contains('isolated_mode')) {throw 'direct_cycle_maintenance_requires_bound_python'}
     if ((Get-OperatorUpgradeHash (Read-OperatorUpgradeBytes (Join-Path $bundle 'desktop-entry.json'))) -cne $record.config_before_sha256 -or
         (Get-OperatorUpgradeHash (Read-OperatorUpgradeBytes (Join-Path $bundle 'Codex拓展入口.ico'))) -cne $record.icon_before_sha256) {
         throw 'pair_candidate_baseline_changed'
     }
-    $newLink=Join-Path $old.desktop ('ChatGPT 拓展模型 '+$record.build_date.Substring(5)+' 入口.lnk')
+    $newLink=Join-Path $old.desktop $(if ($layout -ceq 'single') {'ChatGPT 自定义启动.lnk'} else {'ChatGPT 拓展模型 '+$record.build_date.Substring(5)+' 入口.lnk'})
     if (-not $old.links.Contains($newLink) -and $null -ne (Read-OperatorUpgradeBytes $newLink)) {throw 'pair_shortcut_name_conflict'}
     $upgradeRoot=Join-Path $project '.codex/operator-desktop-pair/upgrades'
     Assert-OperatorUpgradePath $upgradeRoot
@@ -554,8 +562,12 @@ function Invoke-OperatorDesktopPairUpgrade {
         $nativeBytes=& $script:PairModule {param($P,$S,$A,$D) New-OperatorPairShortcut $P $S $A $D '打开官方原生模式；需要切换时先确认正常退出。'} `
             (Join-Path $generation 'native.lnk') $shell ('-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File "'+(Join-Path $generation 'operator_native_entry.ps1')+'"') $generation
         $bundle=Join-Path $project '.codex/operator-desktop-entry'
-        $extensionBytes=& $script:PairModule {param($P,$T,$D) New-OperatorPairShortcut $P $T '' $D '使用已配置的拓展模型；不会自动解除官方直连保护。'} `
-            (Join-Path $generation 'extension.lnk') (Join-Path $bundle 'Codex拓展入口.exe') $bundle
+        $single=$candidate.shortcut_layout -ceq 'single'
+        $description=if ($single) {
+            'ChatGPT 自定义启动：选择原生或拓展启动模式，具体模型在 Codex 内选择。'
+        } else {'使用已配置的拓展模型；不会自动解除官方直连保护。'}
+        $extensionBytes=& $script:PairModule {param($P,$T,$D,$Description) New-OperatorPairShortcut $P $T '' $D $Description} `
+            (Join-Path $generation 'extension.lnk') (Join-Path $bundle 'Codex拓展入口.exe') $bundle $description
         $changes=@()
         $build=@{}
         foreach ($name in @('operator_desktop_entry.ps1','desktop-entry.json','Codex拓展入口.exe','launcher-manifest.json')) {
@@ -564,7 +576,7 @@ function Invoke-OperatorDesktopPairUpgrade {
             if ($name -ne 'desktop-entry.json') {$build[$name]=Get-OperatorUpgradeHash $bytes}
         }
         $nativePath=Join-Path $old.desktop 'ChatGPT 原生入口.lnk'
-        $changes+=@{path=$nativePath;before=(Read-OperatorUpgradeBytes $nativePath);after=[byte[]]$nativeBytes}
+        if (-not $single) {$changes+=@{path=$nativePath;before=(Read-OperatorUpgradeBytes $nativePath);after=[byte[]]$nativeBytes}}
         $newLink=$review.plan.new_link
         $changes+=@{path=$newLink;before=(Read-OperatorUpgradeBytes $newLink);after=[byte[]]$extensionBytes}
         foreach ($path in $old.links.Keys) {
@@ -573,7 +585,9 @@ function Invoke-OperatorDesktopPairUpgrade {
         $after=@{schema_version=1;project=$project;home=$old.home;desktop=$old.desktop;phase='installed';
             generation=$candidate.candidate;build_date=$candidate.build_date;version=$candidate.version;
             source_sha256=$candidate.source_sha256;build=$build;files=$nativeFiles;links=@{}}
-        $after.links[$nativePath]=@{before='absent';after=(Get-OperatorUpgradeHash ([byte[]]$nativeBytes))}
+        if ($single) {$after.shortcut_layout='single'} else {
+            $after.links[$nativePath]=@{before='absent';after=(Get-OperatorUpgradeHash ([byte[]]$nativeBytes))}
+        }
         $after.links[$newLink]=@{before='absent';after=(Get-OperatorUpgradeHash ([byte[]]$extensionBytes))}
         $receipt=Join-Path $root 'ownership.json'
         $changes+=@{path=$receipt;before=(Read-OperatorUpgradeBytes $receipt);after=(ConvertTo-OperatorUpgradeBytes $after)}

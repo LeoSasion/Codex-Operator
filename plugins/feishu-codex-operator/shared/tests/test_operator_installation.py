@@ -389,7 +389,7 @@ Restore-OperatorManagedFiles -ProjectRoot $p -LinkPaths @(Get-OperatorDesktopPat
 if((Get-OperatorFingerprint $originalPath) -cne $originalHash){throw 'Second uninstall lost the original shortcut'}
 if((Get-OperatorFingerprint $officialPath) -cne $officialHash){throw 'Official shortcut changed'}
 $version=[Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $p '.codex/operator-desktop-entry/Codex拓展入口.exe'))
-if($version.FileDescription -cne 'Codex拓展入口' -or $version.ProductName -cne 'Codex拓展入口'){throw 'Launcher branding missing'}
+if($version.FileDescription -cne 'ChatGPT 自定义启动' -or $version.ProductName -cne 'Codex-Operator'){throw 'Launcher branding missing'}
 """.replace('SETUP',self.q(ROOT/'scripts/operator_desktop_setup.ps1'))
         result=self.ps(code)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)

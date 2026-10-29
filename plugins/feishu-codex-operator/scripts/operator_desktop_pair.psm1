@@ -66,16 +66,38 @@ function Assert-OperatorDesktopPairEnvironment {
         if (-not $BuildDate) { $BuildDate=[DateTime]::Now.ToString('yyyy-MM-dd') }
         if ($BuildDate -cnotmatch '^\d{4}-\d{2}-\d{2}$') { throw 'pair_build_metadata_invalid' }
         if (Test-Path -LiteralPath (Join-Path $DesktopDirectory 'Codex拓展入口.lnk')) { throw 'pair_legacy_migration_required' }
-        foreach ($name in @('ChatGPT 原生入口.lnk',('ChatGPT 拓展模型 '+$BuildDate.Substring(5)+' 入口.lnk'))) {
+        if (@(Get-ChildItem -LiteralPath $DesktopDirectory -Filter 'ChatGPT 拓展模型 * 入口.lnk' -Force).Count) {
+            throw 'pair_legacy_migration_required'
+        }
+        foreach ($name in @('ChatGPT 自定义启动.lnk','ChatGPT 原生入口.lnk',('ChatGPT 拓展模型 '+$BuildDate.Substring(5)+' 入口.lnk'))) {
             if (Test-Path -LiteralPath (Join-Path $DesktopDirectory $name)) { throw 'pair_shortcut_name_conflict' }
         }
     }
 }
 
 function Get-OperatorPairBuild([string]$ProjectRoot) {
-    $entry = Get-RecoveryEntryPlan $ProjectRoot
-    if ($entry.state -notin @('native','reviewed_startup')) { throw 'pair_entry_build_required' }
     $bundle = Join-Path $ProjectRoot '.codex/operator-desktop-entry'
+    $config=Get-OperatorPairJson (Join-Path $bundle 'desktop-entry.json')
+    $manifest=Get-OperatorPairJson (Join-Path $bundle 'launcher-manifest.json')
+    if ($manifest.shortcut_layout -ceq 'single' -and
+        ($config.launch_selection -cne 'native_or_extension_v1' -or $config.mode -cnotin @('native','isolated_mode'))) {
+        throw 'unified_launcher_configuration_changed'
+    }
+    if ($config.mode -ceq 'isolated_mode') {
+        # This entry owns an isolated environment; native-route recovery is a
+        # different contract and must not rewrite it into a native-only entry.
+        if ($config.schema_version -ne 1 -or $manifest.schema_version -ne 1 -or
+            $manifest.native_fallback -cne 'native-only-v1' -or
+            $manifest.binary_sha256 -cne (Get-RecoveryHash (Read-RecoveryBytes (Join-Path $bundle 'Codex拓展入口.exe') 16777216)) -or
+            $manifest.entry_script_sha256 -cne (Get-RecoveryHash (Read-RecoveryBytes (Join-Path $bundle 'operator_desktop_entry.ps1'))) -or
+            $config.entry_script_sha256 -cne $manifest.entry_script_sha256) {throw 'pair_entry_build_required'}
+        . (Join-Path $PSScriptRoot 'operator_desktop_entry.ps1') -Library
+        Get-OperatorIsolatedModeEntry $ProjectRoot (Get-OperatorPairDefaultHome) `
+            (Join-Path (Join-Path $ProjectRoot $config.startup_bundle) 'entry.json') $config.mode_entry_sha256 | Out-Null
+    } else {
+        $entry = Get-RecoveryEntryPlan $ProjectRoot
+        if ($entry.state -notin @('native','reviewed_startup','direct_profile')) { throw 'pair_entry_build_required' }
+    }
     $result = @{}
     foreach ($name in @('Codex拓展入口.exe','operator_desktop_entry.ps1','launcher-manifest.json')) {
         $result[$name] = Get-RecoveryHash (Read-RecoveryBytes (Join-Path $bundle $name) 16777216)
@@ -83,18 +105,29 @@ function Get-OperatorPairBuild([string]$ProjectRoot) {
     return $result
 }
 
+function Get-OperatorDesktopShortcutLayout($Record) {
+    # Missing means a retained historical pair, never an inferred migration.
+    if (-not $Record.Contains('shortcut_layout')) {return 'paired'}
+    if ($Record.shortcut_layout -cnotin @('paired','single')) {throw 'pair_shortcut_layout_invalid'}
+    return $Record.shortcut_layout
+}
+
 function Assert-OperatorPairRecord([string]$ProjectRoot, $Record) {
     $root = Get-OperatorPairRoot $ProjectRoot
     if (-not $Record -or $Record.schema_version -ne 1 -or $Record.project -ine $ProjectRoot -or
         $Record.phase -notin @('installed','restored') -or $Record.generation -cnotmatch '^[a-f0-9]{32}$' -or
         $Record.files -isnot [Collections.IDictionary] -or $Record.links -isnot [Collections.IDictionary] -or
-        $Record.links.Count -ne 2 -or $Record.build_date -cnotmatch '^\d{4}-\d{2}-\d{2}$' -or
+        $Record.build_date -cnotmatch '^\d{4}-\d{2}-\d{2}$' -or
         $Record.source_sha256 -cnotmatch '^[a-f0-9]{64}$' -or
         -not [IO.Path]::IsPathFullyQualified($Record.desktop) -or -not [IO.Path]::IsPathFullyQualified($Record.home)) {
         throw 'pair_ownership_invalid'
     }
-    $expected = @((Join-Path $Record.desktop 'ChatGPT 原生入口.lnk'),
-        (Join-Path $Record.desktop ('ChatGPT 拓展模型 '+$Record.build_date.Substring(5)+' 入口.lnk')))
+    $layout=Get-OperatorDesktopShortcutLayout $Record
+    $expected = if ($layout -ceq 'single') {@(Join-Path $Record.desktop 'ChatGPT 自定义启动.lnk')} else {
+        @((Join-Path $Record.desktop 'ChatGPT 原生入口.lnk'),
+            (Join-Path $Record.desktop ('ChatGPT 拓展模型 '+$Record.build_date.Substring(5)+' 入口.lnk')))
+    }
+    if ($Record.links.Count -ne @($expected).Count) {throw 'pair_ownership_invalid'}
     foreach ($path in $expected) {
         if (-not $Record.links.Contains($path) -or $Record.links[$path].before -cne 'absent' -or
             $Record.links[$path].after -cnotmatch '^[a-f0-9]{64}$') { throw 'pair_ownership_invalid' }
@@ -181,8 +214,12 @@ function Get-OperatorDesktopPairPlan {
         throw 'pair_activation_requires_separate_review'
     }
     $existing = Get-OperatorDesktopPairRestorePlan $project
-    $links = @((Join-Path $desktop 'ChatGPT 原生入口.lnk'),
-        (Join-Path $desktop ('ChatGPT 拓展模型 '+$BuildDate.Substring(5)+' 入口.lnk')))
+    $layout=Get-OperatorDesktopShortcutLayout $buildMetadata
+    $links = if ($layout -ceq 'single') {@(Join-Path $desktop 'ChatGPT 自定义启动.lnk')} else {
+        @((Join-Path $desktop 'ChatGPT 原生入口.lnk'),
+            (Join-Path $desktop ('ChatGPT 拓展模型 '+$BuildDate.Substring(5)+' 入口.lnk')))
+    }
+    $links=@($links)
     $sources = @{}
     foreach ($name in @('operator_native_entry.ps1','operator_desktop_entry.ps1','restore-codex-official-route.ps1')) {
         $sources[$name] = Get-RecoveryHash (Read-RecoveryBytes (Join-Path $PSScriptRoot $name))
@@ -191,6 +228,7 @@ function Get-OperatorDesktopPairPlan {
     $status='install_available'
     if ($existing.status -eq 'ready') {
         $old=$existing.record
+        if ((Get-OperatorDesktopShortcutLayout $old) -cne $layout) {throw 'pair_shortcut_layout_changed'}
         if ($old.desktop -ine $desktop -or $old.home -ine $nativeHome) { throw 'pair_target_changed' }
         if (@($sources.Keys | Where-Object {$old.files[$_] -cne $sources[$_]}).Count) { throw 'pair_helper_upgrade_requires_review' }
         if ($old.build_date -cne $BuildDate -or $old.version -cne $Version -or $old.source_sha256 -cne $SourceDigest) {
@@ -203,7 +241,7 @@ function Get-OperatorDesktopPairPlan {
         if (-not $owned -and $null -ne (Read-RecoveryBytes $path)) { throw 'pair_shortcut_name_conflict' }
     }
     return @{status=$status;project=$project;home=$nativeHome;desktop=$desktop;build_date=$BuildDate;
-        version=$Version;source_sha256=$SourceDigest;build=$build;sources=$sources;links=$links;
+        version=$Version;source_sha256=$SourceDigest;build=$build;sources=$sources;links=$links;shortcut_layout=$layout;
         owner_sha256=(Get-RecoveryHash (Read-RecoveryBytes (Join-Path $project '.codex/operator-installation/ownership.json')));
         previous=$existing;configuration_changed=$false}
 }
@@ -320,11 +358,19 @@ function Install-OperatorDesktopPair {
             $nativeScript=Join-Path $folder 'operator_native_entry.ps1'
             $nativeBytes=New-OperatorPairShortcut (Join-Path $folder 'native.lnk') $shell ('-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File "'+$nativeScript+'"') $folder '打开官方原生模式；需要切换时先确认正常退出。'
             $bundle=Join-Path $plan.project '.codex/operator-desktop-entry'
-            $extensionBytes=New-OperatorPairShortcut (Join-Path $folder 'extension.lnk') (Join-Path $bundle 'Codex拓展入口.exe') '' $bundle '使用已配置的拓展模型；不会自动解除官方直连保护。'
-            $changes+=@{path=$plan.links[0];before=$null;after=$nativeBytes}
-            $changes+=@{path=$plan.links[1];before=$null;after=$extensionBytes}
+            $description=if ($plan.shortcut_layout -ceq 'single') {
+                'ChatGPT 自定义启动：选择原生或拓展启动模式，具体模型在 Codex 内选择。'
+            } else {'使用已配置的拓展模型；不会自动解除官方直连保护。'}
+            $extensionBytes=New-OperatorPairShortcut (Join-Path $folder 'extension.lnk') (Join-Path $bundle 'Codex拓展入口.exe') '' $bundle $description
+            if ($plan.shortcut_layout -ceq 'single') {
+                $changes+=@{path=$plan.links[0];before=$null;after=$extensionBytes}
+            } else {
+                $changes+=@{path=$plan.links[0];before=$null;after=$nativeBytes}
+                $changes+=@{path=$plan.links[1];before=$null;after=$extensionBytes}
+            }
             $record=@{schema_version=1;project=$plan.project;home=$plan.home;desktop=$plan.desktop;phase='installed';
                 generation=$generation;build_date=$BuildDate;version=$Version;source_sha256=$SourceDigest;build=$plan.build;files=$files;links=@{}}
+            if ($plan.shortcut_layout -ceq 'single') {$record.shortcut_layout='single'}
             foreach ($change in $changes) { $record.links[$change.path]=@{before='absent';after=(Get-RecoveryHash $change.after)} }
         }
         Assert-OperatorPairInstallBoundary $plan

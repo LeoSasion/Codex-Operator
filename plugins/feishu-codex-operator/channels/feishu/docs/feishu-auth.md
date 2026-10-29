@@ -5,7 +5,11 @@ Bot; user OAuth, Bot credentials, and Bot tenant permissions are separate checks
 
 ## Initial setup
 
-When setup is requested, the existing CLI workflow is:
+First verify and reuse the selected existing profile and credentials. The `--new` flow below
+is only for an explicitly requested new application after confirming existing setup cannot
+be reused; it is not a diagnostic reset or a repair for a transient error.
+
+For that new setup, the CLI workflow is:
 
 1. `lark-cli config init --new` for official Feishu PersonalAgent QR registration.
 2. `lark-cli auth login --recommend --no-wait --json` for user OAuth.

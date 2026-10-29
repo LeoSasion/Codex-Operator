@@ -2,12 +2,42 @@
 
 This is a Windows preview, not a claim of production stability or support for every IM/model.
 
+Start with the [current support matrix and open gates](first-release-readiness.md). For the latest
+Channels case, see the [2026-10-29 exact private-text round trip](../../channels/feishu/docs/beeper-e2e-lessons.md#直接授权后的同范围新请求).
+This audit retains dated evidence; it is not the daily operations guide.
+
+| Evidence area | Entry |
+| --- | --- |
+| Web diagnostics and native cancellation | [2026-10-28 stages](#2026-10-28-layered-diagnostics-and-native-cancellation) |
+| Custom entry cold launch | [2026-10-28 loopback repair](#2026-10-28-custom-entry-cold-launch-and-loopback-proxy-repair) |
+| Frozen alpha139 regression | [bound pass](#2026-10-06-frozen-alpha139-full-regression-and-protection-passed), [full retained chronology](#2026-10-06-retained-regression-chronology) |
+| Per-model and tool acceptance | [Responses evidence](../../models/common/docs/responses-acceptance.md), [API evidence](../../models/api/docs/official-online-models.md) |
+
 The entries below are dated observations, not a live status dashboard. Test
 counts refer to their individual runs; the current source must be checked with
 the [test instructions](testing.md). A later source-only pass never changes an
 earlier live-task result or proves that installed services were updated.
 
-2026-10-28 layered diagnostics / native cancellation (source alpha144, package unchanged):
+## 2026-10-29: preview.9 source and test maintenance
+
+Preview.9 / alpha147 unifies fresh installation around one custom launcher with
+native and extension mode choices, while preserving separately owned legacy
+layouts and recovery chains. The source suite adds explicit quick/owner groups,
+immutable fixture reuse and bounded ownership of disposable Windows CLI process
+trees. Development helpers remain outside the runtime ZIP.
+
+The earlier CLI EOF failure is retained: its root exited while a suspended Git
+descendant kept the output handles open. Scoped process-tree cleanup resolves
+that fixture boundary without extending request deadlines or weakening assertions.
+See [the evidence and limits](testing.md#windows-cli-descendants-and-pipe-eof).
+The exact frozen whole-tree result and asset digest belong to this version's
+GitHub Pre-release record. Source publication does not update the local runtime,
+prove live Desktop behavior or close the support matrix's remaining gates.
+
+## 2026-10-28: layered diagnostics and native cancellation
+
+This section records successive source, deployment and live-check stages; a statement that a package
+was unchanged applies to that stage, not to a later documented delivery.
 
 - The later frozen whole-tree run passed 1,916 Python tests in 2694.860 seconds
   (four skips) and all 157 Node tests. CLI/Node/selected PowerShell identities and
@@ -2675,3 +2705,42 @@ old cache was restored. Expected pair files and the explicit extension model
 selection are recorded separately. Basic cold-start acceptance does not qualify
 other models, native cold boot, all approval/patch states, full-capacity compaction,
 OS reboot, second-user installation or global routing. Web remains experimental.
+
+## 2026-10-06: retained regression chronology
+
+Moved intact from the readiness page during the 2026-10-29 documentation review. The following
+states, versions, timestamps, counts and failed checks remain historical observations, not current installation claims.
+
+full7 原始回执的失败阶段为 `actual_close_and_released_original_guard`。对 retained originals 的独立复核只发现模型缓存 `fetched_at` 字节变化，其余原字节相同；变化原因未确认。该复核不是保护门通过、恢复授权或旧失败改判。原始回执与完整输出保留在私有验收材料中。
+
+2026-10-06 的本机回归绑定 `5a2152abb9cccd74e5fb490dece3ef4007528f23` 的准确源码字节、Python 3.14.3、CLI 0.160.0、Node 24.14.0 与 PowerShell 7.6.6，只执行一次。Python 终态为 `Ran 1810 tests in 1926.096s / OK (skipped=4)`；Node 为 157 项通过、零失败。四条跳过为一项符号链接测试、同一方法下的两个 reparse 子案例，以及未选择的 Bash 夹具；这些能力仍未验证，不由跳过数推算独立通过数。
+
+这次完整输出还记录了同任务从 Web 返回原生路由案例中的一次 `asyncio` 连接关闭回调异常（`ConnectionResetError / WinError 10054`），虽然该案例断言随后报告 `ok`，严格终态门仍为 `test_terminals_passed=false`。保护复核发现唯一变化为原生模型缓存；保留的前后原件除 `fetched_at` 外所有原字节一致，写入来源与原因未知。整轮 `state=failed`、`protected_unchanged=false`，不忽略异常或豁免时间字段。源码、程序、旧失败材料、保留原件和隔离目录输入均保持一致，收尾队列检查通过；这不能替代 Desktop 实测。
+
+随后仅修复原生 CLI 合成夹具的退出与清理检查，保留原五项测试案例、完整历史、失败回合及零重试断言，并新增五项负面检查，证明未处理回调、退出超时和启动失败不能误报成功，原业务异常保持原身份。定点模块 10 项、零跳过以及九项保护检查全部通过。绑定修复提交 `2c6c0acc22f01aedbc3ee2af247fe3ec1f2d5d5d` 的新完整回归只执行一次，Python 为 `Ran 1815 tests in 2223.258s / OK (skipped=4)`，Node 157 项通过；四条跳过仍为上述符号链接、两个 reparse 子案例和未选择的 Bash。完整输出未出现线程或回调异常，严格 `test_terminals_passed=true`。但原生模型缓存前后仍只改变 `fetched_at`，其余原字节完全相同；写入来源未知，Desktop 并行未排除。`protected_unchanged` 和最终源码／保护联合复检未通过，其余七项完整性检查通过，整轮仍为 `state=failed`。这修复了测试退出的验收缺口，不证明启动闪烁根因、实际 Desktop 审批或完整本机验收通过；不锁定、回滚或豁免原生缓存，也不自动重跑。上述结果的文档修订发生在新冻结回归终态之后。
+
+另一次全新隔离安装生命周期检查的 61 项断言通过、零跳过，但其保护回执也因原生模型缓存变化而失败。真实允许／拒绝仅完成新夹具、准确契约和只读预检，尚未发送模型或原生审批请求；CLI 证据不能替代 Desktop 审批。所有者暂时没有第二个获准账号，本轮明确先做本机验收，第二用户真实接入保持待验。上述统计和结果记录是冻结回归结束后的文档修订，不声称最终候选包与原冻结包所有字节相同。
+
+安装退出条件和遗留归属限制见[安装与移除](../../shared/docs/installation-and-removal.md)。Web 的准确登录、停止、异常与无重放规则继续遵循[当前项目记忆](../../models/web/docs/native-web-experience.md)及[对话改进计划](../../models/web/docs/native-conversation-plan.md)，不会因实验标签放宽。
+
+## alpha139 透传响应修复后的本机验收状态
+
+所有者随后正常关闭 Desktop，并手动执行独立的完整回归计划一次。客户端缺席检查在测试前后均成立，九项源码、程序、原件及输出保护均通过；这不证明整个期间持续没有客户端。Python 终态为 `Ran 1815 tests in 1475.699s / FAILED (failures=1, skipped=4)`，Node 157 项通过。唯一失败仍是同任务从 Web 返回原生路由夹具的 `ConnectionResetError / WinError 10054`，被前述新增严格关闭检查检出。该回执保持失败，四条环境跳过仍不算验收通过。
+
+随后使用不同的新隔离案例观察连接关闭：原源码的两批 32 次采样分别失败 5 次和 6 次，均保留原始异常。准确异常来自路由器入站连接；服务器已经完成最后响应写入的观察不能证明客户端已经消费完整响应，也不能确定操作系统连接重置的根因。没有修改 Windows 默认事件循环、过滤异常、重写原 CLI 业务断言或重放旧请求。
+
+`4.2.0-alpha.139` 仅为未改写响应正文的透传路径保留有效且唯一的上游 `Content-Length`，排除 `Transfer-Encoding` 或 `Connection` 指定该字段的情况。逐块检查实际字节数；长度不符保留固定协议失败，不截断、填充或重试。改写响应的适配路径维持原处理。修复后的全新 32 次采样全部通过、零跳过，九项保护全部成立；接着五个受影响模块共 123 项测试在 71.089 秒内通过、零跳过，完整捕获无回调、线程或未处理任务异常。
+
+123 项检查的整体回执仍是 `state=failed`：原生模型缓存保留的前后原件均为 418,901 字节，仅顶层 `fetched_at` 值内的 10 个字节改变，其余原字节一致，写入来源未知。`protected_unchanged` 和最终源码／保护联合复检失败，其余七项保护成立；该字段未被忽略、锁定或回滚。此前 32 次通过只能支持这项有限源码修复，不能替代新的完整回归或改判任何旧失败。
+
+该阶段新增七项测试，因此新完整回归预期为 Python 1,822 项与 Node 157 项；当时仍须关闭 Desktop 后执行新的冻结计划。上述定点代码测试之后仅更新验收文档与清单内的审查摘要，没有继承旧的整个源码快照。插件保持 `1.2.0-preview.1`，实际运行时保持 alpha138；该阶段的证据尚未关闭完整源码回归门，真实 Desktop 审批、两项 API 候选及第二用户接入也未因此通过。
+
+## alpha139 冻结完整源码回归通过
+
+所有者于 2026-10-06 21:27 至 21:52（北京时间）手动执行新的独立计划一次。冻结提交为 `6e7cd1faace8b5ce3d599b450d72159a5f46a872`，与合并提交 `b6ee1390cd406891ff04d92dc9bfdbf6ed279cea` 的源码树相同；绑定 288 个准确源码文件、Python 3.14.3、CLI 0.160.0、Node 24.14.0 和 PowerShell 7.6.6。原始回执摘要为 `d3218ab32fcda5a951cda22969c9e4df432d3536474878ab11a449be71929fcc`。
+
+Python 原始终态为 `Ran 1822 tests in 1464.712s / OK (skipped=4)`；Node 157 项通过，失败、取消、跳过和 todo 均为零。四条环境跳过仍是符号链接不可用、两个明确的 reparse 子案例以及未指定的 Bash 夹具，均逐项保留且不算通过。完整捕获无未处理的回调、线程、Task 或连接重置异常。整轮为 `passed_with_reported_environment_skips`，九项保护全部通过，26 个受保护目标的前后存在状态、哈希、大小及文件身份一致；48 个留存原件、4 个缺失快照状态及 730 项历史引用均经独立复核。原生配置、模型缓存和登录原件在保存的这轮前后保持一致。固定客户端缺席检查在前、后两个时点成立，不宣称全程持续缺席。
+
+该结果关闭准确冻结源码的完整回归与保护门；此前各次失败保持原状态，也没有重放旧请求。新的输出目录与外层隔离配置目录的私有权限经复核，临时容器保留正常继承；不扩大为历史目录或所有内部夹具权限均已实测。通过时的预览包摘要为 `2c6126876b956c6895d77e5feb6979a169dfe6073647b45f9aec14a4535e3892`，仅表示该准确包的源码回归结果。本节与发布审查摘要是在终态后补记，后续文档包须绑定自己的全部字节，不继承旧整个包的回归身份。
+
+复核时，所绑定的旧 CLI 文件已不在原位置，当前官方候选的字节摘要不同；准确当前版本未执行探针确认。这是运行结束后的观察，不归因删除者，也不否定保存的前后保护结果；当前新 CLI 与真实 Desktop 不获得旧版本的验收。安装仍为 alpha138，源码为 alpha139。现有普通安装因缺少历史归属记录而拒绝覆盖，现有遗留维护工具只允许同版本更新；跨版本同步需要另外审查的维护方案，不能借本次通过绕过这些门槛。完整实机验收、真实允许／拒绝、两项 API 候选、干净用户安装生命周期、Channels 附件／隔离／恢复与第二用户接入仍待完成，Web 继续保持实验状态；尚未部署或正式发布。

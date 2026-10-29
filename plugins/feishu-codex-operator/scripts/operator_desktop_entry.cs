@@ -5,8 +5,8 @@ using System.IO;
 using System.Windows.Forms;
 using System.Reflection;
 
-[assembly: AssemblyTitle("Codex拓展入口")]
-[assembly: AssemblyProduct("Codex拓展入口")]
+[assembly: AssemblyTitle("ChatGPT 自定义启动")]
+[assembly: AssemblyProduct("Codex-Operator")]
 [assembly: AssemblyDescription("Project-owned launcher for Codex with configured extensions")]
 
 internal static class OperatorDesktopEntry
@@ -15,6 +15,17 @@ internal static class OperatorDesktopEntry
     private static int Main(string[] arguments)
     {
         bool checkOnly = arguments.Length == 1 && arguments[0] == "--check-only";
+        if (arguments.Length == 1 && arguments[0] == "--select-native-only")
+        {
+            // A choice-only child: no application, service or model dispatch.
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            using (var dialog = new OperatorModePicker(false, null, null, false))
+            {
+                Application.Run(dialog);
+                return (int)dialog.Choice;
+            }
+        }
         if (arguments.Length != 0 && !checkOnly) return 2;
         string bundle = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
         try
@@ -100,6 +111,6 @@ internal static class OperatorDesktopEntry
     {
         string pointer = Path.Combine(bundle, "unified-startup-last-log.txt");
         if (File.Exists(pointer)) message += Environment.NewLine + "Log location: " + pointer;
-        MessageBox.Show(message, "Codex拓展入口", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        MessageBox.Show(message, "ChatGPT 自定义启动", MessageBoxButtons.OK, MessageBoxIcon.Error);
     }
 }
