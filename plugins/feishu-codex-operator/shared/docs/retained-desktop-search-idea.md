@@ -63,6 +63,7 @@ named_function_output_not_registered；它们没有执行搜索。冻结运行�
 容量修复需独立部署后另行验收，不能将这次 busy 或原始失败改判成功。
 
 官方版本依据：
+
 - [扩展注册及 provider 条件](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/ext/web-search/src/extension.rs)
 - [独立搜索选择与 hosted 声明互斥](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/src/tools/spec_plan.rs)
 - [Codex 执行器与结果回传](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/ext/web-search/src/tool.rs)

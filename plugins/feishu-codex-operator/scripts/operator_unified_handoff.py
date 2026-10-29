@@ -55,6 +55,7 @@ SOURCES = (
     "operator_entry_upgrade.ps1",
     "operator_desktop_entry.ps1",
     "operator_desktop_entry.cs",
+    "operator_mode_picker.cs",
 )
 RUN_NAME = re.compile(r"run-[a-f0-9]{32}\Z")
 HEX64 = re.compile(r"[a-f0-9]{64}\Z")

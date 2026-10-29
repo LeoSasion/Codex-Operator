@@ -6,7 +6,7 @@
 
 CLI 0.163 的离线 schema 显示，函数、自定义和搜索调用等已有类型也允许 `encrypted_content`，应按同一不透明边界检查每个历史和终态 item，不能沿用仅消息/推理分支的检查。其 absent/null/空字符串按原合同完整保留；非空或错误类型拒绝。负向回归先放一个合法调用，再放末项不透明调用，分别确认 JSON 与 SSE 在完整终态校验拒绝时均未交付工具。离线 schema 生成只绑定当前可执行文件和新私有 home，不发送任务或模型请求。
 
-入口维护验证公开分派与私有 validator 两层，准确受审 legacy 回滚不应被普通 pending 护栏提前拦截。主人已要求的单入口改名使用独立登记链，详见[单入口布局](../../shared/docs/installation-and-removal.md#reviewed-single-desktop-entry)。冻结回归中修改源码须重开受影响验收；日志统计保留缩进 subtest skips 与 Node spec/TAP 区别。原生缓存仅 fetched_at 漂移也单独记录保护门失败，不推断写入者、不回滚活跃缓存。
+入口维护验证公开分派与私有 validator 两层，准确受审 legacy 回滚不应被普通 pending 护栏提前拦截。主人已要求的单快捷方式改名使用独立登记链，详见[单快捷方式布局](../../shared/docs/installation-and-removal.md#reviewed-single-desktop-entry)。冻结回归中修改源码须重开受影响验收；日志统计保留缩进 subtest skips 与 Node spec/TAP 区别。原生缓存仅 fetched_at 漂移也单独记录保护门失败，不推断写入者、不回滚活跃缓存。
 
 ## 1. 开始前建立本轮身份与保护范围
 
@@ -63,7 +63,7 @@ if ($LASTEXITCODE -ne 0) { throw 'current_cli_version_unavailable' }
 只读源码检查可以先进行。Python `--list` 不导入或运行测试；PowerShell release audit 只做清单、规则镜像、内容筛查、Python 与 PowerShell 语法检查，不构建发布包、不写入 runtime。
 
 ```powershell
-& $operatorPython -X utf8 -E -s -B (Join-Path $operatorPlugin 'development/run_tests.py') --list --node
+& $operatorPython -X utf8 -E -s -B (Join-Path $operatorPlugin 'development/run_tests.py') --group full --list --node
 pwsh -NoProfile -File (Join-Path $operatorPlugin 'scripts/audit-feishu-codex-release.ps1')
 & $operatorPython -X utf8 -E -s -B (Join-Path $operatorPlugin 'scripts/operator_mode_entry.py') status --root $operatorModeRoot
 & $operatorPython -X utf8 -E -s -B (Join-Path $operatorPlugin 'scripts/operator_model_router.py') readiness --state-dir $operatorRouterState --port $operatorPort
@@ -150,7 +150,7 @@ try {
     foreach ($operatorInputName in $operatorTestInputs.Keys) {
         [Environment]::SetEnvironmentVariable($operatorInputName, $operatorTestInputs[$operatorInputName], 'Process')
     }
-    & $operatorPython -X utf8 -E -s -B (Join-Path $operatorPlugin 'development/run_tests.py') --node
+    & $operatorPython -X utf8 -E -s -B (Join-Path $operatorPlugin 'development/run_tests.py') --group full --node --durations 15
     $operatorTestExitCode = $LASTEXITCODE
 } finally {
     foreach ($operatorInputName in $operatorTestInputs.Keys) {
@@ -163,6 +163,11 @@ if ($null -eq $operatorTestExitCode -or $operatorTestExitCode -ne 0) { throw 'te
 完整回归的父包装器等待上限设为 3600 秒：历史一次完整运行耗时 2166.633 秒，1800 秒不足。3600 秒仅用于整套测试的行政等待，不改变产品模型、请求、工具或审批 deadline，也不增加重试。超时、缺少 Python/Node 完整终态、读取线程异常或保护失败均保持未完成/失败；不得把旧模块结果、后续成功或跳过拼接成新的完整通过。
 
 每次官方 Desktop/CLI 更新先运行入口、目录与版本基线；再加本次变化涉及的行。下面模块名均由已有 `run_tests.py` 解析，保留每行的原始结果，不合并成含糊的“基本通过”。
+
+日常修改先用 `--group quick` 获取小范围反馈，再按下表或
+[测试分组](testing.md#select-the-required-scope)选齐受影响模块。`--list` 不导入测试，
+`--collect-only` 只核对 Python 用例身份；二者都不代替执行。`--durations 15` 用于定位
+慢用例，保留原有失败、跳过、顺序和串行端口约束，不自动扩大并发或调整产品 deadline。
 
 | 本次变化 | 必选模块 |
 | --- | --- |
@@ -178,10 +183,10 @@ if ($null -eq $operatorTestExitCode -or $operatorTestExitCode -ne 0) { throw 'te
 & $operatorPython -X utf8 -E -s -B (Join-Path $operatorPlugin 'development/run_tests.py') test_model_router test_responses_profiles test_responses_router test_responses_events test_mode_host test_mode_picker_lifetime test_mode_entry
 ```
 
-有共享层变化、受影响范围不明或准备整体发布时，在同一冻结树和已核验保护范围下运行已有完整 Python/Node 回归，而非把多个旧版本模块结果拼成整仓通过：
+有共享生产逻辑或测试发现规则变化、受影响范围不明或准备代码发布/部署时，在同一冻结树和已核验保护范围下运行完整 Python/Node 回归。只改共享夹具时核对全部调用方和原用例身份/断言；不同版本模块结果不能拼成整仓通过：
 
 ```powershell
-& $operatorPython -X utf8 -E -s -B (Join-Path $operatorPlugin 'development/run_tests.py') --node
+& $operatorPython -X utf8 -E -s -B (Join-Path $operatorPlugin 'development/run_tests.py') --group full --node --durations 15
 ```
 
 快速回归仅证明所列当前模块和合成夹具；完整回归也不能证明实机工具、审批或 Desktop 窗口。测试可能调用本地临时 loopback、合成编译及隔离 CLI 夹具，与真实模型请求不同。
@@ -226,15 +231,35 @@ if ($null -eq $operatorTestExitCode -or $operatorTestExitCode -ne 0) { throw 'te
 
 覆盖 function、custom wrapper、client tool search、JSON 和 SSE；较早的合法调用不能在终态后项验证前放行。新增校验只用于明确的 adapted 合同，native/v1/null 保持透明。Schema 兼容不证明模型理解了当前请求。相关模块为 `test_responses_tools test_responses_events test_responses_router test_web_model_protocol`。
 
-### 旧回滚、单入口与公开分派
+### 旧回滚、快捷方式布局与公开分派
+
+启动器、桌面快捷方式与模式按钮分别计数。首次安装只发布一个固定名称的快捷方式；
+未配置拓展时复用现有选择窗并禁用该选项。新记录显式保存 `single`，旧缺省记录仍按
+历史双快捷方式解释，不靠文件数量推定迁移。验证首次安装、重复安装、编译升级、完整卸载
+及重装都保持各自布局，并检查同名冲突、失败事务和后续用户编辑。编译共享选择窗时将其
+源文件纳入构建指纹、候选预览及交接清单；内部历史路径和原恢复链保持。
 
 准确 legacy 分派应委托已有的严格回滚 validator，不能先以普通 completed-only 护栏拒绝所有 pending。其他未知或不完整事务仍须拒绝。验证公开 status、restore、upgrade/uninstall 可达路径及材料篡改、原件缺失的拒绝，不只调用内部 validator。
 
-用户已要求移动或改名快捷方式时，不改写旧 ownership。独立单次布局登记绑定 raw SHA、当前 Windows file ID、COM target/args、旧名称缺失、保留实体和完整原件链；历史 audit 的 completed 只作材料。绑定包刷新保留当前布局，旧双入口恢复或日期构建升级先走独立布局恢复。保留固定 launcher、任务栏 helpers、旧失败与未决 runtime 归属；替换实体、后续编辑、未知事务或缺失材料不自动重试。
+用户已要求移动或改名快捷方式时，不改写旧 ownership。独立单次布局登记绑定 raw SHA、当前 Windows file ID、COM target/args、旧名称缺失、保留实体和完整原件链；历史 audit 的 completed 只作材料。绑定包刷新保留当前布局，旧双快捷方式布局恢复或日期构建升级先走独立布局恢复。保留固定 launcher、任务栏 helpers、旧失败与未决 runtime 归属；替换实体、后续编辑、未知事务或缺失材料不自动重试。
 
 `pwsh -File` 不能可靠传递多值 array。多材料公开参数使用有界 JSON array 单参，校验类型、长度、绝对路径和互斥，并实测多个 Unicode 文件路径。相关模块为 `test_mode_maintenance test_mode_pair_refresh test_desktop_pair_single test_desktop_single_cli`。
 
 ### 发布规则、安装版本与测试原件
+
+隔离 CLI 夹具超时时，取消 `communicate()` 会丢失返回诊断，并可能留下未清理的管道。
+保留同一个读取任务并使用 `shield`；原期限到达后只终止该测试子进程，在另一个有界清理
+期限内收取输出。记录原期限、实际请求数、清理结果及有界错误尾部，仍判该次失败。
+不延长业务等待、不重试请求，也不把后来的独立通过改写成首轮通过。
+若主进程已经退出但两路 EOF 未到，继续核对准确进程树、出生时间和线程状态；不能只搜索
+含临时目录的命令行。搜索 CLI 夹具通过启动前的 Windows Job 归属清理临时后代，保留真实
+EOF 和原断言；见[进程树回归](testing.md#windows-cli-descendants-and-pipe-eof)。
+
+停机前把恢复入口与其规则版本一起核对，不能只记录 runtime 版本。项目规则已更新而
+缓存仍为旧版时，旧入口可能在 `rules_mirror` 检查处拒绝启动；保留该拒绝，不临时回滚
+规则或手改缓存来通过。只有现行源码的规则与发布审计、已装运行清单与源码一致性、
+Hooks 和回调登记、停机与空待处理检查全部通过，且原运行文件未变，才经现行源码入口的
+正常 `start` 恢复原运行时。单独记录入口选择和恢复结果，不将其记作新代码部署或发布。
 
 根 AGENTS 可有私人补充；只比较唯一完整管理块的原始字节，拒绝缺失、重复、反序、内联 marker，保留 BOM 和换行边界检查。公共 mirror 的外围只允许已实现的 BOM/空白合同；audit 与独立 collector 均须拒绝私人附注，不把根全文复制入包。完整 build 也须验证拒绝，且不落地 ZIP/receipt、不改原件。相关模块为 `test_release_rules test_product_preview test_source_route_contract`。
 

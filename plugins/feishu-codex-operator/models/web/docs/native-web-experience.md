@@ -1,8 +1,199 @@
 # Native experience and project memory
 
-Current guidance as of 2026-10-28. Codex-Operator has two areas: Channels and Models; Models contains API, Local and Web Providers. The Windows preview prioritizes setup and actual task execution. Native Codex owns the conversation, context, permissions, tools and final answer; Operator supplies the transport and its local lifecycle.
+Guidance organized on 2026-10-29; observations retain their original dates. Codex-Operator has two areas: Channels and Models; Models contains API, Local and Web Providers. The Windows preview prioritizes setup and actual task execution. Native Codex owns the conversation, context, permissions, tools and final answer; Operator supplies the transport and its local lifecycle.
 
 ## Read first
+
+Read the operational rules below, then the operation guide for the selected maintenance task.
+The [support and release gates](../../../development/docs/first-release-readiness.md) summarize
+the most recently reviewed delivery; they do not certify a running service. Use current saved
+identities and read-only status before maintenance. Source, installed bytes, active workers,
+Desktop behavior and each live request remain separate evidence.
+
+The explicitly named ordinary GPT-6 Medium option has its own 2026-10-28 evidence in the
+[model catalog](web-model-catalog.md); older Latest/High and Pro observations do not replace it.
+Preserve official-direct isolation and the existing mode-entry ownership. The owner's current
+research priority is Codex++, for confirmed necessary gaps only; see [adoption](../../../development/docs/codexplusplus-adoption.md)
+and [implementation sources](web-background-sources.md). Research does not authorize new UI,
+global activation, a companion product or task orchestration.
+
+Detailed version-bound implementation constraints and original failed observations remain in
+[dated implementation notes](#dated-implementation-notes-through-2026-10-28). Read the relevant
+entry when changing that mechanism; moving it below the operational guide does not remove its guards.
+
+## Operational rules
+
+1. Reuse saved settings, login and fixed connection state. `models web configure` may omit settings and interpreter for an unchanged saved registration; it checks them without writes. Distinguish access restrictions, changed programs/registration and failed checks from missing setup.
+2. Use `models web start/status/assist/inspect/stop` for the saved service. Startup attempts to prepare one hidden empty temporary chat without sending a prompt or MCP call, then rechecks it when consumed. Preparation can fail if the site opens another route; do not treat `starting` or `assistance` as proof of a ready page. A stalled navigation has a fixed 60-second non-retrying deadline and closes its worker. Low-level `serve` retains its explicitly selected behavior. Read-only status never prepares a page or makes a model request.
+   Both legacy message rows and current `data-chatgpt-search-unit-key` rows must be absent before admitting or sending a new task. A modern final answer must satisfy the current request binding; a completed row from another request is not an answer.
+   Current live observations show separate user and assistant role turns. Neither the original user ID
+   nor its role-turn prefix survives in the assistant's identity list. The mounted render-entry list also
+   retains only the current role entry. Those rejected candidates remain failed; never infer a parent
+   relationship from them or read hidden message bodies/account stores to reconstruct it.
+   The managed fresh-document path arms only after model selection on the verified empty temporary
+   page. It privately binds the full checked source, original public user UUID, exact document/root,
+   a one-request nonce and a mutation ledger. Changed/new users, source edits or document replacement
+   invalidate it. The renderer's conversation field is an exact bounded opaque string, not a UUID or
+   authentication; an explicit empty value also requires the exact temporary route on every read.
+   Source comparison, selected app-separator projection, public user identity and document capture
+   now run in one synchronous page evaluation. A later controls snapshot must never classify an
+   already unmounted user or allow a modern managed request to wait for a final without its binding.
+   The current assistant keeps its own distinct, bounded UUID list and all existing terminal checks.
+   Earlier capture failures remain failed. New ordinary Desktop text, same-chat continuation, an actual
+   file read and a separate actual native search passed on the updated package. A new native Stop,
+   stable retained worker and different new continuation also have separate paired evidence. A fallback unit
+   key, matching text or completion flag alone still supplies no binding. Unbound readers retain the
+   original same-object gate. The
+   [public-page implementation](../../../scripts/web_browser_page.cjs) carries this private binding
+   through the unchanged 500 ms final snapshot, completed-page inspection and next-chat recheck.
+   The current app pill's public message can encode its one separator as ASCII space or NBSP. Accept either only with the exact selected app link and complete unchanged request body, then recheck that exact public projection. Never trim text, reinsert it or resend. Cancellation uses the dispatched projection, not a reconstructed legacy mention. A modern completed-page inspection requires the exact unique mounted result identity; mixed or ambiguous rows remain rejected. `preparing` is a normal startup state, not missing setup or proof of readiness.
+   Read-only status and uninstall preflight import without `aiohttp`; serving still requires it. The isolated `python -S` test covers this boundary.
+   Stop recognition is shared by cancellation, generation and idle gates. Current composer test IDs and exact form-scoped stop labels supplement the legacy control; cancellation still requires one visible enabled control, the dispatched user identity and stable idle after one click. A native interrupted turn, a clicked Web stop and a retained ready worker are separate evidence. Fixed cancellation and fresh-chat gate codes distinguish the failure boundary without recording page text.
+   Cancellation binds the verified public user-message ID and complete dispatched text in request memory, then rechecks both before Stop and throughout idle confirmation. Titles and URLs can change during generation; neither the initial temporary-chat URL nor a title alone identifies the turn. Changed origin, login/plugin routes, challenge/approval state, draft, replaced message identity and a visible worker still fail. The private binding read exports no ID through ordinary diagnostics.
+   The managed fresh-document path carries the same original request binding into cancellation.
+   It does not require the disproved user-prefix relationship. A present changed/ambiguous user, mixed
+   legacy rows, unavailable current branch or invalid document ledger still fails; these states are
+   never explained away as virtualization. A pending assistant unit may supply only its public UUID,
+   owning conversation field and bounded turn metadata for cancellation; it supplies no answer or
+   final-message content. Live retention and reuse remain separate acceptance gates.
+   One visible enabled Stop click and all existing stable-idle/window/permission checks still apply.
+   Diagnostics expose only fixed counts and booleans, never the binding, source text or UUID sequence.
+   Current package acceptance used GPT-5.6 Sol/medium. A later native accessibility review after
+   re-selecting the same chat showed its saved search answer, links and idle composer; screenshot
+   capture was black. This does not attest to immediate visual painting or every model/tool/approval.
+   A subsequent current-window review showed the actual search answer, links and expanded native
+   execution row. One different new ordinary-composer continuation completed in 28.853 seconds;
+   its correct final painted without chat re-selection or reload, using the same browser birth.
+   The accessibility snapshot initially lagged that visible final; closing a model menu with Escape
+   then showed the exact answer and idle composer. Preserve both observations. Completion duration
+   is not first-token/paint timing, and this case does not attest to general UI stability or other gates.
+   The earlier black/lock-screen capture cause remains unknown; no privacy setting was changed.
+   While an HTTP exchange is pending, native Stop reaches cancellation through disconnect. Between a released tool call and its result, explicitly setting `native_cancellation_mode: "app_server_metadata_v1"` closes that gap for a shared MCP worker. Its two-second observation interval reads only bounded native task/turn metadata through a short-lived App Server; an exact turn with `interrupted` and a valid completion timestamp can cancel the still-owned pending call. Recheck owner, pending-call identity and concurrent continuation after every read. Unknown/failed observations stop this watcher without retry; new input, inactivity, ordinary completion and missing results never establish cancellation. The existing deadline remains. Each read-only child is closed even when its owner is cancelled; no start/resume, transcript read, permission/config change or business request occurs. Default `none` preserves existing installations until explicitly configured and rebound. An explicit `native_cancellation_home` binds a non-default home to the saved settings digest. It must be an existing absolute directory without links; omission retains the OS user's default `~/.codex`. Only the read-only App Server child receives that exact home. Browser environment filtering stays unchanged. Desktop prepare/connect/rebind reject a mismatched home before writing; changing the saved home requires the normal explicit stopped configuration update.
+   Before returning a completed public answer, require its entire identity/content/citation snapshot to remain identical for 500 ms within the existing deadline. This is a local observation, not a retry or a guarantee against later page changes. A changed previously returned answer still blocks the next turn; never rewrite native history or silently replace the old answer.
+3. Before requesting human login or verification, observe the exact current page. A historical challenge, `needs_assistance`, window title or open acknowledgement is insufficient. Allow transient loading to settle with bounded observation; reuse a ready page. If observation fails, report that uncertainty. Locate a missing assistance window before asking the user to find it. During an explicitly visible human sign-in, allow standard HTTPS identity-provider redirects and show the destination host in the window title; hidden execution retains its restricted navigation. `assist` prepares an empty chat; `inspect` preserves an ended page as a read-only text snapshot.
+4. Native models remain on their official direct route. Web registers an independent provider through `desktop-prepare/connect/status/check/disconnect`. After a verified service change, `desktop-rebind` updates only the owned provider block and retains its original configuration. Registration, task binding, menu visibility, request routing and live Desktop behavior require separate evidence. Global routing stays disabled after the native capacity/retry regressions.
+   A [disposable unified-picker candidate](../../common/docs/unified-picker-candidate.md) now tests a single zero-retry provider for new tasks; it does not activate the real Desktop or migrate existing tasks. The current signed-in CLI sent Authorization to a process-local custom-provider catalog without a model turn, but `model/list` also rewrote the real model cache; later it contained ordinary models again without the probe row. Do not repeat account-home catalog probes without an exact cache snapshot and recovery plan.
+   A config writer may insert an independent table before the closing Operator comment. Ownership still requires the exact recorded provider bytes and unique ordered markers; scope validation must prove that removing only those bytes preserves every other setting. Status, rebind and disconnect retain the inserted bytes. Changes to the provider itself and ambiguous markers remain conflicts.
+   Rebind updates saved configuration, not an already loaded task's cached address. For an owner-authorized idle task, follow [task reload](#reload-an-idle-web-task) before validating a new input. Do not restart Desktop, replace the task or replay the failed turn to refresh this cache.
+   Persistent Desktop connect/rebind requires a running launch record with the exact session digest, instance and worker receipt. Read-only `ready` status does not save that receipt. When an explicit start returned `starting`, first observe the same live ready service, then explicitly reuse it with `start` to finish registration before connect/rebind; this must return `reused=true`, not create a second process. A dead or uncertain launch remains review-only. The owner's one-time recovery of a stopped unbound instance with one failed request on 2026-09-28 does not relax the normal zero-request recovery rule.
+5. Send each authorized test once with a new input and exact task/provider identity. Preserve old failed turns. Assistant task-tool delivery is not manual composer input. A completed HTTP response or fully read context does not prove that the model handled the current task; compare actual arguments, results and files with the request.
+6. Keep transport and context limits distinct: native HTTP wire/decompressed input is bounded to 64 MiB; indexed Web context retains 48 KiB replies, 24 pages and 40 single-use reads. A rejected long task is not repaired by truncation, a larger native HTTP bound or replay. New-task creation needs authorization.
+   `operator_web_model.text_route` 保留的 `16000` 只是未经逐型号验证的暂定内部路由预算，**不是** GPT-5.6 Sol、GPT-5.6 Pro 或 GPT-6 Pro 的已知网页上下文容量。混合模型目录现会省略未验证 Web 型号的容量字段，不把该预算发布为型号元数据。此前真实 Desktop Web 任务报告的未知模型默认有效窗口 `258400` 也不能证明网页容量。不能把 API 模型卡的窗口套到网页版；须按准确选中的型号分别核实来源、记录、配置并验收 Desktop 是否采用。在此之前保留现有任务与失败证据。
+7. Indexed continuation may refresh only changed leaf descriptions of visible tools whose schema pages have never been read. Preserve the published first schema key and every new description byte; stage complete bounded pages, then publish only after exact history/call/result checks. Partially or fully read schemas, namespace descriptions, hidden declarations, identities, order, parameter schemas, permissions and all other controls remain immutable. Non-indexed continuation remains strict. Do not reset page/read budgets or use this as a general catalog-reload exception.
+
+2026-10-01 所有者将官方原生稳定及尽量无代理放在首位，并选择通过拓展入口保留模型切换。[直连入口候选](../../common/docs/direct-profile-entry.md)现包含显式 API/Local profile 的持久周期、Windows 配置见证、独立原生恢复及配对入口选择，尚未部署。三个模拟直接端点请求证明当前 CLI 可以在同 UUID 的冷恢复中选择原生、自定义、原生并保留普通文字历史；非空外部推理历史的原生拒绝仍在。独立工具已实际恢复官方配置、旧入口的原生模式和保护，保留原件；新只读客户端返回八个原生型号，七个 profile 的预览绑定当前真实原生配置。所有者再次重开后，全部准确官方进程生于实际恢复之后，磁盘仍为官方提供方，仅工具 CUA pipe 字段变化，配置与启动顺序核对通过。它不代替任务实际上游或语音验收。源码回归后仍须关闭应用、独立退役并归档旧计划、按旧归属链升级入口和实机验证；不恢复已消费计划、改写历史或推定 Web 已完成相同接入。
+
+2026-10-01 后续已完成旧统一计划退役、完整归档及直连配对入口安装。入口阶段更新命令成功，
+独立安装链检查通过，桌面拓展入口标记为 10-01；后台中文输出编码检查仍使该交接保持检查待办，
+未执行自动打开。所有者手动重开后的官方原生配置仅 CUA pipe 变化，自定义 profile 尚未激活。
+公共维护 CLI 的显式 UTF-8 修复已通过强制 CP936 的隔离更新；失败记录及旧原件未改。
+快捷方式的运行窗口时间检查仍有保守拒绝边界，主窗口自定义模型、同任务历史及语音分别待验收。
+完整实际采用与限制见[直连入口记录](../../common/docs/direct-profile-entry.md)。
+
+## Reload an idle Web task
+
+Use this narrow maintenance flow when an exact independent Web task retains an old service address after a verified rebind. It is assistant-guided through native task tools, not an automatic background action or a provider-switch mechanism.
+
+1. Verify the saved service is current, ready and idle, and `desktop-status` is connected. Record the exact authorized task UUID, project, provider and failed turn; confirm that the task is idle. Keep the original config, history and failure evidence. A 502 alone does not establish an old-address cause.
+2. Archive that task once through the owning native app, then restore the same UUID once. Do not use a separate App Server to seize its runtime, change its model/permissions, or write native storage. Never apply this to active tasks or bulk-archive tasks by title.
+3. Read back the actual state. A restore tool error can occur after unarchiving has succeeded: check the exact task's metadata and archived state before deciding what remains. Do not repeat an uncertain archive/restore operation. `notLoaded` means unloaded, not missing; metadata alone does not prove the next request's route.
+4. Only after restoration is confirmed, send one separately authorized **new** test input. Check the actual command/result, current service's paired-call counts and final answer. Retain the original failed turn; do not press retry or resend its input. If state remains uncertain, stop this maintenance and report the evidence.
+
+On 2026-09-27, with installed CLI 0.158.0-alpha.2.1, this flow recovered the same task that had failed against an old loopback port. Restore reported a load error, but readback proved unarchived/notLoaded with the same provider and directory. One new file-read request completed with one paired result and the exact marker in 25.8 seconds. The old 502 remained failed, configuration bytes stayed identical, and Desktop was not restarted. This is task-tool delivery evidence, not manual-composer acceptance or seamless cross-provider switching.
+
+## Search and model selection
+
+Do not disable `web_search` in global or project `.codex/config.toml` to accommodate Web: project settings also affect other models in that directory. The earlier dedicated-project override was removed after a private backup; it survives only as [dated evidence](native-web-history-20260924.md#2026-09-24-search-routing-and-citations).
+
+The Web provider accepts one optional live hosted `web_search` declaration with the checked shape, no filters/location/indexed/cached constraints and automatic tool choice. It projects that declaration to the webpage's own optional search path, keeps the caller input intact and advertises supported native tools through MCP. Unsupported constraints fail before submission. The bounded `web_page_auto_v1` status means route selection, not proof of search or accuracy. Do not execute Codex search as an implicit second backend or invent a `web_search_call`; return only the observed answer and validated public sources. Other providers retain their own search contracts.
+
+A 2026-09-25 isolated user-home CLI request exposed its default cached-only `web_search` declaration (`external_web_access=false`), which the Web provider correctly rejected before page dispatch. Selecting live search for that one synthetic Web invocation passed the gate without changing global or project search settings. Native Desktop's actual declaration and mixed-provider behavior remain separate acceptance checks.
+
+Search capability belongs to the exact model and endpoint. GLM-5.3's official direct case returned a provider-hosted search event; GLM-5.3 Flash's separately validated search used Codex. DeepSeek's official Responses endpoint ignores hosted search declarations; a Codex-executed adapted route needs its own verification. See [online model evidence](../../api/docs/official-online-models.md).
+
+The dated catalog and exact current source are maintained in [one model reference](web-model-catalog.md).
+The 2026-10-28 explicit **6 Medium** observation added ordinary `gpt-6-sol` with **medium only**;
+it did not reuse the rejected September Latest/High inference. Existing GPT-5.6 and Pro entries
+retain their own evidence. Pro `max` is a Web selector, not API effort equivalence. Check the
+selected radio, effort and generation per request, with one serial browser and consumed ledger.
+Native model choices and older catalog observations do not establish current Web availability.
+
+On 2026-09-30, native CLI 0.159.2 advertised GPT-6.1 Sol and its own effort
+choices. The native catalog is dynamic; seven synthetic update checks required
+no production compatibility change. This does not add a Web GPT-6.1 entry or
+establish live Desktop/voice acceptance. The exact version, preserved-config
+scope and remaining gates are recorded in the [release audit](../../../development/docs/release-audit.md).
+
+## What the evidence establishes
+
+| Area | Recorded result | Remaining boundary |
+| --- | --- | --- |
+| Saved setup and hidden readiness | Unchanged setup reuses protected files/processes; a successful saved startup prepares an empty page with zero model requests | Later request-free starts landed on a non-chat/old-conversation view; readiness remains checked per instance |
+| Managed Web text | Fresh serial samples returned exact text across the published Web choices | Selected UI identity is not backend attestation; prior 403s remain failures |
+| Web to native coding | Current source and saved service: a fresh GPT-6 Pro/max isolated CLI case completed three paired calls, the exact edit, five executed tests and a verified final reply | Not current Desktop picker, manual composer, same-task switch or all-tool acceptance |
+| Web-page sources | A fresh GPT-6 Pro/max CLI search task read the full context and returned a source-bound link; the cited official page supports its answer. The current rendered Markdown and older raw-marker formats have separate bounded validation; a bare modern display marker without an adjacent validated link fails closed. | One CLI case does not establish every citation layout, every model or main-window acceptance; unmatched sources still fail closed |
+| Dedicated native task continuation | Assistant-relayed fresh text in the same Desktop task completed under the then-current test setup | That setup temporarily disabled search; later Web-only search has separate evidence |
+| Provider binding and switching | On 2026-09-30, one Desktop-owned unified-provider task used the ordinary picker/composer to complete native GPT-6 Luna → Web GPT-5.6 Sol → native GPT-6 Luna text turns with preserved context | This verifies model selection within one provider, not provider rebinding. GLM hit the old registry's summary rejection; a later local selection hit opaque history rejection. No claim for all models, long histories, tools or voice; see the release audit |
+| Capacity and old-port recovery | Rebind updates saved configuration. Native archive/restore then reloaded the same idle task; a new file read reached the current service and returned the exact final marker | The older long-task 413 and old-port 502 remain failures. Reload does not enlarge context capacity or establish cross-provider switching |
+| Native tool continuation | A new GPT-6 Pro/max task completed the exact file read and final answer while 250 unread descriptions refreshed. In the same native task, a later distinct temperature fixture completed two paired calls, an exact edit, five actual tests and the final reply. | The producer of the description changes is unconfirmed. An intervening geometry command failed and was reported truthfully; it remains a failed coding case. The successful edit case explicitly required awaiting inspection before editing. Neither case proves manual composer or all-tool acceptance. |
+| Native CLI and page continuation | An isolated text-only task completed two distinct turns, with the second using the first answer. Current native task/tool-delivery cases reached new empty chats and returned real results across three distinct inputs. | The original citation profile was retained for these newer cases. One input had a correctly reported command failure; this is not three successful business tasks. Live main-window acceptance remains separate. |
+| Native composer continuation | On 2026-09-28 the assistant used the ordinary Desktop composer for three successive new inputs in one existing Web task. Each executed exactly its new file read; the latter replies preserved the prior markers. Actual final text and zero-exit tool results matched all three fixtures. | This proves ordinary composer delivery, not that the owner personally typed it. This run did not cover Stop. Later native Stop/task-tool continuation evidence is recorded in the release audit; cross-provider switching and all-tool behavior remain separate gates. The preceding failed input was retained, not resent. |
+
+Historical checks also covered follow-up context and cancellation reuse; missing context, wrong historical-task selection, page timeouts, citation failures and 403s remain retained. Current implementation and test results are recorded in the [release audit](../../../development/docs/release-audit.md); raw receipts, task identities, local paths and original failed inputs remain private. Passing a later new case never changes an earlier result.
+
+Modern `sources_footnote` metadata may contain an explicit empty list: it cites nothing and must not remove or invent text or links. Keep its presence separate from its contents to reject duplicates; inline citation groups still require sources. Citation-failure diagnostics retain only bounded kinds/counts and source-list shapes in private transport status, never answer text, URLs or identities. A synthetic shape match is not proof of a previous live failure's cause.
+
+Use the [setup guide](../../../QUICKSTART.md), [module responsibilities](../../../MODULES.md) and [current plan](native-conversation-plan.md) for the next action. Channels evidence belongs in its [core recovery record](../../../development/docs/core-recovery-20260921.md); an existing user's success does not prove a second user's first-contact setup.
+
+## Assistant operation guide
+
+Read the operational rules above before using these commands. First-time Tunnel, app and key
+setup follows [the connection guide](web-fixed-tunnel.md); existing setup is reused.
+Public operations use `codex-operator.ps1 models web <action>`, with the exact selected project.
+
+| Task | Operation and stopping condition |
+| --- | --- |
+| Reuse saved setup | `configure` may omit Settings/Python for a fully matching registration. It performs no update or start. Changed settings/programs, access failures and missing setup are distinct; do not replace configuration or request login merely because inspection fails. |
+| Start or finish startup registration | `start` owns the exact launch/reuse. A ready service whose earlier start returned `starting` needs one explicit same-instance reuse to save its binding before connect/rebind. It must return `reused=true`; read-only status cannot save ownership. Dead or uncertain records require separate review. |
+| Diagnose a page | `status` reads bounded diagnostics; `inspect` preserves an ended page as a read-only snapshot. `assist` prepares an empty chat and is unsuitable for preserving an old scene. A window acknowledgement is not a current-page observation. |
+| Recover a confirmed failed service | `recover` first previews exact retained state; only the reviewed digest may archive that record. It neither starts a replacement nor replays input. A process or lock claim without independent identity checks is insufficient. The narrower [pre-initialization path](web-preinit-recovery.md) has its own contract. |
+| Connect an independent provider | `desktop-prepare` and `desktop-connect` prepare/register the selected provider; `desktop-status` reads the registration, `desktop-check` separately checks a bounded catalog in a fresh native process, and `desktop-disconnect` removes only owned bytes. None proves a live menu, task binding or actual route. |
+| Refresh a changed service | Require `desktop-status` to establish stale registration and the new service to be ready/idle, then explicitly `desktop-rebind` once, preserving provider name, task and originals. Already-loaded idle tasks may need [native archive/restore](#reload-an-idle-web-task); check actual state after a tool error before deciding what remains. |
+| Bind to an existing router | The explicit `--web-profile` / `bind-web` path binds exact profile/session digests and process identity in memory. Do not copy keys or hand-fill ports, automatically restart a router, or treat catalog publication as global activation. |
+| Evaluate coding | An explicitly requested `verify` uses a new synthetic project and one bounded real CLI coding case. It calls the webpage model; ordinary status never does. Preserve failures, actual outputs and exact model/effort; CLI evidence is separate from Desktop acceptance. |
+
+Task creation requires an explicit user request. Prefer the current owning native task interface,
+verify the selected model/provider and project, and preserve the returned UUID. Older independent
+provider experiments used App Server `thread/start.modelProvider` followed by a first `turn/start`
+because an empty task had no reusable rollout. Those are [dated experiments](native-web-history-20260924.md),
+not an implicit Channels/status operation or permission to take over an existing task. If the
+available native tool lacks the required provider selection, report that precise gap; do not
+pretend catalog registration or a normal `create_thread` call established the requested route.
+
+For an authorized live check, send one new input to the exact task/provider. Task-tool delivery,
+assistant-operated ordinary Desktop input, and human input are separate evidence. If Computer Use
+is available and authorized, first observe the selected task and composer, preserve a real nonempty
+draft, send once, then compare visible output with native model/tool/result records and service state.
+An uncertain send is inspected, not clicked again. `desktop-status` fields do not substitute for
+that live evidence. Old 413 failures remain terminal; neither a new input nor a larger transport
+bound permits truncating history or exceeding the context/page/read contract.
+
+Keep global and project search settings intact. Web's explicitly admitted optional live search,
+GLM's hosted or Codex-executed searches, and DeepSeek's endpoint behavior have separate contracts;
+use [search and model selection](#search-and-model-selection) and the exact provider evidence.
+
+For a reviewed shared-home entry upgrade, follow [the controlled handoff](../../common/docs/unified-cold-launch.md#replacing-a-witnessed-activation-during-an-explicit-upgrade).
+Prepare and verify the complete private inventory, independent background helper and visible
+maintenance state before asking for normal exit. Preserve later preferences and original failed
+plans; waiting has a deadline and closing a window does not prove process exit. Installation,
+official recovery, launch, menu refresh and new live acceptance are distinct outcomes. An isolated
+mode entry instead follows its [own maintenance chain](../../common/docs/mode-entry-window.md).
+
+## Dated implementation notes (through 2026-10-28)
+
+These are retained implementation records, not a live status report. “Current”, “pending” and
+“not deployed” refer to each entry’s stage. Later success does not change an earlier failure;
+consult the current support matrix and exact installed identities before acting.
 
 Later 2026-10-28 acceptance: the frozen code run passed 1,916 Python cases
 (four skips) and 157 Node checks. Native config drift was traced by the owner to
@@ -262,122 +453,3 @@ the rejected external chooser or reactivate an old consumed unified plan.
 The owner's 2026-10-05 direction makes BigPizzaV3/CodexPlusPlus (Codex++) the primary research reference. Borrow its concrete solutions only for confirmed necessary shortcomings, preserving our verified strengths: native Desktop task ownership, official-direct isolation, exact model/tool identities, complete history, zero replay and retained recovery originals. This supersedes Chat On Steroids' earlier priority; previous adopted mechanisms, dormant references, identity uncertainty and licenses remain in [implementation sources](web-background-sources.md).
 
 The scope remains native Codex tasks. New features or UI require the owner's agreement; discuss useful suggestions first. Continue scoped repairs within existing authorization. Do not introduce a separate workspace UI, companion-extension product, Goal/Loop or another multi-agent orchestrator. Discuss a major internal direction change, its user benefit, migration and verification with the owner before implementation. The [current plan](native-conversation-plan.md) lists remaining work; the [dated history](native-web-history-20260924.md) records superseded approaches and failures.
-
-## Operational rules
-
-1. Reuse saved settings, login and fixed connection state. `models web configure` may omit settings and interpreter for an unchanged saved registration; it checks them without writes. Distinguish access restrictions, changed programs/registration and failed checks from missing setup.
-2. Use `models web start/status/assist/inspect/stop` for the saved service. Startup attempts to prepare one hidden empty temporary chat without sending a prompt or MCP call, then rechecks it when consumed. Preparation can fail if the site opens another route; do not treat `starting` or `assistance` as proof of a ready page. A stalled navigation has a fixed 60-second non-retrying deadline and closes its worker. Low-level `serve` retains its explicitly selected behavior. Read-only status never prepares a page or makes a model request.
-   Both legacy message rows and current `data-chatgpt-search-unit-key` rows must be absent before admitting or sending a new task. A modern final answer must satisfy the current request binding; a completed row from another request is not an answer.
-   Current live observations show separate user and assistant role turns. Neither the original user ID
-   nor its role-turn prefix survives in the assistant's identity list. The mounted render-entry list also
-   retains only the current role entry. Those rejected candidates remain failed; never infer a parent
-   relationship from them or read hidden message bodies/account stores to reconstruct it.
-   The managed fresh-document path arms only after model selection on the verified empty temporary
-   page. It privately binds the full checked source, original public user UUID, exact document/root,
-   a one-request nonce and a mutation ledger. Changed/new users, source edits or document replacement
-   invalidate it. The renderer's conversation field is an exact bounded opaque string, not a UUID or
-   authentication; an explicit empty value also requires the exact temporary route on every read.
-   Source comparison, selected app-separator projection, public user identity and document capture
-   now run in one synchronous page evaluation. A later controls snapshot must never classify an
-   already unmounted user or allow a modern managed request to wait for a final without its binding.
-   The current assistant keeps its own distinct, bounded UUID list and all existing terminal checks.
-   Earlier capture failures remain failed. New ordinary Desktop text, same-chat continuation, an actual
-   file read and a separate actual native search passed on the updated package. A new native Stop,
-   stable retained worker and different new continuation also have separate paired evidence. A fallback unit
-   key, matching text or completion flag alone still supplies no binding. Unbound readers retain the
-   original same-object gate. The
-   [public-page implementation](../../../scripts/web_browser_page.cjs) carries this private binding
-   through the unchanged 500 ms final snapshot, completed-page inspection and next-chat recheck.
-   The current app pill's public message can encode its one separator as ASCII space or NBSP. Accept either only with the exact selected app link and complete unchanged request body, then recheck that exact public projection. Never trim text, reinsert it or resend. Cancellation uses the dispatched projection, not a reconstructed legacy mention. A modern completed-page inspection requires the exact unique mounted result identity; mixed or ambiguous rows remain rejected. `preparing` is a normal startup state, not missing setup or proof of readiness.
-   Read-only status and uninstall preflight import without `aiohttp`; serving still requires it. The isolated `python -S` test covers this boundary.
-   Stop recognition is shared by cancellation, generation and idle gates. Current composer test IDs and exact form-scoped stop labels supplement the legacy control; cancellation still requires one visible enabled control, the dispatched user identity and stable idle after one click. A native interrupted turn, a clicked Web stop and a retained ready worker are separate evidence. Fixed cancellation and fresh-chat gate codes distinguish the failure boundary without recording page text.
-   Cancellation binds the verified public user-message ID and complete dispatched text in request memory, then rechecks both before Stop and throughout idle confirmation. Titles and URLs can change during generation; neither the initial temporary-chat URL nor a title alone identifies the turn. Changed origin, login/plugin routes, challenge/approval state, draft, replaced message identity and a visible worker still fail. The private binding read exports no ID through ordinary diagnostics.
-   The managed fresh-document path carries the same original request binding into cancellation.
-   It does not require the disproved user-prefix relationship. A present changed/ambiguous user, mixed
-   legacy rows, unavailable current branch or invalid document ledger still fails; these states are
-   never explained away as virtualization. A pending assistant unit may supply only its public UUID,
-   owning conversation field and bounded turn metadata for cancellation; it supplies no answer or
-   final-message content. Live retention and reuse remain separate acceptance gates.
-   One visible enabled Stop click and all existing stable-idle/window/permission checks still apply.
-   Diagnostics expose only fixed counts and booleans, never the binding, source text or UUID sequence.
-   Current package acceptance used GPT-5.6 Sol/medium. A later native accessibility review after
-   re-selecting the same chat showed its saved search answer, links and idle composer; screenshot
-   capture was black. This does not attest to immediate visual painting or every model/tool/approval.
-   A subsequent current-window review showed the actual search answer, links and expanded native
-   execution row. One different new ordinary-composer continuation completed in 28.853 seconds;
-   its correct final painted without chat re-selection or reload, using the same browser birth.
-   The accessibility snapshot initially lagged that visible final; closing a model menu with Escape
-   then showed the exact answer and idle composer. Preserve both observations. Completion duration
-   is not first-token/paint timing, and this case does not attest to general UI stability or other gates.
-   The earlier black/lock-screen capture cause remains unknown; no privacy setting was changed.
-   While an HTTP exchange is pending, native Stop reaches cancellation through disconnect. Between a released tool call and its result, explicitly setting `native_cancellation_mode: "app_server_metadata_v1"` closes that gap for a shared MCP worker. Its two-second observation interval reads only bounded native task/turn metadata through a short-lived App Server; an exact turn with `interrupted` and a valid completion timestamp can cancel the still-owned pending call. Recheck owner, pending-call identity and concurrent continuation after every read. Unknown/failed observations stop this watcher without retry; new input, inactivity, ordinary completion and missing results never establish cancellation. The existing deadline remains. Each read-only child is closed even when its owner is cancelled; no start/resume, transcript read, permission/config change or business request occurs. Default `none` preserves existing installations until explicitly configured and rebound. An explicit `native_cancellation_home` binds a non-default home to the saved settings digest. It must be an existing absolute directory without links; omission retains the OS user's default `~/.codex`. Only the read-only App Server child receives that exact home. Browser environment filtering stays unchanged. Desktop prepare/connect/rebind reject a mismatched home before writing; changing the saved home requires the normal explicit stopped configuration update.
-   Before returning a completed public answer, require its entire identity/content/citation snapshot to remain identical for 500 ms within the existing deadline. This is a local observation, not a retry or a guarantee against later page changes. A changed previously returned answer still blocks the next turn; never rewrite native history or silently replace the old answer.
-3. Before requesting human login or verification, observe the exact current page. A historical challenge, `needs_assistance`, window title or open acknowledgement is insufficient. Allow transient loading to settle with bounded observation; reuse a ready page. If observation fails, report that uncertainty. Locate a missing assistance window before asking the user to find it. During an explicitly visible human sign-in, allow standard HTTPS identity-provider redirects and show the destination host in the window title; hidden execution retains its restricted navigation. `assist` prepares an empty chat; `inspect` preserves an ended page as a read-only text snapshot.
-4. Native models remain on their official direct route. Web registers an independent provider through `desktop-prepare/connect/status/check/disconnect`. After a verified service change, `desktop-rebind` updates only the owned provider block and retains its original configuration. Registration, task binding, menu visibility, request routing and live Desktop behavior require separate evidence. Global routing stays disabled after the native capacity/retry regressions.
-   A [disposable unified-picker candidate](../../common/docs/unified-picker-candidate.md) now tests a single zero-retry provider for new tasks; it does not activate the real Desktop or migrate existing tasks. The current signed-in CLI sent Authorization to a process-local custom-provider catalog without a model turn, but `model/list` also rewrote the real model cache; later it contained ordinary models again without the probe row. Do not repeat account-home catalog probes without an exact cache snapshot and recovery plan.
-   A config writer may insert an independent table before the closing Operator comment. Ownership still requires the exact recorded provider bytes and unique ordered markers; scope validation must prove that removing only those bytes preserves every other setting. Status, rebind and disconnect retain the inserted bytes. Changes to the provider itself and ambiguous markers remain conflicts.
-   Rebind updates saved configuration, not an already loaded task's cached address. For an owner-authorized idle task, follow [task reload](#reload-an-idle-web-task) before validating a new input. Do not restart Desktop, replace the task or replay the failed turn to refresh this cache.
-   Persistent Desktop connect/rebind requires a running launch record with the exact session digest, instance and worker receipt. Read-only `ready` status does not save that receipt. When an explicit start returned `starting`, first observe the same live ready service, then explicitly reuse it with `start` to finish registration before connect/rebind; this must return `reused=true`, not create a second process. A dead or uncertain launch remains review-only. The owner's one-time recovery of a stopped unbound instance with one failed request on 2026-09-28 does not relax the normal zero-request recovery rule.
-5. Send each authorized test once with a new input and exact task/provider identity. Preserve old failed turns. Assistant task-tool delivery is not manual composer input. A completed HTTP response or fully read context does not prove that the model handled the current task; compare actual arguments, results and files with the request.
-6. Keep transport and context limits distinct: native HTTP wire/decompressed input is bounded to 64 MiB; indexed Web context retains 48 KiB replies, 24 pages and 40 single-use reads. A rejected long task is not repaired by truncation, a larger native HTTP bound or replay. New-task creation needs authorization.
-   `operator_web_model.text_route` 保留的 `16000` 只是未经逐型号验证的暂定内部路由预算，**不是** GPT-5.6 Sol、GPT-5.6 Pro 或 GPT-6 Pro 的已知网页上下文容量。混合模型目录现会省略未验证 Web 型号的容量字段，不把该预算发布为型号元数据。此前真实 Desktop Web 任务报告的未知模型默认有效窗口 `258400` 也不能证明网页容量。不能把 API 模型卡的窗口套到网页版；须按准确选中的型号分别核实来源、记录、配置并验收 Desktop 是否采用。在此之前保留现有任务与失败证据。
-7. Indexed continuation may refresh only changed leaf descriptions of visible tools whose schema pages have never been read. Preserve the published first schema key and every new description byte; stage complete bounded pages, then publish only after exact history/call/result checks. Partially or fully read schemas, namespace descriptions, hidden declarations, identities, order, parameter schemas, permissions and all other controls remain immutable. Non-indexed continuation remains strict. Do not reset page/read budgets or use this as a general catalog-reload exception.
-
-2026-10-01 所有者将官方原生稳定及尽量无代理放在首位，并选择通过拓展入口保留模型切换。[直连入口候选](../../common/docs/direct-profile-entry.md)现包含显式 API/Local profile 的持久周期、Windows 配置见证、独立原生恢复及配对入口选择，尚未部署。三个模拟直接端点请求证明当前 CLI 可以在同 UUID 的冷恢复中选择原生、自定义、原生并保留普通文字历史；非空外部推理历史的原生拒绝仍在。独立工具已实际恢复官方配置、旧入口的原生模式和保护，保留原件；新只读客户端返回八个原生型号，七个 profile 的预览绑定当前真实原生配置。所有者再次重开后，全部准确官方进程生于实际恢复之后，磁盘仍为官方提供方，仅工具 CUA pipe 字段变化，配置与启动顺序核对通过。它不代替任务实际上游或语音验收。源码回归后仍须关闭应用、独立退役并归档旧计划、按旧归属链升级入口和实机验证；不恢复已消费计划、改写历史或推定 Web 已完成相同接入。
-
-2026-10-01 后续已完成旧统一计划退役、完整归档及直连配对入口安装。入口阶段更新命令成功，
-独立安装链检查通过，桌面拓展入口标记为 10-01；后台中文输出编码检查仍使该交接保持检查待办，
-未执行自动打开。所有者手动重开后的官方原生配置仅 CUA pipe 变化，自定义 profile 尚未激活。
-公共维护 CLI 的显式 UTF-8 修复已通过强制 CP936 的隔离更新；失败记录及旧原件未改。
-快捷方式的运行窗口时间检查仍有保守拒绝边界，主窗口自定义模型、同任务历史及语音分别待验收。
-完整实际采用与限制见[直连入口记录](../../common/docs/direct-profile-entry.md)。
-
-## Reload an idle Web task
-
-Use this narrow maintenance flow when an exact independent Web task retains an old service address after a verified rebind. It is assistant-guided through native task tools, not an automatic background action or a provider-switch mechanism.
-
-1. Verify the saved service is current, ready and idle, and `desktop-status` is connected. Record the exact authorized task UUID, project, provider and failed turn; confirm that the task is idle. Keep the original config, history and failure evidence. A 502 alone does not establish an old-address cause.
-2. Archive that task once through the owning native app, then restore the same UUID once. Do not use a separate App Server to seize its runtime, change its model/permissions, or write native storage. Never apply this to active tasks or bulk-archive tasks by title.
-3. Read back the actual state. A restore tool error can occur after unarchiving has succeeded: check the exact task's metadata and archived state before deciding what remains. Do not repeat an uncertain archive/restore operation. `notLoaded` means unloaded, not missing; metadata alone does not prove the next request's route.
-4. Only after restoration is confirmed, send one separately authorized **new** test input. Check the actual command/result, current service's paired-call counts and final answer. Retain the original failed turn; do not press retry or resend its input. If state remains uncertain, stop this maintenance and report the evidence.
-
-On 2026-09-27, with installed CLI 0.158.0-alpha.2.1, this flow recovered the same task that had failed against an old loopback port. Restore reported a load error, but readback proved unarchived/notLoaded with the same provider and directory. One new file-read request completed with one paired result and the exact marker in 25.8 seconds. The old 502 remained failed, configuration bytes stayed identical, and Desktop was not restarted. This is task-tool delivery evidence, not manual-composer acceptance or seamless cross-provider switching.
-
-## Search and model selection
-
-Do not disable `web_search` in global or project `.codex/config.toml` to accommodate Web: project settings also affect other models in that directory. The earlier dedicated-project override was removed after a private backup; it survives only as [dated evidence](native-web-history-20260924.md#2026-09-24-search-routing-and-citations).
-
-The Web provider accepts one optional live hosted `web_search` declaration with the checked shape, no filters/location/indexed/cached constraints and automatic tool choice. It projects that declaration to the webpage's own optional search path, keeps the caller input intact and advertises supported native tools through MCP. Unsupported constraints fail before submission. The bounded `web_page_auto_v1` status means route selection, not proof of search or accuracy. Do not execute Codex search as an implicit second backend or invent a `web_search_call`; return only the observed answer and validated public sources. Other providers retain their own search contracts.
-
-A 2026-09-25 isolated user-home CLI request exposed its default cached-only `web_search` declaration (`external_web_access=false`), which the Web provider correctly rejected before page dispatch. Selecting live search for that one synthetic Web invocation passed the gate without changing global or project search settings. Native Desktop's actual declaration and mixed-provider behavior remain separate acceptance checks.
-
-Search capability belongs to the exact model and endpoint. GLM-5.3's official direct case returned a provider-hosted search event; GLM-5.3 Flash's separately validated search used Codex. DeepSeek's official Responses endpoint ignores hosted search declarations; a Codex-executed adapted route needs its own verification. See [online model evidence](../../api/docs/official-online-models.md).
-
-The observed Web catalog contains **GPT-5.6 Sol** (`none/medium/high/xhigh`), **GPT-5.6 Pro** (`max`) and **GPT-6 Pro** (`max`). Pro's native `max` selects the Web Pro position, not an asserted API effort equivalence. Latest/High was observed as GPT-5.6 Sol, so the unverified Web GPT-6 Sol entry was removed. Check exact selection, visible effort and generation before each dispatch; preserve one serial browser and consumed-turn ledger across models. [Catalog and dated evidence](web-model-catalog.md) are authoritative for this surface; native GPT-6 is separate.
-
-On 2026-09-30, native CLI 0.159.2 advertised GPT-6.1 Sol and its own effort
-choices. The native catalog is dynamic; seven synthetic update checks required
-no production compatibility change. This does not add a Web GPT-6.1 entry or
-establish live Desktop/voice acceptance. The exact version, preserved-config
-scope and remaining gates are recorded in the [release audit](../../../development/docs/release-audit.md).
-
-## What the evidence establishes
-
-| Area | Recorded result | Remaining boundary |
-| --- | --- | --- |
-| Saved setup and hidden readiness | Unchanged setup reuses protected files/processes; a successful saved startup prepares an empty page with zero model requests | Later request-free starts landed on a non-chat/old-conversation view; readiness remains checked per instance |
-| Managed Web text | Fresh serial samples returned exact text across the published Web choices | Selected UI identity is not backend attestation; prior 403s remain failures |
-| Web to native coding | Current source and saved service: a fresh GPT-6 Pro/max isolated CLI case completed three paired calls, the exact edit, five executed tests and a verified final reply | Not current Desktop picker, manual composer, same-task switch or all-tool acceptance |
-| Web-page sources | A fresh GPT-6 Pro/max CLI search task read the full context and returned a source-bound link; the cited official page supports its answer. The current rendered Markdown and older raw-marker formats have separate bounded validation; a bare modern display marker without an adjacent validated link fails closed. | One CLI case does not establish every citation layout, every model or main-window acceptance; unmatched sources still fail closed |
-| Dedicated native task continuation | Assistant-relayed fresh text in the same Desktop task completed under the then-current test setup | That setup temporarily disabled search; later Web-only search has separate evidence |
-| Provider binding and switching | On 2026-09-30, one Desktop-owned unified-provider task used the ordinary picker/composer to complete native GPT-6 Luna → Web GPT-5.6 Sol → native GPT-6 Luna text turns with preserved context | This verifies model selection within one provider, not provider rebinding. GLM hit the old registry's summary rejection; a later local selection hit opaque history rejection. No claim for all models, long histories, tools or voice; see the release audit |
-| Capacity and old-port recovery | Rebind updates saved configuration. Native archive/restore then reloaded the same idle task; a new file read reached the current service and returned the exact final marker | The older long-task 413 and old-port 502 remain failures. Reload does not enlarge context capacity or establish cross-provider switching |
-| Native tool continuation | A new GPT-6 Pro/max task completed the exact file read and final answer while 250 unread descriptions refreshed. In the same native task, a later distinct temperature fixture completed two paired calls, an exact edit, five actual tests and the final reply. | The producer of the description changes is unconfirmed. An intervening geometry command failed and was reported truthfully; it remains a failed coding case. The successful edit case explicitly required awaiting inspection before editing. Neither case proves manual composer or all-tool acceptance. |
-| Native CLI and page continuation | An isolated text-only task completed two distinct turns, with the second using the first answer. Current native task/tool-delivery cases reached new empty chats and returned real results across three distinct inputs. | The original citation profile was retained for these newer cases. One input had a correctly reported command failure; this is not three successful business tasks. Live main-window acceptance remains separate. |
-| Native composer continuation | On 2026-09-28 the assistant used the ordinary Desktop composer for three successive new inputs in one existing Web task. Each executed exactly its new file read; the latter replies preserved the prior markers. Actual final text and zero-exit tool results matched all three fixtures. | This proves ordinary composer delivery, not that the owner personally typed it. This run did not cover Stop. Later native Stop/task-tool continuation evidence is recorded in the release audit; cross-provider switching and all-tool behavior remain separate gates. The preceding failed input was retained, not resent. |
-
-Historical checks also covered follow-up context and cancellation reuse; missing context, wrong historical-task selection, page timeouts, citation failures and 403s remain retained. Current implementation and test results are recorded in the [release audit](../../../development/docs/release-audit.md); raw receipts, task identities, local paths and original failed inputs remain private. Passing a later new case never changes an earlier result.
-
-Modern `sources_footnote` metadata may contain an explicit empty list: it cites nothing and must not remove or invent text or links. Keep its presence separate from its contents to reject duplicates; inline citation groups still require sources. Citation-failure diagnostics retain only bounded kinds/counts and source-list shapes in private transport status, never answer text, URLs or identities. A synthetic shape match is not proof of a previous live failure's cause.
-
-Use the [setup guide](../../../QUICKSTART.md), [module responsibilities](../../../MODULES.md) and [current plan](native-conversation-plan.md) for the next action. Channels evidence belongs in its [core recovery record](../../../development/docs/core-recovery-20260921.md); an existing user's success does not prove a second user's first-contact setup.

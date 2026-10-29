@@ -18,6 +18,19 @@ before its one dispatch. The service returned ready/idle with one completed page
 This is dated picker and tool-execution evidence, not an independent upstream
 attestation, model-capacity claim, Desktop menu or manual Stop acceptance.
 
+## Source catalog after the 2026-10-28 addition
+
+| Web entry | Admitted effort | Evidence boundary |
+| --- | --- | --- |
+| `gpt-6-sol` / Web GPT-6 | medium only | Explicit **6 Medium** selection; a new coding case above |
+| `gpt-5.6-sol` | none, medium, high, xhigh | Retained September observations, not new 5.6 inference |
+| `gpt-5.6-pro` | max | Retained explicit 5.6 Pro selection |
+| `gpt-6-pro` | max | Retained 6 Pro selection; Pro is separate from ordinary GPT-6 |
+
+These are supported source selections, not a live account entitlement check. Saved deployments
+and the current page must be verified separately. Do not replace a user's ordinary selection
+with Pro or an older generation when a requested option is unavailable.
+
 ## Earlier catalog and retained evidence
 
 The public ChatGPT picker observed on 2026-09-23 offered GPT-5.6 Sol and Latest,

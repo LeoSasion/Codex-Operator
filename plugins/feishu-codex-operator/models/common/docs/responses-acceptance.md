@@ -1,5 +1,9 @@
 # Responses registration and acceptance
 
+Use the contract and evidence gates below for a new evaluation. Dated CLI/Desktop cases retain
+their original version and result; they do not certify the current installation. The
+[release gate summary](../../../development/docs/first-release-readiness.md) identifies remaining product work.
+
 Cross-model guidance and the current native/router comparison are maintained in the independent `codex-model-adaptation` skill. This file retains dated acceptance evidence and Operator-specific verification contracts.
 
 ## Native approval evidence, 2026-10-03

@@ -1,5 +1,8 @@
 # 核心能力验证摘要
 
+本页保留 2026-09-21 的恢复结论；后续正式绑定与验收见[Channels E2E](../../channels/feishu/docs/beeper-e2e-lessons.md)。
+日常维护按[当前升级流程](upgrade-checklist.md)，不把旧状态当作新建任务或恢复权限。
+
 本文件仅记录可公开的验收范围。运行日志、账号资料、进程记录、任务身份和维护原件留在本地。
 完整预览版验证说明见 [发布审计](release-audit.md)。
 

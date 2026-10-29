@@ -39,7 +39,7 @@ function Get-OperatorEntryMigrationPlan {
     if ($plan.schema_version -ne 2 -or $plan.startup_script -cne 'start-codex-with-web.ps1' -or
         (Get-OperatorFingerprint $workflow) -cne $plan.entry_files.'start-codex-with-web.ps1') { throw 'Reviewed Web workflow required.' }
     $source = [ordered]@{}
-    foreach ($name in @('operator_desktop_setup.ps1','operator_entry_migration.ps1','operator_desktop_entry.ps1','operator_desktop_entry.cs','operator_installation.psm1')) {
+    foreach ($name in @('operator_desktop_setup.ps1','operator_entry_migration.ps1','operator_desktop_entry.ps1','operator_desktop_entry.cs','operator_mode_picker.cs','operator_installation.psm1')) {
         $source[$name] = Get-OperatorFingerprint (Join-Path $PSScriptRoot $name)
     }
     $value = [ordered]@{schema_version=1; scope='desktop_entry_only'; project=$project;

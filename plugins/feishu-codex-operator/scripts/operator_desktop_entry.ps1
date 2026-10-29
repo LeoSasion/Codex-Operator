@@ -79,6 +79,18 @@ function Get-OperatorDirectEntryHash([byte[]]$Bytes) {
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
 }
 
+function Select-OperatorUnconfiguredLaunchMode([string]$Bundle) {
+    $manifest=[Text.UTF8Encoding]::new($false,$true).GetString((Read-OperatorDirectEntryBytes (Join-Path $Bundle 'launcher-manifest.json') 16384)) | ConvertFrom-Json
+    $launcher=Join-Path $Bundle 'Codex拓展入口.exe'
+    if ($manifest.schema_version -ne 1 -or $manifest.shortcut_layout -cne 'single' -or
+        $manifest.binary_sha256 -cne (Get-OperatorDirectEntryHash (Read-OperatorDirectEntryBytes $launcher 16777216))) {
+        throw 'unified_launcher_changed'
+    }
+    & $launcher --select-native-only
+    if ($LASTEXITCODE -notin @(0,10)) {throw 'unified_launcher_selection_invalid'}
+    return $LASTEXITCODE
+}
+
 function Get-OperatorIsolatedModeEntry([string]$Project,[string]$HomePath,[string]$Path,[string]$ExpectedSha256) {
     $project=[IO.Path]::GetFullPath($Project).TrimEnd('\')
     $homePath=[IO.Path]::GetFullPath($HomePath).TrimEnd('\')
@@ -308,6 +320,7 @@ try {
     $nativeOnly = $false
     if ($entryConfig) {
         if ($entryConfig.schema_version -ne 1 -or $entryConfig.mode -notin @('native','reviewed_startup','direct_profile','isolated_mode')) { throw 'Invalid desktop entry mode.' }
+        if ($null -ne $entryConfig.launch_selection -and $entryConfig.launch_selection -cne 'native_or_extension_v1') {throw 'unified_launcher_selection_invalid'}
         $nativeOnly = $entryConfig.mode -eq 'native'
         if (-not $nativeOnly) {
             $workflowBundle = [IO.Path]::GetFullPath((Join-Path $projectRoot $entryConfig.startup_bundle))
@@ -338,6 +351,17 @@ try {
         $entryLog | Set-Content -LiteralPath (Join-Path $bundle 'unified-startup-last-log.txt') -Encoding utf8
     }
     $application = Get-OperatorPackagedApplication
+    if ($entryConfig.launch_selection -ceq 'native_or_extension_v1' -and $entryConfig.mode -ceq 'native') {
+        if ($CheckOnly) {
+            @{action='choose_native_or_extension';extension_configured=$false;configuration_changed=$false;model_requests=0}|ConvertTo-Json -Compress
+            exit 0
+        }
+        $selection=Select-OperatorUnconfiguredLaunchMode $bundle
+        if ($selection -eq 0) {exit 0}
+        Open-OperatorPackagedApplication $application
+        Write-Output 'Opened the Codex application.'
+        exit 0
+    }
     if ($isolatedEntry) {
         if ($CheckOnly) {
             Test-OperatorIsolatedModeEntry $isolatedEntry

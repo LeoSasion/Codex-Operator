@@ -1,5 +1,10 @@
 # 原生 Codex 对话改进计划
 
+阅读顺序：当前支持和待完成门槛看[发布准备](../../../development/docs/first-release-readiness.md)，
+日常维护看[运行指南](native-web-experience.md)。下文按原日期保留计划、修复与验收阶段；
+“当前”“本轮”“未部署”均限于所在阶段，既有成功不关闭后来版本的门槛，旧失败不改判。
+
+
 更新：2026-10-28。本页记录当前阶段及前阶段计划；重复的逐轮验收已合并到[历史记录](native-web-history-20260924.md)。执行前读[当前项目记忆](native-web-experience.md)，原始通过、失败和未确认记录保留，不能据后续成功改判。
 
 首轮 Codex++ 固定源码研究、必要修复和验证方法见[方案吸纳记录](../../../development/docs/codexplusplus-adoption.md)。只改既有缺口；源码与合成测试通过不代表已安装入口、服务或主窗口刷新。
@@ -47,7 +52,7 @@ Use 后，独立 GPT-6.1 Sol/high 原生任务在准确待处理 exec 上点击�
 Codex 桌面端在上一次电脑重启后出现启动前几分钟闪烁、反复初始化，曾停在灰屏；仅重启应用及禁用 GPU 启动未消除。2026-10-06 再次重启电脑后，用户确认闪烁已消失。当前记为已恢复，具体根因未确认，原始诊断证据保留备查。
 
 
-## 当前阶段：六项补完与独立验收
+## 2026-10-03 阶段：六项补完与独立验收
 
 所有者于 10 月 3 日要求整理副窗口历史并全部推进剩余工作。准确隔离 home 的
 16 个旧验收会话已通过原生 archive 接口归档，6 个关键会话保留，全部历史文件
@@ -212,7 +217,7 @@ Web 新搜索完成两次真实配对工具往返，但最终回答在 598.759 �
 本轮专项已通过 85 项 Python 和 141 项 Node；新受管代次及普通输入框验收另行记录，
 不从专项通过推定旧失败已修复或全部 Web 功能可用。
 
-## 本轮已确定的方向与实施基线
+## 2026-10-02：已确定的方向与实施基线
 
 所有者要求先记录走不通的教训，再共同探讨方向。[模型切换复盘](../../common/docs/native-model-switching-lessons-20261002.md)
 已保存统一 provider 的真实成功和限制、独立 provider 的会话绑定问题、外部选模的体验退化、
@@ -262,8 +267,8 @@ Web 新搜索完成两次真实配对工具往返，但最终回答在 598.759 �
 2026-10-01 新方向：所有者选择“保留模型切换，允许通过拓展入口，自定义功能可受限”，优先官方原生直连。已实现[按入口选择直连提供方的候选](../../common/docs/direct-profile-entry.md)，完成同 UUID 的三个无路由器合成请求及历史保留检查。旧 Local 推理导致原生拒绝的边界仍保留。独立恢复工具已实际恢复官方配置和原生保护，新只读客户端加载官方默认提供方及八个原生型号，七个 profile 完成当前真实配置预览。所有者再次重开后，准确官方进程均生于恢复之后，当前配置保持官方提供方，仅 CUA pipe 字段变化；配置与启动顺序核对通过，任务实际上游和语音仍是分别验收的边界。新的持久周期、入口选择、独立恢复和原生完成时间合同已进入源码回归，尚未部署。后续不继续扩展原生代理或默认添加原生历史转换。
 
 1. 普通启动与恢复入口已修复 Windows 包身份启动方式；安装、升级、恢复和卸载回归通过。
-   一次受审旧安装已完成双入口迁移和运行时代码更新，原快捷方式身份、旧凭据与当前原生配置得到保留。
-   双入口的命名、日期及实际原生恢复要求统一见[安装指南](../../../shared/docs/installation-and-removal.md#desktop-entry-pair)。
+   一次受审旧安装已完成双快捷方式迁移和运行时代码更新，原快捷方式身份、旧凭据与当前原生配置得到保留。
+   该历史布局的命名、日期及实际原生恢复要求统一见[安装指南](../../../shared/docs/installation-and-removal.md#desktop-entry-pair)。
 2. 完成[受控交接](../../common/docs/unified-cold-launch.md#one-shot-desktop-exit-handoff)的新状态窗口实机退出、更新和重开验收。
    旧的启动失败和退出等待超时保持原判；后台与窗口未准备好前不请用户退出。
    原生 GPT-6.1 目录与透传隔离检查已通过；Desktop 刷新缓存期间的准备使用完整快照短锁。
@@ -354,7 +359,7 @@ Web 新搜索完成两次真实配对工具往返，但最终回答在 598.759 �
 
 2026-09-28 再核对了 [codex-grok-bridge 的固定提交](https://github.com/deximple/codex-grok-bridge/tree/d6ff3ee991a7360f227b80f065589ae5d7453b77)（MIT；仅研究设计，未复制代码）。当前 CLI 的隔离实验确认：空闲任务可卸载后以同一 UUID、另一 provider 恢复，并保留历史和权限；但所有者明确指出这条早已排除的转接路线无法满足 **Codex Desktop 原生显示执行过程** 的要求。已停止包装层实现，不能再把“UUID 相同”当作原生体验验收。后续只考虑由 Desktop 自己持有并显示任务与工具过程的入口；任何统一路由恢复仍需先通过原生 413、搜索/图片/语音辅助、WebSocket、权限和主窗口回退验收，不能凭隔离目录显示启用。
 
-当前 Desktop 26.924.2738.0 的普通新任务不提供逐任务 provider 选择，运行中的 0.158.0-alpha.2.1 App Server 也没有从主窗口接收此选择；[对应版本的配置加载器](https://github.com/openai/codex/blob/rust-v0.158.0-alpha.2.1/codex-rs/config/src/loader/mod.rs)禁止项目配置覆盖 provider/profile。因此单靠项目配置或另一个 App Server 为新任务绑定统一 provider，不能称为主窗口原生方案。统一 `openai_base_url` 候选若恢复，会影响官方原生流量。[当前版官方语音实现](https://raw.githubusercontent.com/openai/codex/rust-v0.158.0-alpha.2.1/codex-rs/core/src/realtime_conversation.rs#L1222-L1246)把 WebSocket 和 WebRTC call 当作两条独立路径；[两个覆盖字段](https://github.com/openai/codex/blob/rust-v0.158.0-alpha.2.1/codex-rs/config/src/config_toml.rs#L2832-L2856)都标为实验性。[参考项目](https://github.com/miuuyy/codex-chatgpt-web/blob/fa2d2c6c24926078b46eedb2186f69f2e8d548d7/docs/architecture.md#L262-L273)也将语音留在官方地址。本项目已为新的受管激活块分别固定两条官方语音地址，并验证精确撤回及旧块恢复；旧块缺任一保护时不再被视作语音安全。真实 Desktop 语音通话尚未验收，不能以普通文字回合代替。
+2026-09-28 核对的 Desktop 26.924.2738.0 普通新任务不提供逐任务 provider 选择，运行中的 0.158.0-alpha.2.1 App Server 也没有从主窗口接收此选择；[对应版本的配置加载器](https://github.com/openai/codex/blob/rust-v0.158.0-alpha.2.1/codex-rs/config/src/loader/mod.rs)禁止项目配置覆盖 provider/profile。因此单靠项目配置或另一个 App Server 为新任务绑定统一 provider，不能称为主窗口原生方案。统一 `openai_base_url` 候选若恢复，会影响官方原生流量。[当时版本的官方语音实现](https://raw.githubusercontent.com/openai/codex/rust-v0.158.0-alpha.2.1/codex-rs/core/src/realtime_conversation.rs#L1222-L1246)把 WebSocket 和 WebRTC call 当作两条独立路径；[两个覆盖字段](https://github.com/openai/codex/blob/rust-v0.158.0-alpha.2.1/codex-rs/config/src/config_toml.rs#L2832-L2856)都标为实验性。[参考项目](https://github.com/miuuyy/codex-chatgpt-web/blob/fa2d2c6c24926078b46eedb2186f69f2e8d548d7/docs/architecture.md#L262-L273)也将语音留在官方地址。本项目已为新的受管激活块分别固定两条官方语音地址，并验证精确撤回及旧块恢复；旧块缺任一保护时不再被视作语音安全。真实 Desktop 语音通话尚未验收，不能以普通文字回合代替。
 
 上下文窗口按实际选中的模型及端点逐项核实；当前 Web 预算与 Desktop 实测值的差别只在[项目记忆](native-web-experience.md#operational-rules)维护。来源不明时保留未验证状态，不用猜测值解决长上下文失败。
 [codex-chatgpt-web 的固定提交架构说明](https://github.com/miuuyy/codex-chatgpt-web/blob/fa2d2c6c24926078b46eedb2186f69f2e8d548d7/docs/architecture.md) 在这个具体缺口上区分 Instant 与其他档位的上下文预算，并在合并多个推理档位前检查预算一致；这是可借鉴的校验方式，不是本账号各网页型号的容量证据。本项目未复制其代码或数值。

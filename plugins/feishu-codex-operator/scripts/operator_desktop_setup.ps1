@@ -35,9 +35,9 @@ Import-Module (Join-Path $PSScriptRoot 'operator_installation.psm1') -Force -Dis
 
 function Show-OperatorInstallationNotice {
     @'
-初始化说明：新安装在当前用户桌面提供“ChatGPT 原生入口”和“ChatGPT 拓展模型 MM-DD 入口”；日期来自成功构建记录。同名未知快捷方式会保留并停止安装。
-已有“Codex拓展入口”安装按原归属记录维护，不自动改名。原生入口核对配置，切换路由时需先正常退出；两个入口不表示可同时运行两种模式。
-Codex 已运行时只打开现有窗口；已配置的 Web 后台或本地模型同步在 Codex 完全退出后的启动时准备。
+初始化说明：新安装只在当前用户桌面创建“ChatGPT 自定义启动”快捷方式。启动器提供“原生”和“拓展”两种启动模式；具体模型在 Codex 内选择。拓展未配置时显示未配置状态，不自动接入模型或启用路由。
+已有安装按原快捷方式归属和恢复记录维护，不自动改名、删除或补建。安装遇到同名未知快捷方式会保留原件并停止。
+已配置的独立拓展环境与原生环境分别维护窗口和聊天；匹配的运行实例可直接唤回。旧共享配置的启动方式仍按其原有退出、恢复和审批条件维护。
 原生任务栏固定项可能需要手动重新固定。不会修改应用程序本体、默认模型、审批或沙箱设置。
 安全卸载会按安装记录恢复入口、项目规则和 Hooks，遇到后续修改则停止并保留原件。
 请先执行 operator uninstall 预览，再执行 operator uninstall -Apply 完成恢复，最后在 Desktop 移除插件。
@@ -46,7 +46,9 @@ Codex 已运行时只打开现有窗口；已配置的 Web 后台或本地模型
 }
 
 function Install-OperatorDesktopEntry {
-    param([string]$ProjectRoot, [string]$StartupBundle, [switch]$EntryMigration, [switch]$NoShortcuts)
+    param([string]$ProjectRoot, [string]$StartupBundle, [switch]$EntryMigration, [switch]$NoShortcuts,
+        [switch]$UnifiedLauncher)
+    if ($UnifiedLauncher -and (-not $NoShortcuts -or $StartupBundle)) {throw 'unified_launcher_requires_fresh_isolated_setup'}
     $project = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\')
     $bundle = Join-Path $project '.codex/operator-desktop-entry'
     Assert-OperatorPlainPath $bundle
@@ -130,6 +132,7 @@ function Install-OperatorDesktopEntry {
         if (-not $native) { throw 'An existing Codex shortcut needs a reviewed ownership migration.' }
     }
     $configuration = @{schema_version=1; mode='native'}
+    if ($UnifiedLauncher) {$configuration.launch_selection='native_or_extension_v1'}
     if (-not $reactivate -and (Test-Path -LiteralPath $configurationPath)) {
         $configuration = Get-Content -LiteralPath $configurationPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
         if ($configuration.schema_version -ne 1 -or $configuration.mode -notin @('native','reviewed_startup')) { throw 'Desktop entry configuration changed.' }
@@ -163,6 +166,11 @@ function Install-OperatorDesktopEntry {
         $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
         if (-not (Test-Path -LiteralPath $compiler)) { throw 'Windows C# compiler is unavailable.' }
         $candidate = Join-Path $bundle ('candidate-' + [Guid]::NewGuid().ToString('N') + '.exe')
+        $buildSources=@{}
+        foreach ($name in @('operator_desktop_entry.cs','operator_desktop_entry.ps1','operator_mode_picker.cs')) {
+            $buildSources[$name]=Get-OperatorFingerprint (Join-Path $PSScriptRoot $name)
+            if ($buildSources[$name] -ceq 'absent') {throw 'unified_launcher_source_missing'}
+        }
         $icon = Join-Path $bundle 'Codex拓展入口.ico'
         if (-not (Test-Path -LiteralPath $icon)) {
             Add-Type -AssemblyName System.Drawing
@@ -170,17 +178,20 @@ function Install-OperatorDesktopEntry {
             $stream = [IO.File]::Open($icon,[IO.FileMode]::CreateNew)
             try { $nativeIcon.Save($stream) } finally { $stream.Dispose(); $nativeIcon.Dispose() }
         }
-        & $compiler /nologo /target:winexe /optimize+ /platform:anycpu /reference:System.Windows.Forms.dll "/win32icon:$icon" "/out:$candidate" (Join-Path $PSScriptRoot 'operator_desktop_entry.cs')
+        & $compiler /nologo /target:winexe /main:OperatorDesktopEntry /define:OPERATOR_DESKTOP_LAUNCHER /optimize+ /platform:anycpu /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll "/win32icon:$icon" "/out:$candidate" (Join-Path $PSScriptRoot 'operator_desktop_entry.cs') (Join-Path $PSScriptRoot 'operator_mode_picker.cs')
         if ($LASTEXITCODE -ne 0) { throw 'Desktop entry build failed.' }
+        foreach ($name in $buildSources.Keys) {
+            if ((Get-OperatorFingerprint (Join-Path $PSScriptRoot $name)) -cne $buildSources[$name]) {throw 'unified_launcher_source_changed'}
+        }
         Write-OperatorAtomicBytes $entry ([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'operator_desktop_entry.ps1')))
         $configuration.entry_script_sha256 = Get-OperatorFingerprint $entry
         Write-OperatorAtomicBytes $configurationPath ([Text.UTF8Encoding]::new($false).GetBytes(($configuration | ConvertTo-Json)))
         [IO.File]::Move($candidate,$executable,$true)
-        $sourceDigestInput = (Get-OperatorFingerprint (Join-Path $PSScriptRoot 'operator_desktop_entry.cs')) + "`n" +
-            $configuration.entry_script_sha256
+        $sourceDigestInput = $buildSources['operator_desktop_entry.cs'] + "`n" +
+            $configuration.entry_script_sha256 + "`n" + $buildSources['operator_mode_picker.cs']
         $build = @{schema_version=1; native_fallback='native-only-v1'; binary_sha256=(Get-OperatorFingerprint $executable);
                    entry_script_sha256=$configuration.entry_script_sha256; build_date=[DateTime]::Now.ToString('yyyy-MM-dd');
-                   shortcut_layout=$(if ($NoShortcuts) {'paired'} else {'legacy'});
+                   shortcut_layout=$(if ($UnifiedLauncher) {'single'} elseif ($NoShortcuts) {'paired'} else {'legacy'});
                    product_version=$pluginVersion; source_sha256=[Convert]::ToHexString(
                        [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($sourceDigestInput))).ToLowerInvariant()}
         Write-OperatorAtomicBytes (Join-Path $bundle 'launcher-manifest.json') ([Text.UTF8Encoding]::new($false).GetBytes(($build | ConvertTo-Json)))
@@ -233,6 +244,12 @@ function Install-OperatorDesktopExperience {
     $bundle = Join-Path $project '.codex/operator-desktop-entry'
     $pairRoot = Join-Path $project '.codex/operator-desktop-pair'
     $pairedBuild = Test-OperatorPairedBuild $project
+    $unifiedLauncher = -not (Test-Path -LiteralPath $bundle)
+    if ($pairedBuild) {
+        $savedBuild=Get-Content -LiteralPath (Join-Path $bundle 'launcher-manifest.json') -Raw -Encoding utf8 | ConvertFrom-Json
+        $unifiedLauncher=$savedBuild.shortcut_layout -ceq 'single'
+    }
+    if ($unifiedLauncher -and $StartupBundle) {throw 'unified_launcher_requires_fresh_isolated_setup'}
     if ((Test-Path -LiteralPath $bundle) -and -not (Test-Path -LiteralPath $pairRoot) -and -not $pairedBuild -and -not $PairOnly) {
         # Historical installations retain their exact names and ownership.
         return Install-OperatorDesktopEntry -ProjectRoot $project -StartupBundle $StartupBundle
@@ -241,7 +258,7 @@ function Install-OperatorDesktopExperience {
     if (-not $CodexHome) { $CodexHome=Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex' }
     Assert-OperatorDesktopPairEnvironment -ProjectRoot $project -CodexHome $CodexHome
     if (-not (Test-Path -LiteralPath $bundle)) {
-        Install-OperatorDesktopEntry -ProjectRoot $project -StartupBundle $StartupBundle -NoShortcuts | Out-Null
+        Install-OperatorDesktopEntry -ProjectRoot $project -StartupBundle $StartupBundle -NoShortcuts -UnifiedLauncher:$unifiedLauncher | Out-Null
     } elseif ($StartupBundle) {
         $current = Get-Content -LiteralPath (Join-Path $bundle 'desktop-entry.json') -Raw -Encoding utf8 | ConvertFrom-Json
         if ($current.mode -ne 'reviewed_startup' -or -not $current.startup_bundle -or
@@ -251,7 +268,7 @@ function Install-OperatorDesktopExperience {
     }
     if (Test-Path -LiteralPath (Join-Path $bundle 'native-only')) {
         Start-OperatorInstallation -ProjectRoot $project -LinkPaths @(Get-OperatorDesktopPaths -IncludeLegacy)
-        Install-OperatorDesktopEntry -ProjectRoot $project -StartupBundle $StartupBundle -NoShortcuts | Out-Null
+        Install-OperatorDesktopEntry -ProjectRoot $project -StartupBundle $StartupBundle -NoShortcuts -UnifiedLauncher:$unifiedLauncher | Out-Null
     }
     $pairArguments = Get-OperatorPairArguments $project $CodexHome
     return Install-OperatorDesktopPair @pairArguments
@@ -264,14 +281,20 @@ function Test-OperatorPairedBuild {
     if (-not (Test-Path -LiteralPath $manifest)) { return $false }
     if ((Get-Item -LiteralPath $manifest).Length -gt 16384) { throw 'Invalid entry build record.' }
     $built=Get-Content -LiteralPath $manifest -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
-    if ($built.ContainsKey('shortcut_layout') -and $built.shortcut_layout -notin @('paired','legacy')) {
+    if ($built.ContainsKey('shortcut_layout') -and $built.shortcut_layout -notin @('paired','single','legacy')) {
         throw 'Unknown desktop shortcut layout; preserved for review.'
     }
-    return $built['shortcut_layout'] -ceq 'paired'
+    return $built['shortcut_layout'] -cin @('paired','single')
 }
 
 function Assert-OperatorDesktopExperiencePreflight {
-    param([string]$ProjectRoot, [string]$CodexHome)
+    param([string]$ProjectRoot, [string]$CodexHome, [string]$StartupBundle)
+    if ($StartupBundle) {
+        $bundle=Join-Path $ProjectRoot '.codex/operator-desktop-entry'
+        if (-not (Test-Path -LiteralPath $bundle)) {throw 'unified_launcher_requires_fresh_isolated_setup'}
+        $build=Get-Content -LiteralPath (Join-Path $bundle 'launcher-manifest.json') -Raw -Encoding utf8 | ConvertFrom-Json
+        if ($build.shortcut_layout -ceq 'single') {throw 'unified_launcher_requires_fresh_isolated_setup'}
+    }
     if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot '.codex/operator-desktop-entry')) -or
         (Test-OperatorPairedBuild $ProjectRoot)) {
         Import-Module (Join-Path $PSScriptRoot 'operator_desktop_pair.psm1') -Force -DisableNameChecking

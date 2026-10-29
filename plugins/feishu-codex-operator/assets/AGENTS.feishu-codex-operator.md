@@ -1,7 +1,430 @@
 <!-- FEISHU_CODEX_OPERATOR_RULES_START -->
-## Feishu Operator runtime safety
+## Codex-Operator runtime safety
+
+These rules describe supported behavior and boundaries, not standing permission for a new user.
+Reuse the current user's explicit authorization within its recorded scope. Dated observations and
+historical choices never authorize deployment, task creation, model changes or message replay.
+Use the canonical `MODULES.md` for the document map and the current support matrix for open gates.
 
 ### Authority and ownership
+
+- `plugins/feishu-codex-operator` is the only canonical project source. The
+  project runtime under `.codex/feishu-codex-operator-runtime` and versioned
+  plugin-cache copies are installed outputs, never development authority.
+- The product/service is Codex-Operator; Channels (currently Feishu) and Models are its two functional areas. Models contains API Providers, Local Providers and Web Providers; ChatGPT Web belongs to Web Providers. Use `operator_core`,
+  `OperatorRuntime`, and `OperatorConfig` in core code. Plugin/skill IDs,
+  commands, Hooks, environment and runtime paths use one Operator naming surface,
+  without old aliases. Old installations require a stopped, explicit cutover.
+  Preserve all `wake lease` names, fields, and behavior.
+- Codex Desktop owns every selected business task: its conversation, context,
+  model, approvals, tools, files, plugins, execution, and final answer.
+- The Operator owns Feishu authentication, durable inbox/outbox state, stable
+  scope-to-task mappings, attachment transport, delivery, and local lifecycle.
+- The old Page/capability/claim route is permanently non-executable. The only
+  current Beeper is one fixed, minimal wake-up relay task; it owns no
+  business context, result, queue database, grant, claim, or callback.
+  Historical rows may be recognized only to prevent replay or migrate an
+  existing stable Responder binding. Never recreate or repair the old route.
+
+### Minimal Beeper routing
+
+- Bind each Feishu private chat, group, or topic scope to one exact Codex task
+  UUID. Never route by task title, project label, preview text, or display name.
+  One Codex task may be actively bound to only one Feishu scope.
+- Configure one exact Beeper task UUID. It must never be used as a Responder or
+  exposed as a `/init` candidate. Each newly admitted ordinary Feishu event
+  queues that Beeper with `gpt-5.6-luna` and `low` reasoning when
+  `CODEX_OPERATOR_BEEPER_MODEL` is absent or blank. Owner direction on
+  2026-09-21 keeps the fixed task's display name `Beeper` and selects only
+  Luna/low for online relay work. Do not select Spark, including live diagnostics;
+  the owner reports it retired. Retain historical Spark evidence and compatibility
+  code without activating it. First-time Channels onboarding must instead
+  ask users to choose local deterministic `beeper` or Luna/low before activation;
+  the current owner's Luna choice is not a universal default consent. Reuse a
+  saved explicit selection. Explain that local native integration still needs
+  verification; never silently switch the chosen mode or activate global routing.
+  Queue parameters and health describe requested settings, not actual execution.
+  The owner explicitly selected `gpt-6-luna`/low on 2026-10-29; preserve that
+  saved selection rather than falling through to the compatibility default.
+  During explicit setup, use the native task tool to select the chosen Luna/low for the
+  fixed Beeper and verify a new turn's model metadata; never change a Responder
+  or replay a business message to calibrate it.
+  These selections apply only to the fixed Beeper task, never the Responder.
+  Operator starts one loopback-only Responses API
+  listener only when `beeper` is selected and passes its provider/catalog
+  settings only to that Beeper queue. It never modifies global Codex config.
+  The local provider accepts only model `beeper`, an exact current relay envelope
+  with one public 32-hex request_id,
+  and exactly one model-facing `exec` custom tool; it deterministically emits the
+  four-line bootstrap without model weights or sampling. HTTP and stream retry
+  counts are zero. Protocol-external input returns the fixed approved identity declaration
+  as assistant text, never a tool call. Older messages cannot supply the current
+  relay envelope. Provider failure, queue rejection, timeout, crash, or any
+  uncertain local outcome is terminal and never falls back to another model.
+  Spark always receives concise, structured English Operator instructions,
+  including nested callback guidance, attachment labels, and attachment-only
+  placeholders. Preserve the Feishu user's original text without translation.
+  JSON-escape non-ASCII attachment metadata losslessly; never rename real paths.
+  Keep the Chinese control template selectable for Luna only with
+  `CODEX_OPERATOR_BEEPER_PROMPT_LANGUAGE=zh-cn`; Spark ignores that preference.
+  Prompt language never permits a second attempt after an accepted or uncertain queue.
+  The compact Beeper message contains only public request_id and code-mode
+  instructions. Operator stores the exact Responder UUID/host, current user
+  request, attachment paths, and minimal callback route locally until retrieval.
+- After a successful queue acceptance, the Operator keeps one process-local
+  30-minute wake lease for the fixed Beeper, shared across Feishu scopes. Only
+  an attributed Responder turn or a Final Callback refreshes it. An inactive or
+  expired lease may immediately send at most one Beeper wake-up signal for that
+  accepted request. An active lease initially suppresses the signal; if no
+  downstream evidence appears within 30 seconds, invalidate the assumption and
+  send the same at-most-once wake-up signal. Concurrent requests coalesce wake
+  signals. This never queues or replays a turn. The signal is transported by
+  the bare `codex://threads/<exact Beeper UUID>` URI, which contains no query,
+  payload, Responder UUID, or request identifier. Never send a wake-up signal
+  to, resume, or otherwise take control of a Responder. `Wake-up signal` is the
+  application action and deep link is its current implementation. Opening it
+  may navigate Desktop to Beeper, not prove execution. Do not model it as a
+  POCSAG preamble, synchronization codeword, or address codeword.
+- The Beeper calls `mcp__codex_app__send_message_to_thread` exactly once for the
+  exact mapped Responder, omitting model and thinking overrides by default.
+  An explicit authorized /model choice is a narrow exception: validate the exact
+  local task and official direct catalog, save against that binding, and carry
+  model/thinking only on its next new business send. Consume before queueing;
+  binding changes clear the choice, uncertainty never restores or replays it.
+  Beeper/global settings stay unchanged. /model readback reports native settings,
+  not execution success; App Server remains read-only. Direct-catalog validation
+  rejects root openai_base_url and inherited OPENAI_BASE_URL overrides. Active
+  task catalogs explicitly include all providers while retaining exact identity,
+  source, archive and pagination boundaries; a miss never creates a replacement.
+  One exec first
+  calls the separate `feishu_operator_relay.take_relay(request_id)` MCP, then
+  directly evaluates and invokes only its Operator-generated structuredContent.code
+  in the same exec, without model resampling, program/payload printing, rewriting,
+  or a separate send call. The four-line bootstrap records started before retrieval.
+  The MCP validates the dispatch and embeds it solely as escaped JSON data in a
+  fixed async program. That program owns the 2000 ms guard, null-input handling,
+  unique Desktop send-tool resolution, and one unchanged dispatch. Missing or
+  ambiguous send tools stop without sending, after consumption; never replay.
+  Never evaluate arbitrary tool text or user-provided code through this route.
+  Retrieval commits a no-replay boundary and clears the input before returning;
+  duplicate, unknown, captured, or closed requests return no dispatch. This is
+  local dispatch bookkeeping, not the retired claim route or authentication.
+  It does not intercept native sends or guarantee exactly-once business execution.
+  Retrieval errors or elapsed time over 2000 ms stop without sending or retrying.
+  This timing guard is not a guarantee about external scheduling latency.
+  Code-mode tool availability and live timing must pass before deployment.
+  The Beeper never
+  performs the business task, reads task state or history, submits a Final
+  Callback or retries an uncertain send. The owner-granted user-task registration
+  exception below is a separate management operation, never a business relay.
+- Resolve the CLI from the verified current official Desktop installation or an
+  explicit configured executable. The legacy `%LOCALAPPDATA%\OpenAI\Codex\bin`
+  location is not proof of the current Windows package. Check identity/version;
+  never use a PATH-selected CLI or hardcode a user name or version hash.
+- At startup or when the adaptive cadence is due, the Operator may start a short-lived stdio App Server
+  solely to call `account/rateLimits/read`. Cache the response account-wide and
+  by returned `limitId`; locate the Spark-specific bucket by its exact returned
+  `limitName`, never by a hardcoded opaque `limitId`. Never query on every
+  message while ample quota remains. Use the tighter of the account-wide and
+  Spark remaining percentages: refresh after 20 messages or 30 minutes above
+  50%, after 10 messages or 15 minutes from 20% through 50%, after 3 messages or
+  5 minutes above 5% and below 20%, and on every message at 5% or below. Startup
+  primes the cache. Refresh I/O runs outside the cache lock and concurrent
+  refreshes coalesce. Above 5% with known percentages and no reached limit,
+  due reads run in the background; low/unknown-percentage or reached-limit
+  snapshots retain a pre-dispatch read. An unavailable snapshot remains fail-open.
+- Historical Spark compatibility only (not a current model selection option):
+  if Spark was explicitly selected and a fresh cache says its bucket is
+  exhausted, queue Beeper once with `gpt-5.6-luna` and `low` reasoning instead.
+  If an explicit Spark queue attempt returns a proven nonzero usage-limit or
+  rate-limit rejection, refresh the cache and may make exactly one same-event
+  Luna/low queue attempt. This is the only automatic CLI fallback; never fall
+  back after timeout, crash, uncertain outcome, an accepted queue, a Luna
+  rejection, or any local `beeper` outcome. Beeper still omits model and
+  thinking when it sends to the Responder unless that next new message has the
+  explicit /model choice described above. Current owner-selected online work
+  uses blank/default or explicit Luna/low only, without fallback to Spark or
+  the local provider. Old Spark override fixtures remain historical evidence;
+  they do not authorize a new live Spark diagnostic.
+- A failed quota read keeps the last snapshot only as stale diagnostics and must
+  not block dispatch. Only a fresh server-classified reached limit may stop a
+  pre-dispatch request; then do not queue or send the Beeper wake-up signal. Never
+  cancel or replay an accepted queue because of a later quota observation.
+- During admitted-event preparation and while its callback route is open,
+  the Operator may keep one request-scoped
+  stdio App Server child for the exact mapped Responder. It may call only
+  `thread/read(includeTurns=false)` and `thread/turns/list` with `limit=20`,
+  descending order, and `itemsView=notLoaded`. Retain only task/turn IDs,
+  activity/status, `startedAt`, and `completedAt`. Reject item content and
+  treat multiple unseen turns as ambiguous. This observation is routing-time
+  lifecycle metadata, never answer transport, authentication, or attestation.
+  Baseline preparation may overlap attachment preparation but must be sealed
+  before queueing, within a total two-second budget. A late baseline is discarded.
+  Metadata polling and child cleanup never block callback delivery. Cached running
+  evidence expires after five seconds without a successful read; stable terminal
+  evidence is retained. Poll every 0.5 seconds while unknown, every two seconds
+  while running, and stop querying after stable terminal evidence.
+  `itemsView=notLoaded` is a content projection requested by Operator, not a
+  Desktop foreground, residency, wake-state, or task-load signal.
+- Apart from the account-only quota lane, that content-free lifecycle lane,
+  and `/init` catalog lane, the ordinary route never calls `resume`, uses App
+  Server task methods, reads a task transcript, creates a task, or injects
+  Operator history, summaries, RAG, preview text, or routing policy.
+- A zero queue exit means only that the request was accepted. A nonzero exit is
+  a proven pre-dispatch failure and permits only the bounded Spark-to-Luna
+  fallback above. Timeout, crash, or uncertainty is terminal and is never
+  automatically replayed.
+
+### Models, entry and recovery contracts
+
+- The local `beeper` provider and private model catalog install with the
+  Operator runtime. The catalog uses `visibility: list`, but visibility alone
+  does not register a provider or change an existing Desktop task's default.
+  Desktop dropdown/default integration remains pending supported verification;
+  never replace native catalog entries/provider or send Spark/Luna to a third party.
+
+- The optional Python Responses router may preserve native traffic to its fixed
+  native backend and append explicit external model registrations. It uses no
+  LiteLLM SDK or Chat Completions conversion. Its separate, reversible entry-point
+  activation is never an automatic install step. Persistent lifecycle, native
+  auxiliary-tool compatibility and live Desktop picker/default verification remain
+  required before global activation; isolated tests alone are insufficient.
+
+- Owner-invoked emergency native-route recovery may remove only the recognized
+  leading Operator loopback configuration block without depending on a running
+  router, current token or route journal. This is explicit route disablement,
+  never reconstruction of missing installation ownership or whole-file rollback.
+  Preserve unrelated bytes, existing commented configuration, credentials and
+  history; retain private original bytes before each change and recheck snapshots.
+  The native-route-only marker blocks later global activation in updated code.
+  It must not block read-only Web startup status, cancellation of a deactivated
+  entry intent, or the exact request-free router stop needed for uninstall.
+  A verified launcher may select native mode; changed/unknown launchers stay
+  untouched and remain a reported limitation, without trapping known config recovery.
+  Preview is read-only. Recovery never stops services, replays requests, edits
+  tokens or claims that old/unverified entry code or a live Desktop has refreshed.
+
+- Before owner-requested persistent global routing, automatically prepare and
+  verify the current user's recovery shortcut and stable local recovery files.
+  This is part of the authorized routing setup, not an extra approval step.
+  Preserve shortcut ownership and later edits; missing owned links may be rebuilt.
+  Failure stops global activation. Read-only work and isolated tests never install
+  a recovery shortcut on the real desktop; use a disposable desktop for tests.
+
+- Registry v2 may explicitly adapt external Responses tools using per-endpoint
+  capabilities. Preserve v1/null passthrough, native traffic and local Beeper.
+
+- An explicit upstream_response_mode=json endpoint contract may select one
+  non-streaming upstream request before dispatch and serialize its fully validated
+  successful JSON response as downstream SSE/WebSocket. Preserve exact text and
+  tool identities, bounded reads, cancellation and rejection before call release.
+  This buffers generation; never repair an observed stream, retry a failed request,
+  infer the mode from a model name or present it as first-token timing.
+
+- Before emitting JSON-derived events, validate each serialized event JSON against
+  16 MiB and their combined UTF-8 bytes against 64 MiB, including repeated snapshots
+  and metadata, using actual sequence numbers. Transport framing is outside this
+  JSON-byte count. Reject before any event or call release; never truncate to fit.
+  Text parts use the event bound; tool arguments retain their separate 2 MiB bound.
+
+- An explicit completed_output_policy=require_message_or_tool endpoint contract
+  may reject completed outputs lacking a validated call or nonempty assistant
+  text/refusal. Preserve the allow_empty default, all text bytes and native/v1/null
+  passthrough. Reasoning-only output never supplies a call or answer; this check
+  cannot prove semantic correctness, effective reasoning settings or Desktop
+  acceptance, and never triggers repair or retry.
+
+- The adapter only converts protocol data; Desktop retains tool execution and
+  permissions. Preserve tool source and call identities; reject unknown tools,
+  unsupported grammar, opaque history and incomplete calls without repair or
+  retry. Release executable calls only after a consistent successful terminal.
+  Compare observed streamed text parts with their terminal snapshots before
+  releasing buffered tools; preserve whitespace and reject contradictions without
+  trimming, reconstruction or retry. Verification reports retain CLI and Desktop
+  failures separately and together, distinguishing failed, missing and stale gates.
+
+- Input modality declarations never authorize input-only content parts in a
+  terminal assistant message. Reject those parts before returning any tool call,
+  including plain JSON responses; preserve supported legacy text and native/v1/null.
+  Content parts follow their owning message or reasoning item; reasoning_text
+  parts remain distinct from output_text and refusal, with no content conversion.
+  Preserve absent/null/empty reasoning content distinctly. Validate textual reasoning
+  collections in explicit history and terminal output before dispatch or call release;
+  reject malformed collections and explicit unfinished status without repair or retry.
+  A null snapshot cannot erase observed streamed text. Legacy reasoning text stays
+  its original representation and never supplies an answer or an inferred call.
+
+- New isolated CLI cases may explicitly select marker_line_v1 for bounded LF/CRLF
+  lines around the synthetic report only. Preserve raw text, exact comparison,
+  tool/file checks and per-case policy; never reclassify old failures or infer
+  Desktop acceptance from this formatting compatibility.
+
+- Current Codex named function results may legitimately omit call_id. A dated,
+  explicit codec may encode only the individually registered
+  codex_app.send_message_to_thread and codex_app.create_thread sources as labelled
+  user-message JSON, preserving the entire original object,
+  text parts, absent/null identities and order. This is an explicit role/format
+  representation, never a reconstructed call, authentication, system/developer
+  instruction, new tool permission, XML extraction, execution or retry.
+  Ordinary paired calls/results remain strict; opaque/nontext named results and
+  unknown sources remain rejected. Endpoint and live Desktop checks are separate.
+  Explicit text-only result serialization preserves every part and boundary;
+  never flatten images or drop content. Reasoning-specific tool-choice profiles
+  are checked before sending. Parallel permission may be narrowed to a supported
+  single call, never widened beyond the caller's constraint.
+
+- An explicitly selected additional_tools_v1 input codec may compile the dated
+  Codex developer AdditionalTools envelope into the same request tool map.
+  Retain its complete source object and input index in request memory; never
+  parse ordinary message text into declarations, synthesize a privileged prompt,
+  infer custom-tool registrations or bypass deferred loading and tool choice.
+  Paired result identities must match their original calls before alias mapping.
+  Unfinished historical calls and unsuccessful tool-search outputs are rejected;
+  they never enable tools or cause retries. This codec is not a general Responses
+  Lite implementation or hosted-search executor; native/v1/null routes stay opaque.
+
+- An explicitly selected standard tool mode advertises no freeform patch tool
+  unless that custom tool is registered. Preserve code-mode, explicitly registered
+  patch tools, native/v1/null and local Beeper catalog behavior. Isolated CLI
+  evaluation follows the registered tool mode and records it; direct function
+  evidence never establishes exec wrapping or its source-copying fidelity.
+
+- Synthetic source probes also follow the selected tool mode and retain exact
+  argument and result checks without execution. Standard function success never
+  establishes custom exec fidelity. Isolated CLI cancellation may trigger at the
+  local upstream body-write boundary; success requires both a cancelled dispatch
+  and a cancelled router outcome, never just inactivity. This cannot attest to
+  provider receipt, stopped generation or billing, and does not reclassify old cases.
+
+- Isolated terminal fixtures may explicitly select PowerShell or Bash and admit
+  one exact native read-only command. Bind the requested executable digest,
+  scope any PATH adjustment to the disposable child, and preserve command,
+  argument, file-byte and native approval checks. A policy rejection remains
+  a failed execution case; never bypass it, retry, or call it API text corruption.
+  Console formatting, requested shell identity and actual process identity are
+  separate evidence. These fixtures do not set Desktop's terminal, prove its
+  selected shell, authorize arbitrary commands or establish global readiness.
+
+- A Windows terminal case may explicitly select the unelevated native backend
+  for its disposable CLI child while retaining read-only/never approval settings.
+  This is no automatic fallback or host setting change and performs no UAC setup.
+  Keep the CLI home private; only new synthetic work directories use normal
+  permission inheritance. PowerShell may read bytes as decimal lines to avoid
+  console encoding dependencies; this never repairs text or proves Unicode
+  console output. Preserve policy, token-setup, process and byte-mismatch failures
+  separately, and validate the native exit status before accepting a result.
+
+- JSON-encoded historical function arguments retain their 2 MiB bound after
+  custom-input or tool-search serialization. Reject expansion before dispatch;
+  never truncate, normalize source or replay to fit.
+
+- Synthetic provider probes and isolated CLI execution are distinct evidence;
+  neither satisfies live Desktop/global-entry acceptance by itself.
+  Desktop verification is a separate read-only review of private dated evidence.
+  Bind model identity, endpoint contract, adapter/verifier and CLI/Desktop versions;
+  reject stale, ambiguous or altered evidence and keep prior failures visible.
+  Reviewed assertions are not attestation. Guided cases cannot establish fresh-context
+  acceptance; an assistant claim cannot prove approval or denial. Verification reports
+  never modify catalogs, permissions, services or routing, and never imply global readiness.
+
+- A separate explicit stopped label transaction may update only one selected adapted
+  model display name after re-reading its current evidence. It must reserve the inactive
+  router port, verify the exact Operator stopped and callbacks empty,
+  require the preview registry digest, retain an original backup and write atomically.
+  It never starts services, refreshes the live UI, broadens capabilities or activates routing.
+
+- Private capability profiles bind the explicit endpoint/model contract and
+  adapter revision to dated case outcomes; they are not live attestation.
+  Preflight/readiness perform no inference or configuration mutation.
+  Isolated CLI evaluation keeps approval checks and zero retries. A read-only
+  patch preview never proves actual file-write approval. Keep profiles and
+  receipts private. Timing records contain fixed stages/counts only.
+  Router restart is explicit, deactivated and request-free; never replay.
+
+- Owner-selected LM Studio startup discovery may append all listed chat models
+  under one explicit private Responses policy. Metadata is not capability or
+  Desktop acceptance. Exclude embeddings and known dedicated auxiliary draft
+  architectures such as gemma4-assistant. Do not infer auxiliary status from
+  small size, a display name or a main model having speculative decoding enabled.
+  Report already-registered auxiliary rows for separate stopped cleanup; discovery
+  never deletes them. Preserve existing rows and defaults,
+  mark new rows unverified, and commit the validated batch atomically only
+  with the owned entry deactivated, exact router/Operator
+  stopped and callbacks empty. Never load, download, infer, transfer receipts,
+  delete missing models or change approvals during discovery. First initialization
+  must explain current-user Desktop/Start menu shortcut changes, original-file
+  retention, taskbar limitations and the safe uninstall sequence before writing.
+  Fresh installs create one `ChatGPT 自定义启动` Desktop shortcut for the unified
+  launcher with native and extension mode buttons. An unconfigured extension
+  stays unavailable; installation never enables routing. Record the single layout
+  and full build date in the ownership journal. Historical pairs and reviewed
+  legacy single-shortcut layouts retain their exact separate restoration chains,
+  as defined in `shared/docs/installation-and-removal.md`.
+  They require the default native home. Legacy journals and the internal launcher
+  retain `Codex拓展入口`; changed builds use a private compiled candidate and exact
+  digest-bound preview. Legacy-to-pair migration preserves all prior receipts,
+  renames the Desktop shortcut in place without changing its file identity and
+  retains the Start menu entity. Its independent origin/build chain never creates
+  first-install runtime ownership. Verify old restoration materials and current
+  workflow before writes; retain failed transactions without retry. Restore the
+  pair before the older migration, keeping fixed launchers/helpers for pins.
+
+- Explicit unused prepared-plan withdrawal may archive only the exact untouched
+  prepared journal and full original directory with native protection intact.
+  Bind current native config/cache/entry identities and preserve later user
+  settings; freeze the protection marker and current snapshots through the
+  witnessed move. Armed/attempted/failed plans and partial archives remain
+  terminal for review. This changes no routing, services or Desktop state and
+  does not attest to a running Desktop's cached route or authorize plan replay.
+  Isolated pair tests do not establish real Desktop or mode-switch acceptance.
+  Never impersonate the official executable or infer a native route from a name.
+  Existing journaled names remain valid only for reviewed migration and recovery.
+
+- An owner-requested initialization may then configure those entry points without
+  another prompt. It does not activate global routing or infer a local-model
+  policy. Preserve a journal before changing integrations; repeated upgrades
+  retain the first original, and restoration verifies current fingerprints,
+  backups and exact paths before changing files. Later user edits, linked paths
+  or ambiguous ownership stop recovery without overwriting them.
+
+- Repeated entry setup also checks recorded launcher and entry-script fingerprints
+  before replacement or a new ownership generation. Changed managed shortcuts,
+  incomplete builds and invalid records stop setup without overwriting them.
+
+- Safe uninstall first detaches the exact owned request-free router and callback
+  registration, then restores managed entry/Hook/rule files and archives runtime
+  data. Keep a standalone native launcher for otherwise unobservable taskbar pins.
+  Preserve task history, model weights, credentials, unrelated settings and data.
+  Do not claim that removing the Desktop plugin automatically runs this recovery;
+  complete project recovery before plugin removal. Legacy installations require
+  separately reviewed ownership evidence, never a fabricated first-install record.
+
+- Desktop closure is not a policy prerequisite for model registry edits,
+  including discovery, auxiliary cleanup and display-name updates. Preserve
+  the applicable backup, digest, atomic-write and service lifecycle checks.
+  Any remaining restart or refresh requirement must be established from the
+  implementation and observed behavior, not inferred from this project rule.
+
+- An explicit registry reload may publish one validated, digest-bound in-memory
+  registry while Desktop and the router remain running. It does not authorize
+  registry-file edits, model discovery, service control or permission changes.
+  Use no polling or per-request file checks; bound reads to 1 MiB off the event
+  loop and changed-version attempts to one per 30 seconds. Same-version requests
+  are no-ops without disk I/O; concurrent, failed or uncertain attempts never retry.
+  Existing requests and entire WebSocket connections retain their original
+  registry snapshots. New requests see the new registry; Desktop catalog refresh
+  remains separate evidence. Initial deployment into an older router still
+  requires an explicit request-free router restart.
+
+- Native Responses HTTP wire and decompressed input are bounded to 64 MiB.
+  External/Beeper HTTP input, native auxiliary input and existing WebSocket
+  limits remain 16 MiB. Preserve native bytes and encoding headers; never
+  truncate input, remove attachments or replay a failed request to fit a bound.
+  Local HTTP size rejection reports 413 with a fixed code, scope and limit;
+  preserve upstream 413 responses distinctly. These are transport limits,
+  not model context allowances or guarantees of upstream acceptance.
+
+### Managed Web and legacy lifecycle contracts
 
 - Managed Web terminal 408/409/429/5xx causes use a non-retrying HTTP 400
   envelope with the original cause_http_status, fixed reason and partial-tool
@@ -91,7 +514,8 @@
 
 
 - Dated Web model catalogs preserve exact generation and effort selections. GPT-5.6
-  and GPT-6 regular entries expose only observed Instant/Medium/High/Extra high;
+  regular entries retain observed Instant/Medium/High/Extra high; the explicit
+  GPT-6 ordinary entry admits only the separately observed Medium selection;
   Pro is a separate entry whose fixed native max means the Web Pro position,
   never API effort equivalence. Validate the selected radio, visible label,
   range and explicit generation header before dispatch; Latest alone is not
@@ -206,384 +630,6 @@
   deadlines, failed continuations, service stop and unverified states still
   close the worker. Never restart it automatically, infer upstream inference or
   billing cessation, change permissions or turn an interrupted answer into success.
-- `plugins/feishu-codex-operator` is the only canonical project source. The
-  project runtime under `.codex/feishu-codex-operator-runtime` and versioned
-  plugin-cache copies are installed outputs, never development authority.
-- The product/service is Codex-Operator; Channels (currently Feishu) and Models are its two functional areas. Models contains API Providers, Local Providers and Web Providers; ChatGPT Web belongs to Web Providers. Use `operator_core`,
-  `OperatorRuntime`, and `OperatorConfig` in core code. Plugin/skill IDs,
-  commands, Hooks, environment and runtime paths use one Operator naming surface,
-  without old aliases. Old installations require a stopped, explicit cutover.
-  Preserve all `wake lease` names, fields, and behavior.
-- Codex Desktop owns every selected business task: its conversation, context,
-  model, approvals, tools, files, plugins, execution, and final answer.
-- The Operator owns Feishu authentication, durable inbox/outbox state, stable
-  scope-to-task mappings, attachment transport, delivery, and local lifecycle.
-- The old Page/capability/claim route is permanently non-executable. The only
-  current Beeper is one fixed, minimal wake-up relay task; it owns no
-  business context, result, queue database, grant, claim, or callback.
-  Historical rows may be recognized only to prevent replay or migrate an
-  existing stable Responder binding. Never recreate or repair the old route.
-
-### Minimal Beeper routing
-
-- Bind each Feishu private chat, group, or topic scope to one exact Codex task
-  UUID. Never route by task title, project label, preview text, or display name.
-  One Codex task may be actively bound to only one Feishu scope.
-- Configure one exact Beeper task UUID. It must never be used as a Responder or
-  exposed as a `/init` candidate. Each newly admitted ordinary Feishu event
-  queues that Beeper with `gpt-5.6-luna` and `low` reasoning when
-  `CODEX_OPERATOR_BEEPER_MODEL` is absent or blank. Owner direction on
-  2026-09-21 keeps the fixed task's display name `Beeper` and selects only
-  Luna/low for online relay work. Do not select Spark, including live diagnostics;
-  the owner reports it retired. Retain historical Spark evidence and compatibility
-  code without activating it. First-time Channels onboarding must instead
-  ask users to choose local deterministic `beeper` or Luna/low before activation;
-  the current owner's Luna choice is not a universal default consent. Reuse a
-  saved explicit selection. Explain that local native integration still needs
-  verification; never silently switch the chosen mode or activate global routing.
-  Queue parameters and health describe requested settings, not actual execution.
-  During explicit setup, use the native task tool to select Luna/low for the
-  fixed Beeper and verify a new turn's model metadata; never change a Responder
-  or replay a business message to calibrate it.
-  These selections apply only to the fixed Beeper task, never the Responder.
-  The local `beeper` provider and private model catalog install with the
-  Operator runtime. The catalog uses `visibility: list`, but visibility alone
-  does not register a provider or change an existing Desktop task's default.
-  Desktop dropdown/default integration remains pending supported verification;
-  never replace native catalog entries/provider or send Spark/Luna to a third party.
-  The optional Python Responses router may preserve native traffic to its fixed
-  native backend and append explicit external model registrations. It uses no
-  LiteLLM SDK or Chat Completions conversion. Its separate, reversible entry-point
-  activation is never an automatic install step. Persistent lifecycle, native
-  auxiliary-tool compatibility and live Desktop picker/default verification remain
-  required before global activation; isolated tests alone are insufficient.
-  Owner-invoked emergency native-route recovery may remove only the recognized
-  leading Operator loopback configuration block without depending on a running
-  router, current token or route journal. This is explicit route disablement,
-  never reconstruction of missing installation ownership or whole-file rollback.
-  Preserve unrelated bytes, existing commented configuration, credentials and
-  history; retain private original bytes before each change and recheck snapshots.
-  The native-route-only marker blocks later global activation in updated code.
-  It must not block read-only Web startup status, cancellation of a deactivated
-  entry intent, or the exact request-free router stop needed for uninstall.
-  A verified launcher may select native mode; changed/unknown launchers stay
-  untouched and remain a reported limitation, without trapping known config recovery.
-  Preview is read-only. Recovery never stops services, replays requests, edits
-  tokens or claims that old/unverified entry code or a live Desktop has refreshed.
-  Before owner-requested persistent global routing, automatically prepare and
-  verify the current user's recovery shortcut and stable local recovery files.
-  This is part of the authorized routing setup, not an extra approval step.
-  Preserve shortcut ownership and later edits; missing owned links may be rebuilt.
-  Failure stops global activation. Read-only work and isolated tests never install
-  a recovery shortcut on the real desktop; use a disposable desktop for tests.
-  Registry v2 may explicitly adapt external Responses tools using per-endpoint
-  capabilities. Preserve v1/null passthrough, native traffic and local Beeper.
-  An explicit upstream_response_mode=json endpoint contract may select one
-  non-streaming upstream request before dispatch and serialize its fully validated
-  successful JSON response as downstream SSE/WebSocket. Preserve exact text and
-  tool identities, bounded reads, cancellation and rejection before call release.
-  This buffers generation; never repair an observed stream, retry a failed request,
-  infer the mode from a model name or present it as first-token timing.
-  Before emitting JSON-derived events, validate each serialized event JSON against
-  16 MiB and their combined UTF-8 bytes against 64 MiB, including repeated snapshots
-  and metadata, using actual sequence numbers. Transport framing is outside this
-  JSON-byte count. Reject before any event or call release; never truncate to fit.
-  Text parts use the event bound; tool arguments retain their separate 2 MiB bound.
-  An explicit completed_output_policy=require_message_or_tool endpoint contract
-  may reject completed outputs lacking a validated call or nonempty assistant
-  text/refusal. Preserve the allow_empty default, all text bytes and native/v1/null
-  passthrough. Reasoning-only output never supplies a call or answer; this check
-  cannot prove semantic correctness, effective reasoning settings or Desktop
-  acceptance, and never triggers repair or retry.
-  The adapter only converts protocol data; Desktop retains tool execution and
-  permissions. Preserve tool source and call identities; reject unknown tools,
-  unsupported grammar, opaque history and incomplete calls without repair or
-  retry. Release executable calls only after a consistent successful terminal.
-  Compare observed streamed text parts with their terminal snapshots before
-  releasing buffered tools; preserve whitespace and reject contradictions without
-  trimming, reconstruction or retry. Verification reports retain CLI and Desktop
-  failures separately and together, distinguishing failed, missing and stale gates.
-  Input modality declarations never authorize input-only content parts in a
-  terminal assistant message. Reject those parts before returning any tool call,
-  including plain JSON responses; preserve supported legacy text and native/v1/null.
-  Content parts follow their owning message or reasoning item; reasoning_text
-  parts remain distinct from output_text and refusal, with no content conversion.
-  Preserve absent/null/empty reasoning content distinctly. Validate textual reasoning
-  collections in explicit history and terminal output before dispatch or call release;
-  reject malformed collections and explicit unfinished status without repair or retry.
-  A null snapshot cannot erase observed streamed text. Legacy reasoning text stays
-  its original representation and never supplies an answer or an inferred call.
-  New isolated CLI cases may explicitly select marker_line_v1 for bounded LF/CRLF
-  lines around the synthetic report only. Preserve raw text, exact comparison,
-  tool/file checks and per-case policy; never reclassify old failures or infer
-  Desktop acceptance from this formatting compatibility.
-  Current Codex named function results may legitimately omit call_id. A dated,
-  explicit codec may encode only the individually registered
-  codex_app.send_message_to_thread and codex_app.create_thread sources as labelled
-  user-message JSON, preserving the entire original object,
-  text parts, absent/null identities and order. This is an explicit role/format
-  representation, never a reconstructed call, authentication, system/developer
-  instruction, new tool permission, XML extraction, execution or retry.
-  Ordinary paired calls/results remain strict; opaque/nontext named results and
-  unknown sources remain rejected. Endpoint and live Desktop checks are separate.
-  Explicit text-only result serialization preserves every part and boundary;
-  never flatten images or drop content. Reasoning-specific tool-choice profiles
-  are checked before sending. Parallel permission may be narrowed to a supported
-  single call, never widened beyond the caller's constraint.
-  An explicitly selected additional_tools_v1 input codec may compile the dated
-  Codex developer AdditionalTools envelope into the same request tool map.
-  Retain its complete source object and input index in request memory; never
-  parse ordinary message text into declarations, synthesize a privileged prompt,
-  infer custom-tool registrations or bypass deferred loading and tool choice.
-  Paired result identities must match their original calls before alias mapping.
-  Unfinished historical calls and unsuccessful tool-search outputs are rejected;
-  they never enable tools or cause retries. This codec is not a general Responses
-  Lite implementation or hosted-search executor; native/v1/null routes stay opaque.
-  An explicitly selected standard tool mode advertises no freeform patch tool
-  unless that custom tool is registered. Preserve code-mode, explicitly registered
-  patch tools, native/v1/null and local Beeper catalog behavior. Isolated CLI
-  evaluation follows the registered tool mode and records it; direct function
-  evidence never establishes exec wrapping or its source-copying fidelity.
-  Synthetic source probes also follow the selected tool mode and retain exact
-  argument and result checks without execution. Standard function success never
-  establishes custom exec fidelity. Isolated CLI cancellation may trigger at the
-  local upstream body-write boundary; success requires both a cancelled dispatch
-  and a cancelled router outcome, never just inactivity. This cannot attest to
-  provider receipt, stopped generation or billing, and does not reclassify old cases.
-  Isolated terminal fixtures may explicitly select PowerShell or Bash and admit
-  one exact native read-only command. Bind the requested executable digest,
-  scope any PATH adjustment to the disposable child, and preserve command,
-  argument, file-byte and native approval checks. A policy rejection remains
-  a failed execution case; never bypass it, retry, or call it API text corruption.
-  Console formatting, requested shell identity and actual process identity are
-  separate evidence. These fixtures do not set Desktop's terminal, prove its
-  selected shell, authorize arbitrary commands or establish global readiness.
-  A Windows terminal case may explicitly select the unelevated native backend
-  for its disposable CLI child while retaining read-only/never approval settings.
-  This is no automatic fallback or host setting change and performs no UAC setup.
-  Keep the CLI home private; only new synthetic work directories use normal
-  permission inheritance. PowerShell may read bytes as decimal lines to avoid
-  console encoding dependencies; this never repairs text or proves Unicode
-  console output. Preserve policy, token-setup, process and byte-mismatch failures
-  separately, and validate the native exit status before accepting a result.
-  JSON-encoded historical function arguments retain their 2 MiB bound after
-  custom-input or tool-search serialization. Reject expansion before dispatch;
-  never truncate, normalize source or replay to fit.
-  Synthetic provider probes and isolated CLI execution are distinct evidence;
-  neither satisfies live Desktop/global-entry acceptance by itself.
-  Desktop verification is a separate read-only review of private dated evidence.
-  Bind model identity, endpoint contract, adapter/verifier and CLI/Desktop versions;
-  reject stale, ambiguous or altered evidence and keep prior failures visible.
-  Reviewed assertions are not attestation. Guided cases cannot establish fresh-context
-  acceptance; an assistant claim cannot prove approval or denial. Verification reports
-  never modify catalogs, permissions, services or routing, and never imply global readiness.
-  A separate explicit stopped label transaction may update only one selected adapted
-  model display name after re-reading its current evidence. It must reserve the inactive
-  router port, verify the exact Operator stopped and callbacks empty,
-  require the preview registry digest, retain an original backup and write atomically.
-  It never starts services, refreshes the live UI, broadens capabilities or activates routing.
-  Private capability profiles bind the explicit endpoint/model contract and
-  adapter revision to dated case outcomes; they are not live attestation.
-  Preflight/readiness perform no inference or configuration mutation.
-  Isolated CLI evaluation keeps approval checks and zero retries. A read-only
-  patch preview never proves actual file-write approval. Keep profiles and
-  receipts private. Timing records contain fixed stages/counts only.
-  Router restart is explicit, deactivated and request-free; never replay.
-  Owner-selected LM Studio startup discovery may append all listed chat models
-  under one explicit private Responses policy. Metadata is not capability or
-  Desktop acceptance. Exclude embeddings and known dedicated auxiliary draft
-  architectures such as gemma4-assistant. Do not infer auxiliary status from
-  small size, a display name or a main model having speculative decoding enabled.
-  Report already-registered auxiliary rows for separate stopped cleanup; discovery
-  never deletes them. Preserve existing rows and defaults,
-  mark new rows unverified, and commit the validated batch atomically only
-  with the owned entry deactivated, exact router/Operator
-  stopped and callbacks empty. Never load, download, infer, transfer receipts,
-  delete missing models or change approvals during discovery. First initialization
-  must explain current-user Desktop/Start menu shortcut changes, original-file
-  retention, taskbar limitations and the safe uninstall sequence before writing.
-  Fresh installs use the owner's two desktop names and full build-date ownership
-  defined in `shared/docs/installation-and-removal.md` under Desktop entry pair.
-  They require the default native home. Legacy journals and the internal launcher
-  retain `Codex拓展入口`; changed builds use a private compiled candidate and exact
-  digest-bound preview. Legacy-to-pair migration preserves all prior receipts,
-  renames the Desktop shortcut in place without changing its file identity and
-  retains the Start menu entity. Its independent origin/build chain never creates
-  first-install runtime ownership. Verify old restoration materials and current
-  workflow before writes; retain failed transactions without retry. Restore the
-  pair before the older migration, keeping fixed launchers/helpers for pins.
-  Explicit unused prepared-plan withdrawal may archive only the exact untouched
-  prepared journal and full original directory with native protection intact.
-  Bind current native config/cache/entry identities and preserve later user
-  settings; freeze the protection marker and current snapshots through the
-  witnessed move. Armed/attempted/failed plans and partial archives remain
-  terminal for review. This changes no routing, services or Desktop state and
-  does not attest to a running Desktop's cached route or authorize plan replay.
-  Isolated pair tests do not establish real Desktop or mode-switch acceptance.
-  Never impersonate the official executable or infer a native route from a name.
-  Existing journaled names remain valid only for reviewed migration and recovery.
-  An owner-requested initialization may then configure those entry points without
-  another prompt. It does not activate global routing or infer a local-model
-  policy. Preserve a journal before changing integrations; repeated upgrades
-  retain the first original, and restoration verifies current fingerprints,
-  backups and exact paths before changing files. Later user edits, linked paths
-  or ambiguous ownership stop recovery without overwriting them.
-  Repeated entry setup also checks recorded launcher and entry-script fingerprints
-  before replacement or a new ownership generation. Changed managed shortcuts,
-  incomplete builds and invalid records stop setup without overwriting them.
-  Safe uninstall first detaches the exact owned request-free router and callback
-  registration, then restores managed entry/Hook/rule files and archives runtime
-  data. Keep a standalone native launcher for otherwise unobservable taskbar pins.
-  Preserve task history, model weights, credentials, unrelated settings and data.
-  Do not claim that removing the Desktop plugin automatically runs this recovery;
-  complete project recovery before plugin removal. Legacy installations require
-  separately reviewed ownership evidence, never a fabricated first-install record.
-  Desktop closure is not a policy prerequisite for model registry edits,
-  including discovery, auxiliary cleanup and display-name updates. Preserve
-  the applicable backup, digest, atomic-write and service lifecycle checks.
-  Any remaining restart or refresh requirement must be established from the
-  implementation and observed behavior, not inferred from this project rule.
-  An explicit registry reload may publish one validated, digest-bound in-memory
-  registry while Desktop and the router remain running. It does not authorize
-  registry-file edits, model discovery, service control or permission changes.
-  Use no polling or per-request file checks; bound reads to 1 MiB off the event
-  loop and changed-version attempts to one per 30 seconds. Same-version requests
-  are no-ops without disk I/O; concurrent, failed or uncertain attempts never retry.
-  Existing requests and entire WebSocket connections retain their original
-  registry snapshots. New requests see the new registry; Desktop catalog refresh
-  remains separate evidence. Initial deployment into an older router still
-  requires an explicit request-free router restart.
-  Native Responses HTTP wire and decompressed input are bounded to 64 MiB.
-  External/Beeper HTTP input, native auxiliary input and existing WebSocket
-  limits remain 16 MiB. Preserve native bytes and encoding headers; never
-  truncate input, remove attachments or replay a failed request to fit a bound.
-  Local HTTP size rejection reports 413 with a fixed code, scope and limit;
-  preserve upstream 413 responses distinctly. These are transport limits,
-  not model context allowances or guarantees of upstream acceptance.
-  Operator starts one loopback-only Responses API
-  listener only when `beeper` is selected and passes its provider/catalog
-  settings only to that Beeper queue. It never modifies global Codex config.
-  The local provider accepts only model `beeper`, an exact current relay envelope
-  with one public 32-hex request_id,
-  and exactly one model-facing `exec` custom tool; it deterministically emits the
-  four-line bootstrap without model weights or sampling. HTTP and stream retry
-  counts are zero. Protocol-external input returns the fixed approved identity declaration
-  as assistant text, never a tool call. Older messages cannot supply the current
-  relay envelope. Provider failure, queue rejection, timeout, crash, or any
-  uncertain local outcome is terminal and never falls back to another model.
-  Spark always receives concise, structured English Operator instructions,
-  including nested callback guidance, attachment labels, and attachment-only
-  placeholders. Preserve the Feishu user's original text without translation.
-  JSON-escape non-ASCII attachment metadata losslessly; never rename real paths.
-  Keep the Chinese control template selectable for Luna only with
-  `CODEX_OPERATOR_BEEPER_PROMPT_LANGUAGE=zh-cn`; Spark ignores that preference.
-  Prompt language never permits a second attempt after an accepted or uncertain queue.
-  The compact Beeper message contains only public request_id and code-mode
-  instructions. Operator stores the exact Responder UUID/host, current user
-  request, attachment paths, and minimal callback route locally until retrieval.
-- After a successful queue acceptance, the Operator keeps one process-local
-  30-minute wake lease for the fixed Beeper, shared across Feishu scopes. Only
-  an attributed Responder turn or a Final Callback refreshes it. An inactive or
-  expired lease may immediately send at most one Beeper wake-up signal for that
-  accepted request. An active lease initially suppresses the signal; if no
-  downstream evidence appears within 30 seconds, invalidate the assumption and
-  send the same at-most-once wake-up signal. Concurrent requests coalesce wake
-  signals. This never queues or replays a turn. The signal is transported by
-  the bare `codex://threads/<exact Beeper UUID>` URI, which contains no query,
-  payload, Responder UUID, or request identifier. Never send a wake-up signal
-  to, resume, or otherwise take control of a Responder. `Wake-up signal` is the
-  application action and deep link is its current implementation. Opening it
-  may navigate Desktop to Beeper, not prove execution. Do not model it as a
-  POCSAG preamble, synchronization codeword, or address codeword.
-- The Beeper calls `mcp__codex_app__send_message_to_thread` exactly once for the
-  exact mapped Responder, omitting model and thinking overrides by default.
-  An explicit authorized /model choice is a narrow exception: validate the exact
-  local task and official direct catalog, save against that binding, and carry
-  model/thinking only on its next new business send. Consume before queueing;
-  binding changes clear the choice, uncertainty never restores or replays it.
-  Beeper/global settings stay unchanged. /model readback reports native settings,
-  not execution success; App Server remains read-only. Direct-catalog validation
-  rejects root openai_base_url and inherited OPENAI_BASE_URL overrides. Active
-  task catalogs explicitly include all providers while retaining exact identity,
-  source, archive and pagination boundaries; a miss never creates a replacement.
-  One exec first
-  calls the separate `feishu_operator_relay.take_relay(request_id)` MCP, then
-  directly evaluates and invokes only its Operator-generated structuredContent.code
-  in the same exec, without model resampling, program/payload printing, rewriting,
-  or a separate send call. The four-line bootstrap records started before retrieval.
-  The MCP validates the dispatch and embeds it solely as escaped JSON data in a
-  fixed async program. That program owns the 2000 ms guard, null-input handling,
-  unique Desktop send-tool resolution, and one unchanged dispatch. Missing or
-  ambiguous send tools stop without sending, after consumption; never replay.
-  Never evaluate arbitrary tool text or user-provided code through this route.
-  Retrieval commits a no-replay boundary and clears the input before returning;
-  duplicate, unknown, captured, or closed requests return no dispatch. This is
-  local dispatch bookkeeping, not the retired claim route or authentication.
-  It does not intercept native sends or guarantee exactly-once business execution.
-  Retrieval errors or elapsed time over 2000 ms stop without sending or retrying.
-  This timing guard is not a guarantee about external scheduling latency.
-  Code-mode tool availability and live timing must pass before deployment.
-  The Beeper never
-  performs the business task, reads task state or history, submits a Final
-  Callback or retries an uncertain send. The owner-granted user-task registration
-  exception below is a separate management operation, never a business relay.
-- Resolve the CLI from the current Codex Desktop installation below
-  `%LOCALAPPDATA%\OpenAI\Codex\bin` or an explicit configuration value.
-  Never use a PATH-selected CLI and never hardcode a user name or version hash.
-- At startup or when the adaptive cadence is due, the Operator may start a short-lived stdio App Server
-  solely to call `account/rateLimits/read`. Cache the response account-wide and
-  by returned `limitId`; locate the Spark-specific bucket by its exact returned
-  `limitName`, never by a hardcoded opaque `limitId`. Never query on every
-  message while ample quota remains. Use the tighter of the account-wide and
-  Spark remaining percentages: refresh after 20 messages or 30 minutes above
-  50%, after 10 messages or 15 minutes from 20% through 50%, after 3 messages or
-  5 minutes above 5% and below 20%, and on every message at 5% or below. Startup
-  primes the cache. Refresh I/O runs outside the cache lock and concurrent
-  refreshes coalesce. Above 5% with known percentages and no reached limit,
-  due reads run in the background; low/unknown-percentage or reached-limit
-  snapshots retain a pre-dispatch read. An unavailable snapshot remains fail-open.
-- Historical Spark compatibility only (not a current model selection option):
-  if Spark was explicitly selected and a fresh cache says its bucket is
-  exhausted, queue Beeper once with `gpt-5.6-luna` and `low` reasoning instead.
-  If an explicit Spark queue attempt returns a proven nonzero usage-limit or
-  rate-limit rejection, refresh the cache and may make exactly one same-event
-  Luna/low queue attempt. This is the only automatic CLI fallback; never fall
-  back after timeout, crash, uncertain outcome, an accepted queue, a Luna
-  rejection, or any local `beeper` outcome. Beeper still omits model and
-  thinking when it sends to the Responder unless that next new message has the
-  explicit /model choice described above. Current owner-selected online work
-  uses blank/default or explicit Luna/low only, without fallback to Spark or
-  the local provider. Old Spark override fixtures remain historical evidence;
-  they do not authorize a new live Spark diagnostic.
-- A failed quota read keeps the last snapshot only as stale diagnostics and must
-  not block dispatch. Only a fresh server-classified reached limit may stop a
-  pre-dispatch request; then do not queue or send the Beeper wake-up signal. Never
-  cancel or replay an accepted queue because of a later quota observation.
-- During admitted-event preparation and while its callback route is open,
-  the Operator may keep one request-scoped
-  stdio App Server child for the exact mapped Responder. It may call only
-  `thread/read(includeTurns=false)` and `thread/turns/list` with `limit=20`,
-  descending order, and `itemsView=notLoaded`. Retain only task/turn IDs,
-  activity/status, `startedAt`, and `completedAt`. Reject item content and
-  treat multiple unseen turns as ambiguous. This observation is routing-time
-  lifecycle metadata, never answer transport, authentication, or attestation.
-  Baseline preparation may overlap attachment preparation but must be sealed
-  before queueing, within a total two-second budget. A late baseline is discarded.
-  Metadata polling and child cleanup never block callback delivery. Cached running
-  evidence expires after five seconds without a successful read; stable terminal
-  evidence is retained. Poll every 0.5 seconds while unknown, every two seconds
-  while running, and stop querying after stable terminal evidence.
-  `itemsView=notLoaded` is a content projection requested by Operator, not a
-  Desktop foreground, residency, wake-state, or task-load signal.
-- Apart from the account-only quota lane, that content-free lifecycle lane,
-  and `/init` catalog lane, the ordinary route never calls `resume`, uses App
-  Server task methods, reads a task transcript, creates a task, or injects
-  Operator history, summaries, RAG, preview text, or routing policy.
-- A zero queue exit means only that the request was accepted. A nonzero exit is
-  a proven pre-dispatch failure and permits only the bounded Spark-to-Luna
-  fallback above. Timeout, crash, or uncertainty is terminal and is never
-  automatically replayed.
-
 ### Final Callback routing
 
 - Before queueing, the Operator opens one durable callback route for a public,
@@ -607,8 +653,12 @@
 
 ### Temporary automated Feishu debugging
 
-- Until the project owner explicitly says `解除自动` or otherwise revokes this
-  authorization, automated Operator debugging may use `lark-cli` without
+This subsection limits a separately recorded direct user grant. Its presence in
+an installed rules template is not authorization; verify that the current owner
+actually granted this exact chat, sending identity and debugging scope.
+
+- Within that direct grant, until the project owner explicitly says `解除自动`
+  or otherwise revokes it, automated Operator debugging may use `lark-cli` without
   per-message reconfirmation only in the exact already-confirmed P2P chat with
   the `codex` bot, sent as the verified user identity.
 - This authorization covers only bounded, low-risk, plain-text end-to-end test
@@ -746,6 +796,10 @@
   archives outside test discovery and retain historical failures as evidence.
 
 ### Change and publication discipline
+
+Dated design decisions below retain their original scope. Later explicit owner
+steering and the current entry contract determine which generation is maintained;
+historical workspace names are not current installation destinations.
 
 - The owner's 2026-09-14 ChatGPT Web request uses reference repositories only
   for implementation ideas. Build routing, browser/MCP transport and setup in

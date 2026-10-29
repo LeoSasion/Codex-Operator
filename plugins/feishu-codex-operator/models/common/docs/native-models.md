@@ -8,9 +8,9 @@
 
 上下文窗口必须绑定**实际选中的模型 ID**及其对应端点的可核对依据。清单中的 `model.context_window` 会写进该模型的目录项；切换型号时重新核对并使用新型号的值，不沿用上一型号或统一常数。API 模型卡的窗口不能直接当作 ChatGPT 网页版的窗口，本地服务列出的最大值也不能代替实际加载模型的验收。来源不足时记录为未验证，不为了让目录可见而猜测数值。
 
-当前已在 CLI **0.158.0-alpha.2.1** 验证文件式 profile 加载，以及隔离配置中的 `config/read`、`model/list`。官方配置说明：`codex --profile <name>` 使用 `$CODEX_HOME/<name>.config.toml`；这是新文件层，不能再生成旧的 `[profiles.name]` 表。项目配置和命令参数仍可覆盖 profile，实际使用前须核对有效配置。参考：[官方高级配置](https://learn.chatgpt.com/docs/config-file/config-advanced)。
+2026-09-28 已在 CLI **0.158.0-alpha.2.1** 验证文件式 profile 加载，以及隔离配置中的 `config/read`、`model/list`。官方配置说明：`codex --profile <name>` 使用 `$CODEX_HOME/<name>.config.toml`；这是新文件层，不能再生成旧的 `[profiles.name]` 表。项目配置和命令参数仍可覆盖 profile，实际使用前须核对有效配置。参考：[官方高级配置](https://learn.chatgpt.com/docs/config-file/config-advanced)。
 
-当前 Desktop **26.924.2738.0** 的菜单条目没有独立 provider 字段。只追加混合目录不会随模型切换端点，因此此入口提供的是**独立原生 profile 的模型列表**，尚未实现主窗口官方、API、本地模型同菜单切换。`app-server` 也拒绝 `--profile`；不要通过它假装验证 profile。保持官方直连及已有保护，不能为显示几个名称重新启用全局路由。
+当时 Desktop **26.924.2738.0** 的菜单条目没有独立 provider 字段。只追加混合目录不会随模型切换端点，因此此入口提供的是**独立原生 profile 的模型列表**，这组独立 profile 检查不证明主窗口跨 provider 切换。后来的[拓展模式](mode-entry-window.md)使用另一套已登记的独立 home 和同一 provider 内模型选择，不改变本页直连 profile 合同。`app-server` 也拒绝 `--profile`；不要通过它假装验证 profile。保持官方直连及已有保护，不能为显示几个名称重新启用全局路由。
 
 同版原生 App Server schema 的只读核对进一步确认：`model/list` 请求和返回的模型项均无 provider 字段，`turn/start` 也不能逐回合切换 provider；`thread/start` 虽可指定 `modelProvider`，但会创建独立任务。它不满足“同一主窗口现有任务里选任意提供方”的体验要求。目录、独立任务与 Desktop 主菜单分别验收；在上游支持前不把目录可见性写成菜单可用性。
 

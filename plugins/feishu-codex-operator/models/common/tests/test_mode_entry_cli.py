@@ -8,14 +8,18 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 PLUGIN = next(p for p in Path(__file__).resolve().parents if (p / '.codex-plugin/plugin.json').is_file())
 sys.path.insert(0, str(PLUGIN / 'scripts'))
+sys.path.insert(0, str(PLUGIN / 'development'))
+from operator_test_fixtures.processes import isolated_cli_process
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 import operator_mode_entry as mode
+import operator_responses_eval as evaluator
 from operator_core import model_router as router_module
 from operator_core.model_registry import ModelRegistry
 
@@ -27,6 +31,36 @@ class ModeEntryCliTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_standalone_search_and_result_round_trip_keep_credentials_separate(self):
         await self.exercise(standalone=True)
+
+    async def communicate_cli(self, child, calls, searches):
+        # Reuse the evaluator's bounded, concurrent stdout/stderr/exit collector.
+        # Process exit alone is not EOF or complete output, even for exit code 1.
+        observation = evaluator.child_output_observation()
+        cleanup = {'deadline': None}
+        communication = asyncio.create_task(evaluator.collect_child(
+            child, observation=observation, cleanup=cleanup))
+        try:
+            return await asyncio.wait_for(asyncio.shield(communication), 35)
+        except TimeoutError:
+            # One shared cleanup deadline bounds collection and reader cancellation.
+            cleanup['deadline'] = time.monotonic() + evaluator.CLI_CLEANUP_TIMEOUT_SECONDS
+            # Keep the original failure deadline and the original pipe readers.
+            # Only this disposable CLI child is killed; no request is retried.
+            if child.returncode is None:
+                try:
+                    child.kill()
+                except ProcessLookupError:
+                    pass  # The exact child exited between observation and kill.
+            cleanup_result, stderr = 'drained', b''
+            try:
+                _, stderr = await asyncio.wait_for(communication, 5)
+            except TimeoutError:
+                cleanup_result = 'deadline_exceeded'
+            self.fail(json.dumps({'failure': 'cli_search_fixture_deadline',
+                'deadline_seconds': 35, 'calls': len(calls), 'searches': len(searches),
+                'cleanup': cleanup_result, 'exit_after_cleanup': child.returncode,
+                'output_observation': observation,
+                'stderr_tail': stderr.decode('utf-8', errors='replace')[-1400:]}))
 
     async def exercise(self, *, standalone):
         executable = Path(os.environ['CODEX_OPERATOR_TEST_CLI']).resolve(strict=True)
@@ -122,10 +156,10 @@ class ModeEntryCliTests(unittest.IsolatedAsyncioTestCase):
                     for key in ('shell_tool', 'plugins', 'remote_plugin', 'image_generation', 'multi_agent', 'goals'):
                         command += ['-c', 'features.' + key + '=false']
                     command += ['-c', 'analytics.enabled=false', 'Synthetic local fixture. Complete the provided search once.']
-                    child = await asyncio.create_subprocess_exec(*command, cwd=work, env=environment,
+                    async with isolated_cli_process(*command, cwd=work, env=environment,
                         stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                        creationflags=0x08000000 if os.name == 'nt' else 0)
-                    stdout, stderr = await asyncio.wait_for(child.communicate(), 35)
+                        creationflags=0x08000000 if os.name == 'nt' else 0) as child:
+                        stdout, stderr = await self.communicate_cli(child, calls, searches)
                 details = {'exit': child.returncode, 'calls': len(calls), 'searches': len(searches),
                            'stderr_tail': stderr.decode('utf-8', errors='replace')[-1400:],
                            'tool_names': [t.get('name', t.get('type')) for t in calls[0]['body'].get('tools', [])] if calls else []}
@@ -149,7 +183,7 @@ class ModeEntryCliTests(unittest.IsolatedAsyncioTestCase):
         finally:
             if child is not None and child.returncode is None:
                 child.terminate()
-                await child.wait()
+                await asyncio.wait_for(child.communicate(), 5)
             if gateway is not None:
                 await gateway.close()
             await upstream.close()

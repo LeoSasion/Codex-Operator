@@ -2,12 +2,14 @@
 
 总名与插件名：**Codex-Operator** / `codex-operator`。一个插件，按需配置 Channels 和 Models。
 
-| 模块 | 负责 | 首版状态 |
+| 模块 | 负责 | 实现范围（验收另列） |
 | --- | --- | --- |
 | Channels | IM 登录、消息与附件接收、准确任务映射、结果回传 | 飞书已实现；其他 IM 待扩展 |
-| Models / API | 原生 profile 添加与撤回、Responses 调度、工具协议适配 | 独立 profile 目录；主窗口跨 provider 菜单仍待接入 |
+| Models / API | 原生 profile 添加与撤回、Responses 调度、工具协议适配 | 独立 profile 与拓展模式；同一 provider 内已有实测，跨 provider 不作首发保证 |
 | Models / Local | 本地服务发现、原生 profile 添加与撤回 | LM Studio 发现；不自动下载或加载模型 |
 | Models / Web | 固定连接、保存网页登录、后台页面与原生工具往返 | ChatGPT Web 独立 provider 预览；新任务接入需助手协助 |
+
+实现不等于稳定发布验收；准确型号、日期和未完成门槛见[支持矩阵](development/docs/first-release-readiness.md)。
 
 两个板块共享 Codex Desktop 的任务归属。Channels 不复制业务上下文，Models 不接管工具执行，Web Providers 不改变原生审批与权限。
 
@@ -53,3 +55,25 @@ Channels 解析指令、定位准确绑定任务并展示结果；Models 与原�
 新增 IM 通道应实现账号与权限配置、事件规范化、稳定会话范围、附件传输、出站投递，并复用现有准确任务映射和回传边界。当前没有为未实现的 IM 创建占位登录按钮或虚构支持状态。
 
 预览版以打通安装与实际使用为优先，连续运行稳定性后续完善。容量、原生直连、防重复执行和凭据边界继续保留。
+
+## 文档导航与阅读顺序
+
+先按任务选择一份指南；需要改协议或查证历史时再深入。日期记录中的“当前”“未部署”仅指
+当时检查点，不覆盖后来的交付；个人选择、研究结论和历史批准不自动授予其他安装操作权限。
+
+| 用途 | 入口与专题 |
+| --- | --- |
+| 安装与使用 | [插件说明](README.md)、[快速开始](QUICKSTART.md)、[现有 skill](skills/feishu-codex-operator/SKILL.md)、[旧文档入口](feishu-codex-operator-skill.md)、[升级](upgrade-operator.md) |
+| 当前支持与待验收 | [发布准备](development/docs/first-release-readiness.md)。发布、本机安装和运行状态各有证据，日期记录不是实时状态。 |
+| Channels | [首次接入](channels/feishu/docs/automatic-task-provisioning.md)、[命令](channels/feishu/docs/feishu-command-ux.md)、[认证](channels/feishu/docs/feishu-auth.md)、[客户端](channels/feishu/docs/feishu-desktop-client.md)、[E2E 经验](channels/feishu/docs/beeper-e2e-lessons.md) |
+| 共享边界 | [架构](shared/docs/architecture.md)、[术语](shared/docs/terminology.md)、[权限与 Hooks](shared/docs/permissions-and-hooks.md)、[安装与恢复](shared/docs/installation-and-removal.md)、[公开规则镜像](assets/AGENTS.feishu-codex-operator.md) |
+| API / Local | [原生登记](models/common/docs/native-models.md)、[路由合同](models/common/docs/model-router.md)、[Responses 验收](models/common/docs/responses-acceptance.md)、[API 日期证据](models/api/docs/official-online-models.md)、[Huihui 模板](models/local/docs/huihui-template.md) |
+| Web | [运行指南](models/web/docs/native-web-experience.md)、[连接引导](models/web/docs/web-fixed-tunnel.md)、[目录合同](models/web/docs/web-model-catalog.md)、[集成概览](models/web/docs/chatgpt-web-integration.md)、[当前计划与历史阶段](models/web/docs/native-conversation-plan.md) |
+| 入口与事务 | [模式选择窗](models/common/docs/mode-entry-window.md)、[原生路由恢复](models/common/docs/native-route-recovery.md)、[Windows 替换见证](models/common/docs/windows-config-transaction.md)。按保存的实现代次维护，不能混用恢复链。 |
+| 历史统一入口的维护合同 | [隔离候选](models/common/docs/unified-picker-candidate.md)、[只读准备](models/common/docs/unified-picker-preparation.md)、[标记释放](models/common/docs/unified-marker-release.md)、[一次性冷启动](models/common/docs/unified-cold-launch.md)、[旧激活退役](models/web/docs/legacy-activation-retirement.md)、[初始化前恢复](models/web/docs/web-preinit-recovery.md) |
+| 研究与前阶段方案 | [工具兼容计划](models/common/docs/responses-tool-compatibility-plan.md)、[直连入口记录](models/common/docs/direct-profile-entry.md)、[未部署菜单候选](models/common/docs/native-menu-provider-candidate.md)、[模型切换复盘](models/common/docs/native-model-switching-lessons-20261002.md)、[保留搜索思路](shared/docs/retained-desktop-search-idea.md) |
+| 开发与验证 | [工作区维护](development/docs/workspace-maintenance.md)、[升级检查](development/docs/upgrade-checklist.md)、[测试](development/docs/testing.md)、[发布日期记录](development/docs/release-audit.md) |
+| 历史与来源 | [Web 历史](models/web/docs/native-web-history-20260924.md)、[10 月 2 日升级](development/docs/upgrade-20261002.md)、[9 月 21 日恢复](development/docs/core-recovery-20260921.md)、[Codex++ 采用](development/docs/codexplusplus-adoption.md)、[实现来源](models/web/docs/web-background-sources.md)、[致谢与许可](NOTICE.md) |
+
+操作以当前源码命令合同和保存的准确登记为准；文档出现分歧时先核对源码和日期，不直接执行旧命令。
+维护分工和校验要求见[文档维护约定](development/docs/workspace-maintenance.md#文档维护约定)。

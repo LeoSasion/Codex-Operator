@@ -18,16 +18,10 @@ after source/runtime and manifest checks. SessionEnd releases that lease. Hooks
 never route a business message, query a task, call Final Callback, or contact
 Feishu directly.
 
-Codex Desktop has no `/hooks` chat command. If CLI inspection is needed as a
-fallback on Windows, open CMD, change to the actual project directory, and use
-project-relative commands. Never copy a command containing a fixed user profile
-path or Codex version hash.
-For the CLI fallback, open Windows CMD in the actual project and run:
-
-```cmd
-powershell -NoProfile -Command "$operatorBin = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin'; $operatorCli = Get-ChildItem -LiteralPath $operatorBin -Directory | Get-ChildItem -Filter codex.exe -File | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1 -ExpandProperty FullName; if (-not $operatorCli) { throw 'Codex Desktop CLI not found' }; & $operatorCli"
-```
-
-The path is discovered from the current Desktop installation; do not use a
-PATH-selected CLI or a copied username/version hash. Then use the CLI's Hook
-inspection if available. Desktop settings remain the first choice.
+Codex Desktop has no `/hooks` chat command. If CLI inspection is needed, first follow
+the [upgrade identity checklist](../../development/docs/upgrade-checklist.md#1-开始前建立本轮身份与保护范围)
+to resolve and verify the exact CLI from the current official installation or an explicitly
+configured executable. Then use that CLI's Hook inspection only if the selected version exposes it.
+Do not select a cached executable merely by modification time, use a PATH-selected CLI,
+or copy a username/version hash. A missing CLI inspection capability does not justify
+changing Hooks or restarting Desktop; its settings remain the first choice.

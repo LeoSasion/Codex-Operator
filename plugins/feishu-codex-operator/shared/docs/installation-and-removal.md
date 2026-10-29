@@ -1,13 +1,54 @@
 # Initialization and safe removal
 
+The product uses **one unified launcher with two launch modes**:
+the `ChatGPT 自定义启动` Desktop shortcut opens the launcher window, whose
+**原生** and **拓展** buttons select the native or isolated extension environment.
+See [terminology](terminology.md#launcher-shortcuts-and-launch-modes) for the
+distinction between a launcher, its shortcuts and its mode buttons.
+
+Choose maintenance by the saved ownership journal, not by shortcut count or name.
+Fresh installation creates one `ChatGPT 自定义启动` Desktop shortcut, with a
+`single` layout recorded in the existing shortcut ownership journal. The
+existing reviewed legacy `ChatGPT 自定义启动` layout uses the separate
+[single-shortcut restoration chain](#reviewed-single-desktop-entry); its package
+refresh preserves that layout and does not recreate the removed Desktop links.
+The [historical pair](#desktop-entry-pair) remains supported by its original records.
+Shortcut layout and launch modes are separate concerns. These layouts have different
+restoration sequences. Neither grants missing runtime ownership.
+
+
 An existing legacy entry-migration directory without its ownership journal blocks
 removal before any writes, as do linked or ambiguous migration paths. A retained
 entry-only journal cannot establish first-install runtime/Hook/rule ownership.
 Preserve the originals and resolve that separate entry transaction before teardown.
 
+## Fresh unified launcher
+
+Fresh `operator init` creates one Desktop shortcut and no Start menu shortcut.
+Its fixed name is `ChatGPT 自定义启动`; build date, version and source fingerprints
+remain in private records instead of accumulating dated Desktop links. Installation
+and idempotent setup do not start services or enable model routing.
+
+Before extension setup, the existing mode-selection window shows the native option
+and a disabled extension option labelled as unconfigured. Closing it performs no
+launch. Native selection uses the registered official application. `--check-only`
+reports the available operation without opening a window. Explicitly prepared
+isolated extension setup reuses the existing two-mode window and exact instance
+checks; specific models remain in Codex. Legacy shared-home startup bundles and
+direct-profile choosers cannot silently become this isolated launch policy.
+
+The existing `models desktop-pair` maintenance commands remain the compatibility
+surface for the recorded layout. A reviewed build upgrade preserves `single`
+and the fixed Desktop name; it retains prior build and shortcut originals.
+Restoration removes only the owned shortcut, retains native pin helpers, and
+preserves later edits or uncertain transactions for review. It never invents a
+legacy migration receipt or missing runtime ownership. The internal executable
+path remains stable for installed references and taskbar pins.
+
 ## Desktop entry pair
 
-Installations offer the two names requested on 2026-09-30. Legacy shared-home
+Here, pair means the historical two Desktop shortcuts introduced on 2026-09-30.
+Records without an explicit layout retain this interpretation. Legacy shared-home
 generations share the official application, login and task history. Disposable installation/recovery
 tests and one reviewed legacy migration have passed. The migrated Desktop and
 retained Start menu file identities, current native configuration and original
@@ -61,11 +102,11 @@ shortcut bytes and pinned helpers; standalone refresh is rejected while a pair b
 Before runtime removal, every saved isolated instance and router must be known stopped; uncertain
 preparation or process records block teardown. Isolated homes/history are retained outside runtime data.
 
-`operator init` uses this pair for a fresh installation. The public commands are
-`operator models desktop-pair preview|install|status|restore -ProjectRoot <project>`.
+These saved pair installations continue to use the public commands
+`codex-operator.ps1 models desktop-pair preview|install|status|restore -ProjectRoot <project>`.
 Preview/status are read-only; install uses the actual saved build metadata. Restore
 requires routing/lifecycle checks, removes only the exact two owned links and keeps
-native helpers for taskbar pins. Normal `operator uninstall -Apply` includes this
+native helpers for taskbar pins. Normal `codex-operator.ps1 uninstall -Apply` includes this
 restoration after its routing checks. A partial transaction remains retained for
 review, never automatically retried. An internal prepared pair build is marked
 as such so a failed pair install cannot silently fall back to old shortcut names.
@@ -121,7 +162,9 @@ shortcut and legacy journals throughout the reviewed migration and acceptance.
 
 ## Reviewed single Desktop entry
 
-An owner-selected legacy layout may retain only `ChatGPT 自定义启动` on Desktop.
+Here, single refers to the one retained Desktop shortcut, `ChatGPT 自定义启动`.
+Its launcher still offers both native and extension launch modes. An owner-selected
+legacy layout may retain this shortcut alone on Desktop.
 Its separate `.codex/operator-desktop-single-entry` journal does not rewrite the
 original two-entry ownership or infer first-install runtime ownership. Use
 `models desktop-pair single-entry-preview`, then `single-entry-review` with
@@ -226,18 +269,20 @@ bytes, preserving later unrelated settings. The uninstall preflight refuses an
 attached, changed or incomplete trial. Its private originals and task history
 remain; this does not stop the Web service or prove live Desktop refresh.
 
-Before its first write, `operator init` explains the [desktop pair](#desktop-entry-pair)
+Before its first write, `operator init` explains the [unified launcher](#fresh-unified-launcher)
 for a fresh installation, or the retained Desktop/Start menu `Codex拓展入口`
 ownership for a legacy installation, and project rules. Runtime installation explains the same scope before
 installing Hooks and code. This notice is part of initialization, not an extra
 permission prompt after an owner has already requested that scope.
 
 The launcher is built locally under `.codex/operator-desktop-entry`; no binary
-is published. Its executable and Windows product/title metadata use `Codex拓展入口`;
-official `Codex` shortcuts remain separate. It resolves the installed Codex application dynamically. An
-ordinary new installation opens native Codex. It does not activate the optional
-Responses router or infer an LM Studio endpoint/capability policy. A separately
-reviewed local-model startup bundle can be attached through `operator desktop-entry
+is published. Its internal executable path retains `Codex拓展入口.exe`; new builds
+use the user-facing title `ChatGPT 自定义启动` and product `Codex-Operator`.
+Official `Codex` shortcuts remain separate. It resolves the installed Codex application dynamically.
+A new installation first shows the mode selector, with extension unavailable until configured.
+It does not activate the optional
+Responses router or infer an LM Studio endpoint/capability policy. In a retained legacy
+installation, a separately reviewed local-model startup bundle can be attached through `operator desktop-entry
 -StartupBundle <bundle>`. An existing running Desktop is only opened. A cold
 launch performs the already-configured startup workflow once, with its original
 service, digest and no-replay checks. No background polling is introduced.

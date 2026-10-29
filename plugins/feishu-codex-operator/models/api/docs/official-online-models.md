@@ -1,5 +1,9 @@
 # Official online model candidates
 
+This reference combines explicit endpoint contracts with dated observations. Version, model,
+search and effort claims apply to the named case; the [current support matrix](../../../development/docs/first-release-readiness.md)
+tracks release scope. Recheck current endpoint documentation before a new integration; do not replay old failures.
+
 For the maintained cross-model native/router tool comparison, use the independent `codex-model-adaptation` skill and its `references/model-support-matrix.md`. The dated observations and exact candidate contracts below remain source evidence.
 
 ## Native provider checks (2026-09-14)

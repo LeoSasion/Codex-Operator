@@ -82,6 +82,41 @@ class DesktopEntryTests(unittest.TestCase):
         self.assertFalse((self.root/'sync-count').exists())
         self.assertEqual((self.root/'open-count').read_text(encoding='utf-8-sig').splitlines(), ['open'])
 
+    def test_unconfigured_launcher_status_does_not_open_selector_or_native_app(self):
+        (self.bundle / 'desktop-entry.json').write_text(json.dumps({'schema_version':1,
+            'mode':'native','launch_selection':'native_or_extension_v1'}), encoding='utf-8')
+        result = self.run_entry(check=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout), {'action':'choose_native_or_extension',
+            'extension_configured':False,'configuration_changed':False,'model_requests':0})
+        self.assertFalse((self.bundle / 'startup-logs').exists())
+        self.assertFalse((self.root / 'open-count').exists())
+        self.assertFalse((self.root / 'sync-count').exists())
+
+    def test_unconfigured_selector_cancel_native_and_invalid_result_dispatch_once(self):
+        compiler = Path(os.environ['WINDIR']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+        launcher = self.bundle / 'Codex拓展入口.exe'
+        source = self.root / 'choice-fixture.cs'
+        (self.bundle / 'desktop-entry.json').write_text(json.dumps({'schema_version':1,
+            'mode':'native','launch_selection':'native_or_extension_v1'}), encoding='utf-8')
+        for choice, expected_exit, launches in ((0,0,0),(10,0,1),(20,1,0),(1,1,0)):
+            with self.subTest(choice=choice):
+                for marker in ('open-count','attempt-count'):
+                    (self.root / marker).unlink(missing_ok=True)
+                source.write_text('class Choice {static int Main(string[] args){return '
+                                  +str(choice)+';}}', encoding='utf-8')
+                built = subprocess.run([str(compiler),'/nologo','/target:exe','/out:'+str(launcher),str(source)],
+                    capture_output=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+                self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+                (self.bundle / 'launcher-manifest.json').write_text(json.dumps({'schema_version':1,
+                    'shortcut_layout':'single','binary_sha256':hashlib.sha256(launcher.read_bytes()).hexdigest()}),encoding='utf-8')
+                result = self.run_entry()
+                self.assertEqual(result.returncode, expected_exit, result.stdout + result.stderr)
+                self.assertEqual((self.root / 'open-count').exists(), bool(launches))
+                if launches:
+                    self.assertEqual((self.root / 'open-count').read_text(encoding='utf-8-sig').splitlines(), ['open'])
+                self.assertFalse((self.root / 'sync-count').exists())
+
     def test_changed_package_manifest_stops_before_activation(self):
         manifest = self.app/'AppxManifest.xml'
         original = manifest.read_text(encoding='utf-8')
@@ -115,8 +150,9 @@ class DesktopEntryTests(unittest.TestCase):
         if not library.exists():
             compiler = Path(os.environ['WINDIR'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
             result = subprocess.run([str(compiler), '/nologo', '/target:library',
-                '/reference:System.Windows.Forms.dll', '/out:'+str(library),
-                str(ROOT/'scripts/operator_desktop_entry.cs')], capture_output=True,
+                '/define:OPERATOR_DESKTOP_LAUNCHER', '/reference:System.Windows.Forms.dll',
+                '/reference:System.Drawing.dll', '/reference:System.Web.Extensions.dll', '/out:'+str(library),
+                str(ROOT/'scripts/operator_desktop_entry.cs'), str(ROOT/'scripts/operator_mode_picker.cs')], capture_output=True,
                 text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
         driver = self.root/'fallback.ps1'
