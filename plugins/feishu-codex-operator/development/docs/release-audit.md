@@ -18,6 +18,18 @@ counts refer to their individual runs; the current source must be checked with
 the [test instructions](testing.md). A later source-only pass never changes an
 earlier live-task result or proves that installed services were updated.
 
+## 2026-11-02: preview.10 Web picker candidate
+
+The candidate contains the inline model-control compatibility fix and the observed GPT-5.6 heading and effort-label fixes. The source catalog still lists four models and seven selections. The live menu check first rejected five GPT-5.6 selections before Send and accepted the two GPT-6 selections. After repair, all seven passed in visible `prepare` mode and the picker returned to GPT-6 Medium. The hidden verification-page failure remains a separate observation. No prompt or tool call was sent. See the [model evidence](../../models/web/docs/web-model-catalog.md#2026-11-02-picker-verification) and [upstream revisions](../../models/web/docs/web-background-sources.md#2026-11-02-web-发布前复核).
+
+The first frozen Python run on CLI 0.166.0-alpha.5.1 ran 1,939 tests with five environment skip records and one failure. A synthetic legacy shortcut upgrade failed at the comparison of the restored files against the original bytes. The truncated assertion did not identify a file or a writer. An independent run and six fresh installations with transaction originals retained all passed that assertion. All 158 Node tests and the seven additional native-menu tests passed. The native configuration and source bytes matched. The cache byte comparison failed, with only `fetched_at` changed and the model records identical.
+
+A second run with stop-on-failure ended at Python case 70. The offline `/model` follow-up fixture observed one queued dispatch instead of two. Thirty isolated samples and eight repetitions of the same first 70 tests passed. Those observations do not change either failed run. Both failures and the private receipts remain available for pre-tag review.
+
+A third run passed those two checks and stopped at case 330 before the malformed recovery receipt could reach its reader. Windows denied replacement of a disposable receipt (`WinError 5`). A controlled reader that allowed reading and writing but denied replacement reproduced the preparation error for all eight cases. The fixture now writes its malformed sample in place, requires `CutoverError` from the validator, checks the read-only snapshot and restores the original bytes. Under the same reader, all eight samples reached the validator and produced `cutover_web_recovery_receipt_invalid`. The production writer still performs its original atomic replacement. The actual lock holder in the third run was not identified. Source and CLI bytes stayed fixed. Native byte checks recorded changes to `desktop.conversationDetailMode` and cache `fetched_at` only, with identical model records. The writer of those changes remains unknown.
+
+The repaired recovery module passed 98 tests. The final complete run on the repaired fixture ran 1,939 Python tests in 2,381.747 seconds with five environment skip records and zero failures or errors. All 158 Node tests passed. Seven additional native-menu tests, 96 browser-page tests and twelve real Electron DOM selector fixtures also passed in their respective runs. Source, CLI and the native config remained byte-identical during the final run. The raw model-cache check failed because `fetched_at` changed; the model records were identical. The earlier shortcut and offline dispatch failures were not reproduced or attributed. The subsequent audit-document update was checked separately from the frozen execution.
+
 ## 2026-10-29: preview.9 source and test maintenance
 
 Preview.9 / alpha147 unifies fresh installation around one custom launcher with

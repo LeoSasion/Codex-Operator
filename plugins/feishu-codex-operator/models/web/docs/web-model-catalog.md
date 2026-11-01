@@ -1,5 +1,13 @@
 # Web model catalog
 
+## 2026-11-02 picker verification
+
+The account's visible family menu listed `6` (checked) and `GPT-5.6 Sol`. The accessibility announcement identified `6 Medium` as the second of five positions. This is a dated account observation.
+
+The managed account's visible ChatGPT picker passed all seven model and effort selections in the table below. Each `prepare` run opened the actual menu, checked the selected model row, verified the five-position slider and Pro generation, then confirmed the requested effort and exited before sending a prompt. The final selection was ordinary GPT-6 Medium. The first hidden-window attempt stopped on a verification page before reaching the picker. These checks cover the visible picker and do not measure model generation or tool execution.
+
+The first seven-case pass exposed a compatibility failure before Send on all five GPT-5.6 selections. The checked 5.6 row showed a joined `5.6 Sol5.6 Pro` heading, while the slider independently announced `5.6 Pro`. The host now accepts that exact pair and continues to reject mixed or missing generations for this heading. It also recognizes the observed `Extra High` capitalization. GPT-6 Pro and ordinary GPT-6 Medium passed on both runs. For the separate inline button observation, see the [upstream review](web-background-sources.md#2026-11-02-web-发布前复核).
+
 ## 2026-10-28: explicitly named GPT-6 Medium
 
 The managed account's current picker shows a checked **6** model option and a

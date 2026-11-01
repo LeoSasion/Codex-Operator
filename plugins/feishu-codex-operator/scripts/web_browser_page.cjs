@@ -20,20 +20,24 @@ function uniqueComposer() {
 function eligibleModelButtons(composer) {
   const form = composer?.closest('form');
   if (!form) return [];
+  const visibleControl = element => element.getClientRects().length > 0
+    && !element.closest('[hidden],[inert],[aria-hidden="true"],[role="menu"][data-state="closed"]');
+  // The inline trigger can lack a known label. Its effort attribute identifies
+  // a control only; the open menu still has to prove the requested selection.
+  const inline = [...document.querySelectorAll('button[aria-haspopup="menu"][data-composer-navigation-target="reasoning"][data-selected-reasoning-effort]')].filter(visibleControl);
   const legacy = [...document.querySelectorAll('button[aria-haspopup="menu"][data-tone="neutral"],button[data-testid="model-switcher-dropdown-button"]')];
   if (legacy.length) {
     const visible = legacy.filter(element => element.getClientRects().length > 0);
-    return visible.length === 1 && form.contains(visible[0]) ? visible : [];
+    return visible.length === 1 && form.contains(visible[0]) && inline.every(button => button === visible[0]) ? visible : [];
   }
-  const accessible = [...document.querySelectorAll('button[aria-label="选择 ChatGPT 模型"],button[aria-label="Choose ChatGPT model"]')]
-    .filter(element => element.getClientRects().length > 0
-      && !element.closest('[hidden],[inert],[aria-hidden="true"],[role="menu"][data-state="closed"]'));
-  if (accessible.length !== 1) return [];
-  const button = accessible[0];
+  const named = [...document.querySelectorAll('button[aria-label="选择 ChatGPT 模型"],button[aria-label="Choose ChatGPT model"]')].filter(visibleControl);
+  const candidates = [...new Set([...named, ...inline])];
+  if (candidates.length !== 1) return [];
+  const button = candidates[0];
   const ariaDisabled = button.getAttribute('aria-disabled');
   return form.contains(button) && button.getAttribute('aria-haspopup') === 'menu'
     && !button.disabled && (ariaDisabled === null || ariaDisabled === 'false')
-    ? accessible : [];
+    ? candidates : [];
 }
 function controls(modelLabels = ["GPT-5.6 Sol"]) {
   const visible = e => !!e && e.getClientRects().length > 0;
@@ -360,7 +364,7 @@ function effortState() {
   // The current public slider announcement prefixes the effort with its
   // generation (for example "5.6 极高" and "5.6 Pro"). Retain that prefix as
   // separate evidence instead of treating the entire label as unknown.
-  const labels = descriptions.map(text => text.match(/^(?:(?:GPT-)?(5\.6|6)(?:\s*Sol)?\s*)?(即时|中|高|极高|Instant|Medium|High|Extra high|Pro)[，,]/)).filter(Boolean);
+  const labels = descriptions.map(text => text.match(/^(?:(?:GPT-)?(5\.6|6)(?:\s*Sol)?\s*)?(即时|中|高|极高|Instant|Medium|High|Extra [Hh]igh|Pro)[，,]/)).filter(Boolean);
   return { min: Number(values[0]), max: Number(values[1]), value: Number(values[2]),
     label: labels.length === 1 ? labels[0][2] : null,
     announcedGeneration: labels.length === 1 ? labels[0][1] || null : null,

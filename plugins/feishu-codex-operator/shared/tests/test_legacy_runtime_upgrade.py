@@ -461,9 +461,9 @@ class LegacyRetiredWebCutoverTests(unittest.TestCase):
         return {str(path.relative_to(self.project)): path.read_bytes()
                 for path in self.project.rglob("*") if path.is_file()}
 
-    def assert_rejected(self, receipt=None):
+    def assert_rejected(self, receipt=None, *, error=(cutover.CutoverError, ValueError, OSError)):
         before = self.snapshot()
-        with self.assertRaises((cutover.CutoverError, ValueError, OSError)):
+        with self.assertRaises(error):
             self.evidence(receipt)
         self.assertEqual(self.snapshot(), before)
 
@@ -527,9 +527,13 @@ class LegacyRetiredWebCutoverTests(unittest.TestCase):
                         {"launched": True}, {"replayed": True}, {"preview_sha256": "0" * 64},
                         {"outcome": "unbound_request_free_stopped_snapshot_retired"}, {"extra": True}):
             with self.subTest(changes=changes):
-                self.manager.service.write_json(self.receipt, {**json.loads(original), **changes})
-                self.assert_rejected()
-                self.receipt.write_bytes(original)
+                # Seed this reader fixture in place. A Windows observer can hold
+                # the file open for reading while denying file replacement.
+                self.receipt.write_bytes(self.manager.service.json_bytes({**json.loads(original), **changes}))
+                try:
+                    self.assert_rejected(error=cutover.CutoverError)
+                finally:
+                    self.receipt.write_bytes(original)
 
     def test_every_retained_source_backup_pointer_and_marker_stays_bound(self):
         paths = [self.receipt.parent / "0.original", self.receipt.parent / "2.original",

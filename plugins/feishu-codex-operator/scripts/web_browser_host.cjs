@@ -37,7 +37,7 @@ function modelSelection(value) {
   return { ...definition, effort: modelCatalog.efforts[value.effort] };
 }
 function effortDiagnostic(state) {
-  const knownLabels = ["即时", "中", "高", "极高", "Instant", "Medium", "High", "Extra high", "Pro"];
+  const knownLabels = Object.values(modelCatalog.efforts).flatMap(effort => effort.labels);
   const rawHeader = state?.generationLabel;
   return {
     value: Number.isInteger(state?.value) && state.value >= 0 && state.value <= 4 ? state.value : null,
@@ -681,7 +681,10 @@ async function selectModel() {
   // only after the Latest radio option was checked and the slider names 6.
   const announcedLatestPro = requested.generation === "6" && observedHeader === "Pro"
     && slider.announcedGeneration === "6";
-  requireValue(slider.label === "Pro" && (allowedHeaders.includes(observedHeader) || announcedLatestPro)
+  // The 5.6 chooser now joins its family name and the current effort heading.
+  const repeated56Pro = observedHeader === "5.6Sol5.6Pro" && requested.generation === "5.6"
+    && slider.announcedGeneration === "5.6";
+  requireValue(slider.label === "Pro" && (allowedHeaders.includes(observedHeader) || announcedLatestPro || repeated56Pro)
     && (slider.announcedGeneration === null || slider.announcedGeneration === requested.generation),
     "web_model_generation_mismatch");
   record("effort_pro_verified", effortDiagnostic(slider));

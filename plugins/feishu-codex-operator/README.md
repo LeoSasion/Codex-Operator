@@ -2,7 +2,9 @@
 
 Connect IM channels, online/local models, and ChatGPT Web to Codex Desktop.
 
-**Windows preview · MIT · [1.2.0-preview.9](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.9) · Operator 4.2.0-alpha.147**
+**Windows preview candidate · MIT · 1.2.0-preview.10 · Operator 4.2.0-alpha.148**
+
+最近已发布版本为 [1.2.0-preview.9](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.9)。
 
 本版补记 preview.7/alpha146 的一次真实飞书私聊文本验收：用户直接明确固定转交范围后，实际 GPT-6 Luna/low 完成原生转交，GPT-6.1 Terra/low 提交精确 Final Callback，同一私聊的机器人原文回复已核验。旧失败保留且未重放。第二用户、附件、群聊与话题仍待独立验收，不能将这一条通过扩大为所有通道能力通过。
 

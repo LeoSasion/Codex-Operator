@@ -4,6 +4,8 @@
 
 ## 来源与采用方式
 
+11 月 2 日的 Web 专项复核覆盖 15 个相关仓库。本次实际采用的内联模型按钮识别方法、对应提交、许可和本地验证见[Web 来源复核](../../models/web/docs/web-background-sources.md#2026-11-02-web-发布前复核)。
+
 准确项目为 [BigPizzaV3/CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus/tree/f55bb64663ba5024ab434017bb6212a0fd9f4bb3)，首轮固定提交 `f55bb64663ba5024ab434017bb6212a0fd9f4bb3`，提交日期 2026-10-03；不能用变化中的 main 替代这些依据。
 
 该提交的 [LICENSE](https://github.com/BigPizzaV3/CodexPlusPlus/blob/f55bb64663ba5024ab434017bb6212a0fd9f4bb3/LICENSE) 为 AGPLv3。本轮采用设计和验证方法，修改由本项目独立编写，没有复制上游代码、测试代码或引入其运行依赖。未来代码复用须另行记录实际片段及适用许可；本次记录不是代码移植许可。
