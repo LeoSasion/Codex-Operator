@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "observed_on": "2026-10-28",
+  "observed_on": "2026-11-02",
   "efforts": {
     "none": {"index": 0, "labels": ["即时", "Instant"]},
     "medium": {"index": 1, "labels": ["中", "Medium"]},
     "high": {"index": 2, "labels": ["高", "High"]},
-    "xhigh": {"index": 3, "labels": ["极高", "Extra high"]},
+    "xhigh": {"index": 3, "labels": ["极高", "Extra high", "Extra High"]},
     "max": {"index": 4, "labels": ["Pro"]}
   },
   "models": {

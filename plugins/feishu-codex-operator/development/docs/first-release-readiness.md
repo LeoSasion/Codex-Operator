@@ -1,10 +1,10 @@
 # 首发范围与发布验收
 
-更新：2026-10-29。所有者已同意先收敛到 Windows、飞书和少量实测模型，Web 保持实验状态。本文落实该范围并列出稳定发布门槛；GitHub Pre-release 供评估，不表示这些门槛已关闭，也不将历史成功升级为当前版本的验收通过。
+更新于 2026-11-02。首发范围聚焦 Windows、飞书和少量实测模型，Web 保持实验状态。下表列出稳定发布仍需完成的验收。GitHub Pre-release 供评估，历史成功保留各自的版本边界。
 
-当前源码对应 `1.2.0-preview.9` / `4.2.0-alpha.147`：统一单个自定义启动器的两种模式，整理开发文档，并补充测试分组与临时 CLI 进程树清理。准确冻结回归结果随该 GitHub Pre-release 记录；本机安装、真实 Desktop 与稳定发布门槛仍分别核验。
+当前候选源码为 `1.2.0-preview.10` / `4.2.0-alpha.148`。已在专用账号的可见网页上核对四个型号、七种档位组合，修复了五个 GPT-5.6 组合在发送前共同遇到的代际标题误判。[菜单核验记录](../../models/web/docs/web-model-catalog.md#2026-11-02-picker-verification)保留首次失败和修复后的结果。真实生成、工具往返及当前 Desktop 验收仍按各自版本记录。
 
-最近已核对的交付为 `1.2.0-preview.8`，其运行代码与 preview.7 相同、runtime 为 alpha146。后续工作区修改不自动更新该发布包或本机安装。版本同步、安装文件一致、源码回归、实际 Desktop 验收、真实飞书收发分别记录。最终发布需要冻结具体源码、插件包、运行时、官方 Desktop/CLI 版本以及所选端点契约；每项结果只能用于自己的准确绑定。
+最近已发布交付为 [1.2.0-preview.9](https://github.com/LeoSasion/Codex-Operator/releases/tag/v1.2.0-preview.9)，runtime 为 alpha147。该版统一了自定义启动器，整理了开发文档，并加入测试分组和临时 CLI 进程树清理。最终发布需要冻结具体源码、插件包、运行时、官方 Desktop/CLI 版本以及所选端点契约。
 
 2026-10-29 在 preview.7/alpha146、官方 Desktop 26.1023.6123.0 / CLI 0.165.0-alpha.1.2 下，
 完成一条所有者原绑定私聊的全新文本往返：实际 Beeper GPT-6 Luna/low、业务 GPT-6.1 Terra/low、

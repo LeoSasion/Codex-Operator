@@ -68,6 +68,8 @@ test('startup control structure exposes only bounded selector counts and flags',
 test('composer and model compatibility uses only one observed control per page and fails closed on conflicts', () => {
   const {focusModelMenu, composerFocused, sendOnce} = require(operatorTestScript('web_browser_page.cjs'));
   let oldEditors = [], roleEditors = [], editables = [], oldButtons = [], namedButtons = [];
+  let inlineButtons = [];
+  let modelLabel = '选择 ChatGPT 模型';
   let sendClicks = 0;
   const document = {activeElement: null, querySelectorAll: selector => ({
     '#prompt-textarea': oldEditors,
@@ -75,6 +77,7 @@ test('composer and model compatibility uses only one observed control per page a
     '[contenteditable="true"]': editables,
     'button[aria-haspopup="menu"][data-tone="neutral"],button[data-testid="model-switcher-dropdown-button"]': oldButtons,
     'button[aria-label="选择 ChatGPT 模型"],button[aria-label="Choose ChatGPT model"]': namedButtons,
+    'button[aria-haspopup="menu"][data-composer-navigation-target="reasoning"][data-selected-reasoning-effort]': inlineButtons,
   })[selector] || []};
   const sendButton = {disabled: false, getAttribute: () => null, getClientRects: () => [{}], closest: () => null,
     click: () => sendClicks++};
@@ -93,7 +96,7 @@ test('composer and model compatibility uses only one observed control per page a
     focus: () => {document.activeElement = oldButton;}};
   const namedButton = {disabled: false, getClientRects: () => [{}],
     getAttribute: name => name === 'aria-haspopup' ? 'menu'
-      : name === 'aria-label' ? '选择 ChatGPT 模型' : null,
+      : name === 'aria-label' ? modelLabel : null,
     closest: () => null,
     focus: () => {document.activeElement = namedButton;}};
   const run = source => vm.runInNewContext(`(() => {
@@ -105,6 +108,17 @@ test('composer and model compatibility uses only one observed control per page a
   roleEditors = editables = [editor]; namedButtons = [namedButton];
   assert.equal(read().editor, editor);
   assert.equal(read().buttons[0], namedButton);
+  inlineButtons = [namedButton];
+  assert.equal(read().buttons[0], namedButton); // Both selector families can identify the same element.
+  namedButtons = [];
+  modelLabel = 'Select ChatGPT model';
+  assert.equal(read().buttons[0], namedButton); // The structural control needs no localized label match.
+  namedButtons = [{...namedButton}];
+  assert.equal(read().buttons.length, 0); // Two distinct visible candidates are ambiguous.
+  oldButtons = [oldButton];
+  assert.equal(read().buttons.length, 0); // A different inline control cannot confirm a legacy one.
+  oldButtons = []; inlineButtons = []; namedButtons = [namedButton];
+  modelLabel = '选择 ChatGPT 模型';
   const hiddenEditor = {...editor, closest: selector => selector === 'form' ? form
     : selector.includes('aria-hidden') ? {} : null};
   roleEditors = editables = [hiddenEditor];
@@ -2165,6 +2179,9 @@ test('effort control reads generation-prefixed public slider announcements', () 
     { document, eligibleEffortContainer: () => panel }));
   assert.deepEqual(read(), { min:0, max:4, value:3, label:'极高', announcedGeneration:'5.6',
     generationLabel:'5.6 SolPro', locked:false });
+  described = '5.6 Extra High, item 4 of 5';
+  assert.equal(read().label, 'Extra High');
+  assert.equal(read().announcedGeneration, '5.6');
   described = '5.6 Pro，第 5 项，共 5 项。'; value = '4';
   assert.deepEqual(read(), { min:0, max:4, value:4, label:'Pro', announcedGeneration:'5.6',
     generationLabel:'5.6 SolPro', locked:false });
@@ -2469,6 +2486,19 @@ test('public picker accepts the observed 5.6 Sol Pro header but not another gene
   inconsistent.invoke("picker.announcedGeneration = '6'");
   await assert.rejects(inconsistent.invoke('selectModel()'), /web_model_generation_mismatch/);
   assert.equal(inconsistent.invoke('verifiedSelection'), null);
+});
+
+test('repeated 5.6 chooser and effort heading requires matching independent announcement', async () => {
+  const selected = pickerFixture('gpt-5.6-pro', 'max', '5.6');
+  selected.invoke("picker.proHeader = '5.6 Sol5.6 Pro'; picker.announcedGeneration = '5.6'");
+  await selected.invoke('selectModel()');
+  assert.equal(selected.events.find(event => event.kind === 'model_verified')?.generation, '5.6');
+  for (const [header, announced] of [['5.6 Sol6 Pro', '5.6'], ['5.6 Sol5.6 Pro', null], ['5.6 Sol5.6 Pro', '6']]) {
+    const conflict = pickerFixture('gpt-5.6-pro', 'max', '5.6');
+    conflict.invoke(`picker.proHeader = ${JSON.stringify(header)}; picker.announcedGeneration = ${JSON.stringify(announced)}`);
+    await assert.rejects(conflict.invoke('selectModel()'), /web_model_generation_mismatch/);
+    assert.equal(conflict.invoke('verifiedSelection'), null);
+  }
 });
 
 test('Latest accepts a bare Pro heading only when the visible slider announces 6', async () => {

@@ -1,5 +1,26 @@
 # 后台浏览器实现来源
 
+## 2026-11-02 Web 发布前复核
+
+以 10 月 23 日表中的提交为比较起点，核对其中与 Web 模型、Desktop 接入和 MCP 有关的 15 个仓库。下表记录 11 月 2 日本地时间查到的正式 Release 和当时的默认分支。Lark CLI 和 LM Studio 的问题单不在本次 Web 范围内。
+
+| 项目 | 正式 Release（10 月 23 日 → 本次） | 本次默认分支 | 与本项目的关系 |
+| --- | --- | --- | --- |
+| codex-chatgpt-web | v6.1.13 → [v6.1.17](https://github.com/miuuyy/codex-chatgpt-web/releases/tag/v6.1.17) | [`860fa57`](https://github.com/miuuyy/codex-chatgpt-web/tree/860fa576eb47d9e20d7d8289235bfea94392d2fd) | 默认分支前进 38 个提交。6.1.16 的内联按钮修复直接涉及本地选择器。6.1.17 的工作区变更属于上游自己的压缩恢复流程。 |
+| WebCodex | v0.4.6 → [v0.5.0](https://github.com/yyjeqhc/webcodex/releases/tag/v0.5.0) | [`354541e`](https://github.com/yyjeqhc/webcodex/tree/354541eaa729a1c4bb6f35d4add46a95db4fbca4) | 上游要求更新其插件的工具声明。本项目此轮保持原 MCP 合同。 |
+| Chat On Steroids | v2.1.45 → [v2.1.49](https://github.com/totec448-spec/chat-on-steroids/releases/tag/v2.1.49) | [`9510307`](https://github.com/totec448-spec/chat-on-steroids/tree/9510307791184479a12e6abbee9620e6c52e57d1) | 上游修复长聊受限、页面公告遮挡和跨设备桌控归属。Operator 仍要求唯一控件与当前请求归属，遇到遮挡不自动点击或重发。 |
+| OpenAI tunnel-client | v0.0.17 → [v0.0.19](https://github.com/openai/tunnel-client/releases/tag/v0.0.19) | [`f745672`](https://github.com/openai/tunnel-client/tree/f745672195e788073ab0b104644138cdd2e4fd61) | 新版区分 MCP 服务端与连接器请求 ID，并支持 stdio 子进程恢复。本项目的固定连接使用 HTTP MCP。 |
+| Codex++ | v1.11.2 → [v2.1.4](https://github.com/BigPizzaV3/CodexPlusPlus/releases/tag/v2.1.4) | [`e56a17a`](https://github.com/BigPizzaV3/CodexPlusPlus/tree/e56a17ab2b73b2d43a89ce030b3ecff099635004) | 继续作为首要方案参考。上游适配 Desktop 26.1027，并修改单供应商限流逻辑，两者均不能证明本机网页可选档位。 |
+| CC Switch | v4.0.18 → [v4.0.24](https://github.com/farion1231/cc-switch/releases/tag/v4.0.24) | [`c018907`](https://github.com/farion1231/cc-switch/tree/c0189078aacdd80fd2462f59b345f55f62b41cf2) | 涉及 API 传递 `max` 和供应商设置。Web Pro 仍以实际网页档位为依据。 |
+| 官方 Codex | rust-v0.164.0 → [rust-v0.166.0](https://github.com/openai/codex/releases/tag/rust-v0.166.0) | [`4b4a5cf`](https://github.com/openai/codex/tree/4b4a5cf25aa5b064c866218b405c848745fd280f) | 官方目录新增 GPT-6.1 Terra。本地 Web 目录独立维护。 |
+| codex-grok-bridge | v1.8.3 → [v1.8.4](https://github.com/deximple/codex-grok-bridge/releases/tag/v1.8.4) | [`75c9ada`](https://github.com/deximple/codex-grok-bridge/tree/75c9adad3a014a57b9d8b9358cd88c2c84899367) | 上游仅更新跟踪的 CLI 版本，发行说明未报告桥接协议变更。 |
+
+其余 6 个可访问项目的默认分支提交与下表的 10 月 23 日记录相同，分别为 Better Codex App Custom Provider Support、codex-desktop-custom-models、localmcp、MCPX 候选、codex-chatgpt-bridge 和 codexbridge。`mingrath/chatgpt-sol-local-bridge` 本次仍无法从 GitHub 读取，当前状态未知。
+
+本轮采用一项具体修复。上游 10 月 29 日的[内联按钮补丁](https://github.com/miuuyy/codex-chatgpt-web/commit/2f0936b6360b98b4ee032c24c88cfeff088beab9)及[网页观察记录](https://github.com/miuuyy/codex-chatgpt-web/issues/924)指出，按钮可带推理导航目标和已选档位属性，同时缺少原标记或已知翻译。本地隔离回归在该结构上先复现找不到按钮，再验证了修复。实现独立编写，继续要求控件唯一、可见、可用且属于当前输入表单。按钮属性只用于发现控件，型号勾选、档位与代际仍在发送前分别检查。上游 MIT 代码和依赖未引入。
+
+10 月 28 日已采用的分层诊断和工具等待检查保留其原日期。上游记录的其他三档或六档菜单不自动进入本地目录，当前选项与验收边界见[Web 型号目录](web-model-catalog.md)。
+
 ## 2026-10-23 全量来源复核
 
 从本仓库 52 份已跟踪 Markdown 的 GitHub 链接去重，除本项目自身外共 17 项外部来源。表中时间均为 UTC，固定链接保存查询时的默认分支提交；Release、main 源码、README 宣称及本机验收分别理解。`pushed_at` 不代替默认分支提交日期，旧固定点到当前的累计变化也不等于 10/17 以来新增。没有运行上游产品、复制代码、安装依赖或修改服务。
